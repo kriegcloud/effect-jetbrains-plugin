@@ -1,0 +1,126 @@
+{
+  "_tag": "MetricsSnapshot",
+  "metrics": [
+    {
+      "_tag": "Counter",
+      "name": "requests_total",
+      "description": "Request count",
+      "tags": [
+        {
+          "key": "service",
+          "value": "api"
+        },
+        {
+          "key": "unit",
+          "value": "requests"
+        }
+      ],
+      "state": {
+        "count": 12
+      }
+    },
+    {
+      "_tag": "Gauge",
+      "name": "queue_depth",
+      "description": "Pending jobs",
+      "tags": [
+        {
+          "key": "service",
+          "value": "api"
+        }
+      ],
+      "state": {
+        "value": 3
+      }
+    },
+    {
+      "_tag": "Histogram",
+      "name": "request_latency",
+      "description": "Latency distribution",
+      "tags": [
+        {
+          "key": "service",
+          "value": "api"
+        },
+        {
+          "key": "time_unit",
+          "value": "ms"
+        }
+      ],
+      "state": {
+        "buckets": [
+          [
+            10,
+            1
+          ],
+          [
+            20,
+            3
+          ],
+          [
+            30,
+            5
+          ]
+        ],
+        "count": 5,
+        "min": 7,
+        "max": 27,
+        "sum": 85
+      }
+    },
+    {
+      "_tag": "Summary",
+      "name": "db_latency",
+      "description": "Database latency",
+      "tags": [
+        {
+          "key": "service",
+          "value": "api"
+        },
+        {
+          "key": "time_unit",
+          "value": "ms"
+        }
+      ],
+      "state": {
+        "count": 5,
+        "min": 8,
+        "max": 25,
+        "sum": 74,
+        "quantiles": [
+          [
+            0.5,
+            {
+              "_tag": "Some",
+              "value": 12
+            }
+          ],
+          [
+            0.9,
+            {
+              "_tag": "Some",
+              "value": 20
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "_tag": "Frequency",
+      "name": "request_outcomes",
+      "description": "Response outcomes",
+      "tags": [
+        {
+          "key": "service",
+          "value": "api"
+        }
+      ],
+      "state": {
+        "occurrences": {
+          "ok": 9,
+          "error": 1
+        }
+      }
+    }
+  ]
+}

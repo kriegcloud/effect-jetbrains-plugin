@@ -1,0 +1,153 @@
+2026-03-20 19:44:05,988 [   1249]   INFO - #c.i.o.u.LowMemoryWatcherManager - Use ExponentiallySmoothingTracker(90000 ms)
+2026-03-20 19:44:06,034 [   1295]   INFO - #c.i.o.u.LowMemoryWatcherManager - Subscribing to MemoryPool[G1 Old Gen]{max: 2147483648, threshold: 2040109440 (0.95 * max)}
+2026-03-20 19:44:06,034 [   1295]   INFO - #c.i.o.u.LowMemoryWatcherManager - Schedule GC-time updating: each 15000ms
+2026-03-20 19:44:06,519 [   1780]   INFO - #c.i.i.p.PluginManager - Using broken plugins file from IDE distribution
+2026-03-20 19:44:06,520 [   1781]   INFO - #c.i.i.p.PluginManager - PluginMainDescriptor(name=Effect JetBrains Plugin, id=dev.effect.intellij, version=0.1.0, isBundled=false, path=~/YeeBois/projects/effect-jetbrains-plugin/.intellijPlatform/sandbox/effect-jetbrains-plugin/IU-2025.3.3/plugins-test/effect-jetbrains-plugin) overrides PluginMainDescriptor(name=Effect JetBrains Plugin, id=dev.effect.intellij, version=0.1.0, isBundled=true, path=~/YeeBois/projects/effect-jetbrains-plugin/.intellijPlatform/sandbox/effect-jetbrains-plugin/IU-2025.3.3/plugins-test/effect-jetbrains-plugin)
+2026-03-20 19:44:06,652 [   1913]   INFO - #c.i.i.p.PluginManager - Plugin set resolution:
+Module intellij.xml.langInjection.xpath is not enabled because dependency XPathView is not available
+Module intellij.settingsSync.core is not enabled because dependency Git4Idea is not available
+Module intellij.platform.identifiers.highlighting.backend is not enabled because dependency com.jetbrains.codeWithMe is not available
+2026-03-20 19:44:06,704 [   1965]   INFO - #c.i.i.p.PluginManager - Problems found loading plugins:
+  Plugin 'Effect JetBrains Plugin' (dev.effect.intellij) has dependency on 'com.intellij.modules.ultimate' which is not installed
+2026-03-20 19:44:06,727 [   1988]   INFO - #c.i.i.p.PluginManager - Loaded bundled plugins: IDEA CORE (253.31033.145)
+2026-03-20 19:44:07,224 [   2485]   INFO - #c.i.p.e.i.f.EelMultiRoutingFileSystemBackendInitializationService - Eel MultiRoutingFileSystem backend is initialized
+2026-03-20 19:44:07,249 [   2510]   INFO - #c.i.a.o.PathMacrosImpl - Loaded path macros: {}
+2026-03-20 19:44:07,322 [   2583]   INFO - #c.i.p.trialPromotion - IDE is not managed
+2026-03-20 19:44:07,323 [   2584]   INFO - #c.i.p.k.b.BackendKernelServiceKt - Backend started Kernel
+2026-03-20 19:44:07,355 [   2616]   INFO - #c.i.o.v.n.i.VfsData - Use SoftReference in VFS cache: true
+2026-03-20 19:44:07,438 [   2699]   INFO - #c.i.i.p.ExpiredPluginsState - Plugins to skip: []
+2026-03-20 19:44:07,507 [   2768]   INFO - #c.i.l.LocalizationStateServiceImpl - [i18n] Localization property from registry is null
+2026-03-20 19:44:07,508 [   2769]   INFO - #c.i.u.i.PageCacheUtils - File page caching params:
+	DEFAULT_PAGE_SIZE: 10485760
+	Direct memory to use, max: 2126512128
+	FilePageCache: regular
+	Regular FilePageCache: 629145600 bytes
+	DirectByteBuffers pool: 104857600 bytes
+2026-03-20 19:44:07,546 [   2807]   INFO - #c.i.i.s.StatisticsRegionSettingsServiceImpl - Statistics. Region code is not_set
+2026-03-20 19:44:07,635 [   2896]   INFO - #fleet.kernel.Transactor - Very long change!!! Duration: 283.164023ms, change from: fleet.tracing.runtime.Span$Noop@3ac783dd
+2026-03-20 19:44:07,808 [   3069]   INFO - #c.i.p.d.t.TelemetryManager - Loaded telemetry tracer service com.intellij.platform.diagnostic.telemetry.impl.TelemetryManagerImpl
+2026-03-20 19:44:07,809 [   3070]   INFO - #c.i.u.n.s.CertificateManager - Default SSL context initialized
+2026-03-20 19:44:07,951 [   3212]   INFO - #c.i.o.v.n.p.PersistentFSLoader - VFS uses names enumerator over mmapped file
+2026-03-20 19:44:07,951 [   3212]   INFO - #c.i.o.v.n.p.PersistentFSLoader - VFS uses OverMMappedFile(pageSize=67108864, acquireStorageOwnership=true) storage for main file records table
+2026-03-20 19:44:07,951 [   3212]   INFO - #c.i.o.v.n.p.PersistentFSLoader - VFS uses streamlined attributes storage (over mmapped file)
+2026-03-20 19:44:07,957 [   3218]   INFO - #c.i.o.v.n.p.PersistentFSLoader - VFS uses content storage over memory-mapped file, with compression algo: LZ4[ > 8000b ]
+2026-03-20 19:44:08,069 [   3330]   INFO - #c.i.o.v.n.p.PersistentFSLoader - VFS: impl (expected) version=846400, 0 file records, 0 content blobs
+2026-03-20 19:44:08,087 [   3348]   INFO - #c.i.o.v.n.p.FSRecordsImpl - VFS initialized: 144 ms, 0 failed attempts, 0 error(s) were recovered
+2026-03-20 19:44:08,105 [   3366]   INFO - #c.i.o.v.n.p.FSRecordsImpl - VFS scanned: file-by-name index was populated
+2026-03-20 19:44:08,126 [   3387]   INFO - #c.i.o.v.n.p.PersistentFSImpl - VFS.MAX_FILE_LENGTH_TO_CACHE: 1048576
+2026-03-20 19:44:08,260 [   3521]   INFO - #c.i.u.i.FileBasedIndexImpl - Loading indexes
+2026-03-20 19:44:08,281 [   3542]   INFO - #c.i.u.i.FileBasedIndexImpl - Indexes are already loaded
+2026-03-20 19:44:08,337 [   3598]   INFO - #c.i.o.v.i.l.NativeFileWatcherImpl - Native file watcher is disabled
+2026-03-20 19:44:08,397 [   3658]   INFO - #c.i.f.n.TrigramIndexFilter - Filter exclude extensions is enabled: CustomizableExcludeExtensions([])
+2026-03-20 19:44:08,424 [   3685]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'fileIncludes' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,425 [   3686]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'FrameworkDetectionIndex' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,425 [   3686]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'Stubs' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,425 [   3686]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'IdIndex' index (applicable providers: [default, fake-storage]), shards = 1
+2026-03-20 19:44:08,426 [   3687]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'FilenameIndex' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,426 [   3687]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'Trigram.Index' index (applicable providers: [default, fake-storage]), shards = 1
+2026-03-20 19:44:08,426 [   3687]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'TodoIndex' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,427 [   3688]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'filetypes' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,452 [   3713]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'HashFragmentIndex' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,542 [   3803]   INFO - #c.i.u.i.i.SlruIndexStorageCacheProvider - SLRU cache will be used for indexes
+2026-03-20 19:44:08,542 [   3803]   INFO - #c.i.u.i.i.MapIndexStorageCacheProvider$Companion - Default index storage cache provider [com.intellij.util.indexing.impl.SlruIndexStorageCacheProvider@287a7504] is used
+2026-03-20 19:44:08,543 [   3804]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'XmlTagNames' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,562 [   3823]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'XmlNamespaces' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,567 [   3828]   INFO - #c.i.p.p.ProjectEntitiesStorage - Creating entity for project ProjectId(id=bl8mbphij3mgmc35ij9s)
+2026-03-20 19:44:08,578 [   3839]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'SchemaTypeInheritance' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,578 [   3839]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'html5.custom.attributes.index' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,591 [   3852]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'DomFileIndex' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,591 [   3852]   INFO - #c.i.u.i.i.s.IndexStorageLayoutLocator - Layout 'default' will be used to for 'RelaxSymbolIndex' index (applicable providers: [default, fake-storage])
+2026-03-20 19:44:08,619 [   3880]   INFO - #c.i.p.p.ProjectEntitiesStorage - Entity for project ProjectId(id=bl8mbphij3mgmc35ij9s) created successfully
+2026-03-20 19:44:08,647 [   3908]   INFO - #c.i.c.ComponentStoreImpl - Project store initialization started for path: /tmp/unitTest_fixturesExist_3BEUhtzcN805eOtGXJ93bmgKgoU/light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC.ipr and template: null
+2026-03-20 19:44:08,662 [   3923]   INFO - #c.i.u.i.FileBasedIndexImpl - Indices to be built:XmlTagNames(v = 1),TodoIndex(v = 13),filetypes(v = 4096),SchemaTypeInheritance(v = 2),Trigram.Index(v = 4),DomFileIndex(v = 0),IdIndex(v = 22),XmlNamespaces(v = 8),FrameworkDetectionIndex(v = 65536),html5.custom.attributes.index(v = 1),FilenameIndex(v = 258),RelaxSymbolIndex(v = 0),HashFragmentIndex(v = 19111503),fileIncludes(v = 6),Stubs(v = 46)
+2026-03-20 19:44:08,673 [   3934]   INFO - #c.i.c.ComponentStoreImpl - Project store initialized with paths: [Macro(key=$PROJECT_FILE$, value=/tmp/unitTest_fixturesExist_3BEUhtzcN805eOtGXJ93bmgKgoU/light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC.ipr), Macro(key=$WORKSPACE_FILE$, value=/tmp/unitTest_fixturesExist_3BEUhtzcN805eOtGXJ93bmgKgoU/light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC.iws), Macro(key=$PRODUCT_WORKSPACE_FILE$, value=/tmp/unitTest_fixturesExist_3BEUhtzcN805eOtGXJ93bmgKgoU/light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC.iws), Macro(key=$CACHE_FILE$, value=/home/elpresidank/YeeBois/projects/effect-jetbrains-plugin/.intellijPlatform/sandbox/effect-jetbrains-plugin/IU-2025.3.3/system-test/projects/light_temp_3beuikqhslibuzssmxf6fbfzdec.f2420f14/cache-state.xml)]
+2026-03-20 19:44:08,682 [   3943]   INFO - #c.i.u.i.c.d.IndexWriter - Use com.intellij.util.indexing.contentQueue.dev.MultiThreadedWithSuspendIndexWriter@17bc0c03 as (parallel) index writer implementation
+2026-03-20 19:44:08,683 [   3944]   INFO - #c.i.u.i.FileBasedIndexImpl - Using simple flusher for indexes
+2026-03-20 19:44:08,711 [   3972]   INFO - #c.i.u.i.IndexDataInitializer - Index data initialization done: 430 ms. Initialized indexes: [FilenameIndex, filetypes, XmlTagNames, XmlNamespaces, Trigram.Index, TodoIndex, SchemaTypeInheritance, html5.custom.attributes.index, fileIncludes, RelaxSymbolIndex, HashFragmentIndex, DomFileIndex, FrameworkDetectionIndex, IdIndex, Stubs].
+2026-03-20 19:44:08,728 [   3989]   INFO - #c.i.p.s.StubIndexImpl - Following stub indices will be built:dom.elementClass(v = 0),dom.namespaceKey(v = 1)
+2026-03-20 19:44:08,729 [   3990]   INFO - #c.i.u.i.IndexDataInitializer - Index data initialization done: 17 ms. Initialized stub indexes: {dom.elementClass, dom.namespaceKey}.
+2026-03-20 19:44:08,750 [   4011]   INFO - #c.i.j.JnaLoader - JNA library (64-bit) loaded in 17 ms
+2026-03-20 19:44:08,942 [   4203]   INFO - #c.i.w.i.i.GlobalWorkspaceModel - Project light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC is added to the list of initializing and open projects
+2026-03-20 19:44:08,945 [   4206]   INFO - #c.i.w.i.i.l.m.ModuleBridgeLoaderService - Workspace model loaded without cache. Loading real project state into workspace model. Thread[#38,DefaultDispatcher-worker-1 @run com.intellij.projectPreInit ModuleBridgeLoaderService#218,6,main]
+2026-03-20 19:44:09,119 [   4380]   INFO - #c.i.w.i.i.GlobalWorkspaceModel - Sync global entities with mutable entity storage
+2026-03-20 19:44:09,164 [   4425]   INFO - #c.i.i.s.e.StatisticsEventLoggerProvider - Initialize event logger provider for 'FUS'
+2026-03-20 19:44:09,176 [   4437]   INFO - #c.i.i.s.e.StatisticsEventLoggerProvider - Initialize event logger provider for 'MP'
+2026-03-20 19:44:09,178 [   4439]   INFO - #c.i.i.s.e.StatisticsEventLoggerProvider - Initialize event logger provider for 'TRACE'
+2026-03-20 19:44:09,179 [   4440]   INFO - #c.i.i.s.e.StatisticsEventLoggerProvider - Initialize event logger provider for 'ML'
+2026-03-20 19:44:09,346 [   4607]   INFO - #c.i.w.i.i.j.s.JpsProjectModelSynchronizer - Attempt 1: Apply JPS storage (iml files)
+2026-03-20 19:44:09,488 [   4749]   INFO - #c.i.w.i.i.EntitiesOrphanageImpl - Update orphanage. 0 modules added
+2026-03-20 19:44:09,497 [   4758]   INFO - #c.i.w.i.i.WorkspaceModelImpl - Project model updated to version 1
+2026-03-20 19:44:09,501 [   4762]   INFO - #c.i.w.i.i.j.s.JpsProjectModelSynchronizer - Attempt 1: Changes were successfully applied
+2026-03-20 19:44:09,665 [   4926]   INFO - #c.i.c.m.CodeInsightContextEnabling - multiverse is enabled
+2026-03-20 19:44:10,128 [   5389]   INFO - #c.i.w.i.i.EntitiesOrphanageImpl - Update orphanage. 0 modules added
+2026-03-20 19:44:10,144 [   5405]   INFO - #c.i.w.i.i.WorkspaceModelImpl - Project model updated to version 2 in 124 ms: Module model commit
+2026-03-20 19:44:10,279 [   5540]   INFO - #c.i.u.s.JBUIScale - Computed user scale factor: 1.0 (JRE-managed HiDPI)
+2026-03-20 19:44:11,186 [   6447]   INFO - #c.i.w.i.i.EntitiesOrphanageImpl - Update orphanage. 0 modules added
+2026-03-20 19:44:11,192 [   6453]   INFO - #c.i.o.a.i.NonBlockingReadActionImpl - OTel monitoring for NonBlockingReadAction is enabled
+2026-03-20 19:44:11,236 [   6497]   INFO - #c.i.w.i.i.WorkspaceModelImpl - Project model updated to version 3 in 106 ms: Root model commit
+2026-03-20 19:44:11,312 [   6573]   INFO - #c.i.o.p.MergingQueueGuiExecutor - Running task: (dumb mode task) com.intellij.openapi.project.InitialDumbTaskRequiredForSmartMode@1a91f126
+2026-03-20 19:44:11,315 [   6576]   INFO - #c.i.o.p.DumbServiceMergingTaskQueue - Initializing DumbServiceMergingTaskQueue...
+2026-03-20 19:44:11,325 [   6586]   INFO - #c.i.o.p.InitialDumbTaskRequiredForSmartMode - Running task required for smart mode: com.intellij.util.indexing.ProjectFileBasedIndexStartupActivity@58c9920d
+2026-03-20 19:44:11,328 [   6589]   INFO - #c.i.u.i.FileBasedIndexImpl - Indexes are already loaded
+2026-03-20 19:44:11,334 [   6595]   INFO - #c.i.u.i.p.IncrementalProjectIndexableFilesFilterHolder - PersistentProjectIndexableFilesFilterFactory is chosen as indexable files filter factory for project: light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC
+2026-03-20 19:44:11,346 [   6607]   INFO - #c.i.u.i.FileBasedIndexImpl - Indexes are already loaded
+2026-03-20 19:44:11,397 [   6658]   INFO - c.i.p.i.IdeFingerprint - Calculated dependencies fingerprint in 24 ms (hash=2dv2xnrqrd7uc, buildTime=1771592160, appVersion=IU-253.31033.145)
+2026-03-20 19:44:11,397 [   6658]   INFO - #c.i.u.i.d.AppIndexingDependenciesService - Invalidating all indexing flags. Reason: App fingerprint changed: FingerprintImpl(fingerprint=0) to FingerprintImpl(fingerprint=-7145260256167625740)
+2026-03-20 19:44:11,427 [   6688]   INFO - #c.i.u.i.UnindexedFilesScanner - Full scanning on startup will NOT be skipped for project light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC because of following unsatisfied conditions:
+FILTER_IS_NOT_UP_TO_DATE: Persistent indexable files filter is NOT up-to-date because of following unsatisfied conditions: [IS_FILTER_LOADED_FROM_DISK, FILTER_IS_NOT_INVALIDATED, INDEXING_REQUEST_ID_DID_NOT_CHANGE_AFTER_LAST_SCANNING]
+2026-03-20 19:44:11,453 [   6714]   INFO - #c.i.o.p.InitialDumbTaskRequiredForSmartMode - Finished task required for smart mode: com.intellij.util.indexing.ProjectFileBasedIndexStartupActivity@58c9920d
+2026-03-20 19:44:11,457 [   6718]   INFO - #c.i.o.p.InitialDumbTaskRequiredForSmartMode - Running task required for smart mode: com.intellij.util.indexing.FileBasedIndexInfrastructureExtensionStartup@1b8b100d
+2026-03-20 19:44:11,458 [   6719]   INFO - #c.i.o.p.InitialDumbTaskRequiredForSmartMode - Finished task required for smart mode: com.intellij.util.indexing.FileBasedIndexInfrastructureExtensionStartup@1b8b100d
+2026-03-20 19:44:11,458 [   6719]   INFO - #c.i.o.p.InitialDumbTaskRequiredForSmartMode - Running task required for smart mode: com.intellij.util.indexing.DumbModeWhileScanningSubscriber@3a983ed0
+2026-03-20 19:44:11,461 [   6722]   INFO - #c.i.o.p.InitialDumbTaskRequiredForSmartMode - Finished task required for smart mode: com.intellij.util.indexing.DumbModeWhileScanningSubscriber@3a983ed0
+2026-03-20 19:44:11,461 [   6722]   INFO - #c.i.o.p.UnindexedFilesScannerExecutor - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] Running task: com.intellij.util.indexing.UnindexedFilesScannerExecutorImpl$ScheduledScanningTask@117fb49d
+2026-03-20 19:44:11,463 [   6724]   INFO - #c.i.o.p.MergingQueueGuiExecutor - Task finished: (dumb mode task) com.intellij.openapi.project.InitialDumbTaskRequiredForSmartMode@1a91f126
+2026-03-20 19:44:11,477 [   6738]   INFO - #c.i.o.p.DumbServiceImpl - exit dumb mode [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC]
+2026-03-20 19:44:11,507 [   6768]   INFO - #c.i.u.i.UnindexedFilesScanner - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] scanning stage (scanning id=0): DelayedPushProperties
+2026-03-20 19:44:11,536 [   6797]   INFO - #c.i.u.i.FileBasedIndexImpl - Indexes are already loaded
+2026-03-20 19:44:11,537 [   6798]   INFO - #c.i.u.i.UnindexedFilesScanner - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] Started scanning for indexing of light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC. Reason: On project open
+2026-03-20 19:44:11,538 [   6799]   INFO - #c.i.u.i.UnindexedFilesScanner - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] scanning stage (scanning id=0): CreatingIterators
+2026-03-20 19:44:11,724 [   6985]   INFO - #c.i.u.i.UnindexedFilesScanner - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] scanning stage (scanning id=0): CollectingIndexableFiles
+2026-03-20 19:44:11,735 [   6996]   INFO - #c.i.u.i.UnindexedFilesScanner - Scanning of light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC uses 8 scanning threads
+2026-03-20 19:44:12,039 [   7300]   INFO - #c.i.u.i.IndexingReasonExplanationLogger - Scheduling indexing of xhtml11.dtd (id=56) by request of indexes: [filetypes->NOT_INDEXED(not indexed),Trigram.Index->NOT_INDEXED(not indexed),IdIndex->NOT_INDEXED(not indexed),]. Scanner has updated file xhtml11.dtd (id=56) with appliers: [SingleIndexValueApplier{indexId=filetypes, inputId=56, fileInfo='xhtml11.dtd(id=56)'}] and removers: []; 
+2026-03-20 19:44:12,042 [   7303]   INFO - #c.i.u.i.IndexingReasonExplanationLogger - Scheduling indexing of xhtml-lat1.ent (id=46) by request of indexes: [filetypes->NOT_INDEXED(not indexed),Trigram.Index->NOT_INDEXED(not indexed),IdIndex->NOT_INDEXED(not indexed),]. Scanner has updated file xhtml-lat1.ent (id=46) with appliers: [SingleIndexValueApplier{indexId=filetypes, inputId=46, fileInfo='xhtml-lat1.ent(id=46)'}] and removers: []; 
+2026-03-20 19:44:12,043 [   7304]   INFO - #c.i.u.i.IndexingReasonExplanationLogger - Scheduling indexing of xhtml-base-1.mod (id=76) by request of indexes: [filetypes->NOT_INDEXED(not indexed),Trigram.Index->NOT_INDEXED(not indexed),IdIndex->NOT_INDEXED(not indexed),]. Scanner has updated file xhtml-base-1.mod (id=76) with appliers: [SingleIndexValueApplier{indexId=filetypes, inputId=76, fileInfo='xhtml-base-1.mod(id=76)'}] and removers: []; 
+2026-03-20 19:44:12,045 [   7306]   INFO - #c.i.u.i.IndexingReasonExplanationLogger - Scheduling indexing of xhtml-edit-1.mod (id=42) by request of indexes: [filetypes->NOT_INDEXED(not indexed),Trigram.Index->NOT_INDEXED(not indexed),IdIndex->NOT_INDEXED(not indexed),]. Scanner has updated file xhtml-edit-1.mod (id=42) with appliers: [SingleIndexValueApplier{indexId=filetypes, inputId=42, fileInfo='xhtml-edit-1.mod(id=42)'}] and removers: []; 
+2026-03-20 19:44:12,046 [   7307]   INFO - #c.i.u.i.IndexingReasonExplanationLogger - Scheduling indexing of xhtml-form-1.mod (id=65) by request of indexes: [filetypes->NOT_INDEXED(not indexed),Trigram.Index->NOT_INDEXED(not indexed),IdIndex->NOT_INDEXED(not indexed),]. Scanner has updated file xhtml-form-1.mod (id=65) with appliers: [SingleIndexValueApplier{indexId=filetypes, inputId=65, fileInfo='xhtml-form-1.mod(id=65)'}] and removers: []; 
+2026-03-20 19:44:12,047 [   7308]   INFO - #c.i.u.i.IndexingReasonExplanationLogger - Scheduling indexing of xhtml-link-1.mod (id=49) by request of indexes: [filetypes->NOT_INDEXED(not indexed),Trigram.Index->NOT_INDEXED(not indexed),IdIndex->NOT_INDEXED(not indexed),]. Scanner has updated file xhtml-link-1.mod (id=49) with appliers: [SingleIndexValueApplier{indexId=filetypes, inputId=49, fileInfo='xhtml-link-1.mod(id=49)'}] and removers: []; 
+2026-03-20 19:44:12,048 [   7309]   INFO - #c.i.u.i.IndexingReasonExplanationLogger - Scheduling indexing of xhtml-list-1.mod (id=41) by request of indexes: [filetypes->NOT_INDEXED(not indexed),Trigram.Index->NOT_INDEXED(not indexed),IdIndex->NOT_INDEXED(not indexed),]. Scanner has updated file xhtml-list-1.mod (id=41) with appliers: [SingleIndexValueApplier{indexId=filetypes, inputId=41, fileInfo='xhtml-list-1.mod(id=41)'}] and removers: []; 
+2026-03-20 19:44:12,049 [   7310]   INFO - #c.i.u.i.IndexingReasonExplanationLogger - Scheduling indexing of xhtml-meta-1.mod (id=67) by request of indexes: [filetypes->NOT_INDEXED(not indexed),Trigram.Index->NOT_INDEXED(not indexed),IdIndex->NOT_INDEXED(not indexed),]. Scanner has updated file xhtml-meta-1.mod (id=67) with appliers: [SingleIndexValueApplier{indexId=filetypes, inputId=67, fileInfo='xhtml-meta-1.mod(id=67)'}] and removers: []; 
+2026-03-20 19:44:12,050 [   7311]   INFO - #c.i.u.i.IndexingReasonExplanationLogger - Scheduling indexing of xhtml-pres-1.mod (id=69) by request of indexes: [filetypes->NOT_INDEXED(not indexed),Trigram.Index->NOT_INDEXED(not indexed),IdIndex->NOT_INDEXED(not indexed),]. Scanner has updated file xhtml-pres-1.mod (id=69) with appliers: [SingleIndexValueApplier{indexId=filetypes, inputId=69, fileInfo='xhtml-pres-1.mod(id=69)'}] and removers: []; 
+2026-03-20 19:44:12,052 [   7313]   INFO - #c.i.u.i.IndexingReasonExplanationLogger - Scheduling indexing of xhtml-ruby-1.mod (id=72) by request of indexes: [filetypes->NOT_INDEXED(not indexed),Trigram.Index->NOT_INDEXED(not indexed),IdIndex->NOT_INDEXED(not indexed),]. Scanner has updated file xhtml-ruby-1.mod (id=72) with appliers: [SingleIndexValueApplier{indexId=filetypes, inputId=72, fileInfo='xhtml-ruby-1.mod(id=72)'}] and removers: []; 
+2026-03-20 19:44:12,307 [   7568]   INFO - #c.i.u.i.UnindexedFilesScanner - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] Scanning completed for light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC. Number of scanned files: 209; number of files for indexing: 209
+2026-03-20 19:44:12,324 [   7585]   INFO - #c.i.o.p.UnindexedFilesScannerExecutor - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] Task finished (scanning id=0): com.intellij.util.indexing.UnindexedFilesScannerExecutorImpl$ScheduledScanningTask@117fb49d
+2026-03-20 19:44:12,327 [   7588]   INFO - #c.i.o.p.DumbServiceImpl - enter dumb mode [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC]
+2026-03-20 19:44:12,332 [   7593]   INFO - #c.i.o.p.MergingQueueGuiExecutor - Running task: (dumb mode task) UnindexedFilesIndexer[light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC, reasons: [On project open]]
+2026-03-20 19:44:12,337 [   7598]   INFO - #c.i.u.i.FileBasedIndexImpl - Indexes are already loaded
+2026-03-20 19:44:12,366 [   7627]   INFO - #c.i.u.i.c.IndexUpdateRunner - Using 8 workers for indexing and 4 for writing indexes
+2026-03-20 19:44:13,195 [   8456]   INFO - #c.i.u.i.c.IndexUpdateRunner - Coroutine 7 finished gracefully
+2026-03-20 19:44:13,196 [   8457]   INFO - #c.i.u.i.c.IndexUpdateRunner - Coroutine 0 finished gracefully
+2026-03-20 19:44:13,196 [   8457]   INFO - #c.i.u.i.c.IndexUpdateRunner - Coroutine 4 finished gracefully
+2026-03-20 19:44:13,196 [   8457]   INFO - #c.i.u.i.c.IndexUpdateRunner - Coroutine 1 finished gracefully
+2026-03-20 19:44:13,205 [   8466]   INFO - #c.i.u.i.c.IndexUpdateRunner - Coroutine 5 finished gracefully
+2026-03-20 19:44:13,206 [   8467]   INFO - #c.i.u.i.c.IndexUpdateRunner - Coroutine 6 finished gracefully
+2026-03-20 19:44:13,227 [   8488]   INFO - #c.i.u.i.c.IndexUpdateRunner - Coroutine 2 finished gracefully
+2026-03-20 19:44:13,227 [   8488]   INFO - #c.i.u.i.c.IndexUpdateRunner - Coroutine 3 finished gracefully
+2026-03-20 19:44:13,291 [   8552]   INFO - #c.i.u.i.ProjectChangedFilesScanner - Retrieving changed during indexing files of light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC : 0 to update, calculated in 0ms
+2026-03-20 19:44:13,300 [   8561]   INFO - #c.i.u.i.UnindexedFilesIndexer - Finished for light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC. Unindexed files update took 938ms; general responsiveness: ok; EDT responsiveness: ok
+2026-03-20 19:44:13,312 [   8573]   INFO - #c.i.o.p.MergingQueueGuiExecutor - Task finished: (dumb mode task) UnindexedFilesIndexer[light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC, reasons: [On project open]]
+2026-03-20 19:44:13,322 [   8583]   INFO - #c.i.o.p.DumbServiceImpl - exit dumb mode [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdEC]
+2026-03-20 19:44:13,365 [   8626]   INFO - #c.i.o.p.i.ProjectManagerImpl - Project FixturesExist was added to the list of open projects
+2026-03-20 19:44:13,633 [   8894]   INFO - #c.i.o.e.s.p.m.ExternalProjectsDataStorage - Load external projects data in 4 millis (read time: 2)
+2026-03-20 19:44:14,340 [   9601]   INFO - #c.i.p.c.ProjectCodeStyleSettingsManager - Initialized from default code style settings.
+2026-03-20 19:44:15,475 [  10736]   INFO - #c.i.o.p.i.ProjectManagerImpl - Project ProjectServicesAreRegistered was added to the list of open projects
+2026-03-20 19:44:15,491 [  10752]   INFO - #c.i.o.p.UnindexedFilesScannerExecutor - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] Running task: com.intellij.util.indexing.UnindexedFilesScannerExecutorImpl$ScheduledScanningTask@5ea466e4
+2026-03-20 19:44:15,492 [  10753]   INFO - #c.i.u.i.UnindexedFilesScanner - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] scanning stage (scanning id=1): DelayedPushProperties
+2026-03-20 19:44:15,493 [  10754]   INFO - #c.i.u.i.FileBasedIndexImpl - Indexes are already loaded
+2026-03-20 19:44:15,495 [  10756]   INFO - #c.i.u.i.UnindexedFilesScanner - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] Started scanning for indexing of ProjectServicesAreRegistered. Reason: Reindex requested by project root model changes
+2026-03-20 19:44:15,495 [  10756]   INFO - #c.i.u.i.UnindexedFilesScanner - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] scanning stage (scanning id=1): CreatingIterators
+2026-03-20 19:44:15,497 [  10758]   INFO - #c.i.u.i.UnindexedFilesScanner - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] scanning stage (scanning id=1): CollectingIndexableFiles
+2026-03-20 19:44:15,498 [  10759]   INFO - #c.i.u.i.UnindexedFilesScanner - Scanning of ProjectServicesAreRegistered uses 8 scanning threads
+2026-03-20 19:44:15,617 [  10878]   INFO - #c.i.u.i.UnindexedFilesScanner - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] Scanning completed for ProjectServicesAreRegistered. Number of scanned files: 209; number of files for indexing: 0
+2026-03-20 19:44:15,628 [  10889]   INFO - #c.i.u.i.PerProjectIndexingQueue - Finished for ProjectServicesAreRegistered. No files to index with loading content.
+2026-03-20 19:44:15,628 [  10889]   INFO - #c.i.o.p.UnindexedFilesScannerExecutor - [light_temp_3BEUiKqHsliBUZSsmXf6FbfZdECf2420f14] Task finished (scanning id=1): com.intellij.util.indexing.UnindexedFilesScannerExecutorImpl$ScheduledScanningTask@5ea466e4

@@ -1,0 +1,15 @@
+{
+  "_tag": "Span",
+  "spanId": "root",
+  "traceId": "trace",
+  "name": "root",
+  "sampled": true,
+  "status": {
+    "_tag": "Started",
+    "startTime": "0"
+  },
+  "parent": {
+    "_tag": "None"
+  },
+  "attributes": []
+}

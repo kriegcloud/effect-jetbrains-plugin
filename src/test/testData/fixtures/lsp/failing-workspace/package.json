@@ -1,0 +1,5 @@
+{
+  "name": "failing-workspace",
+  "private": true,
+  "type": "module"
+}

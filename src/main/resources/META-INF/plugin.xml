@@ -1,0 +1,40 @@
+<idea-plugin>
+    <id>dev.effect.jetbrains</id>
+    <name>Effect TSGO</name>
+    <vendor>Effect</vendor>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.ultimate</depends>
+    <depends>com.intellij.modules.lsp</depends>
+
+    <resource-bundle>messages.EffectBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <notificationGroup id="dev.effect.jetbrains" displayType="BALLOON" isLogByDefault="true"/>
+
+        <applicationService serviceImplementation="dev.effect.intellij.binary.EffectBinaryService"/>
+        <applicationService serviceImplementation="dev.effect.intellij.notifications.EffectNotificationService"/>
+        <applicationService serviceImplementation="dev.effect.intellij.settings.EffectApplicationStateService"/>
+
+        <projectService serviceImplementation="dev.effect.intellij.debug.EffectDebugBridgeService"/>
+        <projectService serviceImplementation="dev.effect.intellij.devtools.EffectDevToolsService"/>
+        <projectService serviceImplementation="dev.effect.intellij.lsp.EffectLspProjectService"/>
+        <projectService serviceImplementation="dev.effect.intellij.settings.EffectProjectSettingsService"/>
+        <projectService serviceImplementation="dev.effect.intellij.status.EffectStatusService"/>
+
+        <projectConfigurable
+                parentId="tools"
+                id="dev.effect.intellij.settings"
+                displayName="Effect"
+                nonDefaultProject="true"
+                instance="dev.effect.intellij.settings.EffectProjectSettingsConfigurable"/>
+
+        <toolWindow
+                id="Effect Dev Tools"
+                anchor="right"
+                factoryClass="dev.effect.intellij.ui.EffectDevToolsToolWindowFactory"
+                secondary="true"/>
+
+        <platform.lsp.serverSupportProvider implementation="dev.effect.intellij.lsp.EffectLspServerSupportProvider"/>
+    </extensions>
+</idea-plugin>
