@@ -69,6 +69,7 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
                 when {
                     !Files.exists(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path does not exist.")
                     !Files.isRegularFile(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path must point to a file.")
+                    !Files.isExecutable(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path must be executable.")
                 }
             }
         }

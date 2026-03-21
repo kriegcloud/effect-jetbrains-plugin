@@ -4,6 +4,7 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import dev.effect.intellij.core.EffectJson
 import dev.effect.intellij.settings.EffectProjectSettings
 import dev.effect.intellij.settings.EffectProjectSettingsService
+import junit.framework.AssertionFailedError
 import org.java_websocket.client.WebSocketClient
 import org.java_websocket.handshake.ServerHandshake
 import java.nio.file.Files
@@ -24,13 +25,9 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         val service = project.getService(EffectDevToolsService::class.java)
         service.startServer()
 
-        val connected = CountDownLatch(1)
-        val client = createClient(freePort, connected = connected)
+        val client = createConnectedClient(freePort)
 
         try {
-            client.connectBlocking(5, TimeUnit.SECONDS)
-            assertTrue(connected.await(5, TimeUnit.SECONDS))
-
             client.send(loadFixture("fixtures/devtools/metrics/reference.json") + "\n")
             client.send(loadFixture("fixtures/devtools/tracer/empty.json") + "\n")
             client.send("""{"_tag":"SpanEvent","traceId":"trace","spanId":"root","name":"started","startTime":"2","attributes":{"phase":"test"}}""" + "\n")
@@ -75,12 +72,10 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         val service = project.getService(EffectDevToolsService::class.java)
         service.startServer()
 
-        val connected = CountDownLatch(1)
         val messageLatch = CountDownLatch(1)
         val messages = Collections.synchronizedList(mutableListOf<String>())
-        val client = createClient(
+        val client = createConnectedClient(
             freePort,
-            connected = connected,
             onMessage = { message ->
                 messages += message
                 messageLatch.countDown()
@@ -88,8 +83,6 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         )
 
         try {
-            client.connectBlocking(5, TimeUnit.SECONDS)
-            assertTrue(connected.await(5, TimeUnit.SECONDS))
             assertTrue(messageLatch.await(5, TimeUnit.SECONDS))
             assertEquals("{\"_tag\":\"MetricsRequest\"}\n", messages.first())
         } finally {
@@ -110,12 +103,10 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         val service = project.getService(EffectDevToolsService::class.java)
         service.startServer()
 
-        val connected = CountDownLatch(1)
         val messageLatch = CountDownLatch(1)
         val messages = Collections.synchronizedList(mutableListOf<String>())
-        val client = createClient(
+        val client = createConnectedClient(
             freePort,
-            connected = connected,
             onMessage = { message ->
                 messages += message
                 messageLatch.countDown()
@@ -123,8 +114,6 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         )
 
         try {
-            client.connectBlocking(5, TimeUnit.SECONDS)
-            assertTrue(connected.await(5, TimeUnit.SECONDS))
             client.send("""{"_tag":"Ping"}""" + "\n")
             assertTrue(messageLatch.await(5, TimeUnit.SECONDS))
             assertEquals("{\"_tag\":\"Pong\"}\n", messages.first())
@@ -143,12 +132,9 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         val service = project.getService(EffectDevToolsService::class.java)
         service.startServer()
 
-        val connected = CountDownLatch(1)
-        val client = createClient(freePort, connected = connected)
+        val client = createConnectedClient(freePort)
 
         try {
-            client.connectBlocking(5, TimeUnit.SECONDS)
-            assertTrue(connected.await(5, TimeUnit.SECONDS))
             client.send("""{"_tag":"MetricsSnapshot","metrics":[""" + "\n")
 
             waitForCondition {
@@ -198,4 +184,30 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
 
             override fun onError(ex: Exception?) = Unit
         }
+
+    private fun createConnectedClient(
+        port: Int,
+        onMessage: (String) -> Unit = {},
+    ): WebSocketClient {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < deadline) {
+            val connected = CountDownLatch(1)
+            val client = createClient(
+                port = port,
+                connected = connected,
+                onMessage = onMessage,
+            )
+            try {
+                if (client.connectBlocking(1, TimeUnit.SECONDS) && connected.await(1, TimeUnit.SECONDS)) {
+                    return client
+                }
+            } finally {
+                if (!client.isOpen) {
+                    client.closeBlocking()
+                }
+            }
+            Thread.sleep(100)
+        }
+        throw AssertionFailedError("Failed to connect runtime test client within 5000ms")
+    }
 }

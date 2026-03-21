@@ -2,6 +2,7 @@ package dev.effect.intellij.settings
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermission
 
 class EffectSettingsValidationTest : BasePlatformTestCase() {
     fun testPinnedModeRequiresVersion() {
@@ -44,5 +45,38 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         )
 
         assertEmpty(problems)
+    }
+
+    fun testManualModeRejectsNonExecutableFile() {
+        val service = project.getService(EffectProjectSettingsService::class.java)
+        val manual = Files.createTempFile("effect-manual-non-exec", ".tmp")
+        Files.writeString(manual, "manual")
+        makeNonExecutable(manual)
+
+        val problems = service.validate(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.MANUAL,
+                manualBinaryPath = manual.toString(),
+            ),
+        )
+
+        assertTrue(problems.any { it.field == "manualBinaryPath" && it.message.contains("executable") })
+    }
+
+    private fun makeNonExecutable(path: java.nio.file.Path) {
+        if (System.getProperty("os.name").contains("win", ignoreCase = true)) {
+            path.toFile().setExecutable(false, false)
+            return
+        }
+
+        Files.setPosixFilePermissions(
+            path,
+            setOf(
+                PosixFilePermission.OWNER_READ,
+                PosixFilePermission.OWNER_WRITE,
+                PosixFilePermission.GROUP_READ,
+                PosixFilePermission.OTHERS_READ,
+            ),
+        )
     }
 }

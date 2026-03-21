@@ -14,8 +14,35 @@ import dev.effect.intellij.status.EffectStatusService
 @Service(Service.Level.PROJECT)
 class EffectLspProjectService(private val project: Project) {
     private val log = logger<EffectLspProjectService>()
+    private val launchConfigurationLock = Any()
+    @Volatile
+    private var activeLaunchConfiguration: ActiveLaunchConfiguration? = null
 
-    fun createLaunchConfiguration(): LspLaunchConfiguration {
+    fun createLaunchConfiguration(): LspLaunchConfiguration = buildLaunchConfiguration()
+
+    fun activeLaunchConfiguration(): LspLaunchConfiguration {
+        val currentKey = currentLaunchConfigurationKey()
+        activeLaunchConfiguration?.takeIf { it.key == currentKey }?.let { return it.configuration }
+
+        return synchronized(launchConfigurationLock) {
+            val refreshedKey = currentLaunchConfigurationKey()
+            activeLaunchConfiguration?.takeIf { it.key == refreshedKey }?.configuration
+                ?: buildLaunchConfiguration().also { configuration ->
+                    activeLaunchConfiguration = ActiveLaunchConfiguration(
+                        key = refreshedKey,
+                        configuration = configuration,
+                    )
+                }
+        }
+    }
+
+    fun clearActiveLaunchConfiguration() {
+        synchronized(launchConfigurationLock) {
+            activeLaunchConfiguration = null
+        }
+    }
+
+    private fun buildLaunchConfiguration(): LspLaunchConfiguration {
         return try {
             val resolvedSettings = EffectProjectSettingsService.getInstance(project).resolve()
             val resolution = EffectBinaryService.getInstance().ensureAvailable(project)
@@ -44,7 +71,34 @@ class EffectLspProjectService(private val project: Project) {
 
     fun restart(reason: String) {
         log.info("LSP restart requested: $reason")
+        clearActiveLaunchConfiguration()
         EffectStatusService.getInstance(project).requestRestart(reason)
         LspServerManager.getInstance(project).stopAndRestartIfNeeded(EffectLspServerSupportProvider::class.java)
     }
+
+    private fun currentLaunchConfigurationKey(): LaunchConfigurationKey {
+        val settings = EffectProjectSettingsService.getInstance(project).currentSettings()
+        return LaunchConfigurationKey(
+            binaryMode = settings.binaryMode,
+            pinnedVersion = settings.pinnedVersion,
+            manualBinaryPath = settings.manualBinaryPath,
+            extraEnv = settings.extraEnv,
+            initializationOptionsJson = settings.initializationOptionsJson,
+            workspaceConfigurationJson = settings.workspaceConfigurationJson,
+        )
+    }
 }
+
+private data class ActiveLaunchConfiguration(
+    val key: LaunchConfigurationKey,
+    val configuration: LspLaunchConfiguration,
+)
+
+private data class LaunchConfigurationKey(
+    val binaryMode: dev.effect.intellij.settings.EffectBinaryMode,
+    val pinnedVersion: String,
+    val manualBinaryPath: String,
+    val extraEnv: Map<String, String>,
+    val initializationOptionsJson: String,
+    val workspaceConfigurationJson: String,
+)

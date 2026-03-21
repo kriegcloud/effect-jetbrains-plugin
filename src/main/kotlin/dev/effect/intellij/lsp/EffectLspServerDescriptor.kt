@@ -19,7 +19,7 @@ class EffectLspServerDescriptor(project: Project) : ProjectWideLspServerDescript
     override fun createCommandLine() =
         try {
             project.getService(EffectLspProjectService::class.java)
-                .createLaunchConfiguration()
+                .activeLaunchConfiguration()
                 .also { launch ->
                     project.getService(EffectStatusService::class.java).markStarting(launch.resolution.binaryPath.toString())
                 }
@@ -31,12 +31,12 @@ class EffectLspServerDescriptor(project: Project) : ProjectWideLspServerDescript
 
     override fun createInitializationOptions() =
         project.getService(EffectLspProjectService::class.java)
-            .createLaunchConfiguration()
+            .activeLaunchConfiguration()
             .initializationOptions
 
     override fun getWorkspaceConfiguration(configurationItem: ConfigurationItem): Any? {
         val workspaceConfiguration = project.getService(EffectLspProjectService::class.java)
-            .createLaunchConfiguration()
+            .activeLaunchConfiguration()
             .workspaceConfiguration
             ?: return null
 
@@ -53,10 +53,11 @@ class EffectLspServerDescriptor(project: Project) : ProjectWideLspServerDescript
     override val lspServerListener: LspServerListener = object : LspServerListener {
         override fun serverInitialized(initializeResult: InitializeResult) {
             project.getService(EffectStatusService::class.java)
-                .markRunning(project.getService(EffectLspProjectService::class.java).createLaunchConfiguration().resolution.binaryPath.toString())
+                .markRunning(project.getService(EffectLspProjectService::class.java).activeLaunchConfiguration().resolution.binaryPath.toString())
         }
 
         override fun serverStopped(restartable: Boolean) {
+            project.getService(EffectLspProjectService::class.java).clearActiveLaunchConfiguration()
             val status = project.getService(EffectStatusService::class.java)
             if (restartable) {
                 status.markRestartRequired("Effect LSP stopped and can be restarted.")

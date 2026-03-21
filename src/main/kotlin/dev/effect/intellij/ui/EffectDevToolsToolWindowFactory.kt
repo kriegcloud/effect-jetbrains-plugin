@@ -8,15 +8,12 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
-import com.intellij.openapi.wm.ToolWindow
-import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.CollectionListModel
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
-import com.intellij.ui.content.ContentFactory
 import com.intellij.xdebugger.XDebuggerManager
 import dev.effect.intellij.debug.DebugBridgeState
 import dev.effect.intellij.debug.EffectDebugBridgeService
@@ -41,17 +38,7 @@ import javax.swing.event.TreeSelectionListener
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
-class EffectDevToolsToolWindowFactory : ToolWindowFactory {
-    override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val panel = EffectDevToolsToolWindowPanel(project)
-        val content = ContentFactory.getInstance().createContent(panel.component, "", false)
-        toolWindow.contentManager.addContent(content)
-    }
-
-    override fun shouldBeAvailable(project: Project): Boolean = true
-}
-
-private class EffectDevToolsToolWindowPanel(private val project: Project) {
+class EffectDevToolsToolWindowPanel(private val project: Project) {
     private val devToolsService = project.getService(EffectDevToolsService::class.java)
     private val debugBridgeService = project.getService(EffectDebugBridgeService::class.java)
 
@@ -162,7 +149,7 @@ private class ClientsTabPanel(
     init {
         clientsList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
-                val selected = clientsList.selectedValue as? RuntimeClientSnapshot
+                val selected = clientsList.selectedValue
                 devToolsService.selectActiveClient(clientId = selected?.id)
                 detailArea.text = selected?.formatClientDetails() ?: "Select a runtime client to inspect details."
             }

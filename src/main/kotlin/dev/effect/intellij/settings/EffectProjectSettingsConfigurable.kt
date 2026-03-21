@@ -5,6 +5,7 @@ import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.TextBrowseFolderListener
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.JBSplitter
@@ -30,7 +31,7 @@ class EffectProjectSettingsConfigurable(private val project: Project) : Searchab
     override fun getDisplayName(): String = "Effect"
 
     override fun createComponent(): JComponent {
-        val ui = EffectProjectSettingsComponent()
+        val ui = EffectProjectSettingsComponent(project)
         ui.reset(settingsService.currentSettings())
         component = ui
         return ui.panel
@@ -58,7 +59,7 @@ class EffectProjectSettingsConfigurable(private val project: Project) : Searchab
     }
 }
 
-private class EffectProjectSettingsComponent {
+private class EffectProjectSettingsComponent(private val project: Project) {
     private val binaryMode = ComboBox(EffectBinaryMode.entries.toTypedArray())
     private val pinnedVersion = JBTextField()
     private val manualBinaryPath = TextFieldWithBrowseButton()
@@ -79,12 +80,11 @@ private class EffectProjectSettingsComponent {
     private var storedInjectDebugConfigurationTypes: List<String> = listOf("Node.js")
 
     val panel: JComponent = JPanel(BorderLayout()).apply {
-        manualBinaryPath.addBrowseFolderListener(
-            "Select @effect/tsgo binary",
-            "Choose the native tsgo executable for manual mode.",
-            null,
-            FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor(),
-        )
+        val manualBinaryDescriptor = FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor().apply {
+            title = "Select @effect/tsgo binary"
+            description = "Choose the native tsgo executable for manual mode."
+        }
+        manualBinaryPath.addBrowseFolderListener(TextBrowseFolderListener(manualBinaryDescriptor, project))
 
         val binaryPanel = FormBuilder.createFormBuilder()
             .addLabeledComponent("Binary mode", binaryMode)

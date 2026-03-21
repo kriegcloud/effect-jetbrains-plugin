@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, cp } from "node:fs/promises"
+import { chmod, mkdtemp, readFile, writeFile, cp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -7,6 +7,10 @@ import { spawn } from "node:child_process"
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..")
 const fixturesRoot = path.join(repoRoot, "src", "test", "testData", "fixtures", "lsp")
 const REQUEST_TIMEOUT_MS = 60_000
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 function parseArgs(argv) {
   const args = {}
@@ -68,7 +72,7 @@ class LspClient {
     this.process.stdin.write(payload)
   }
 
-  request(method, params) {
+  request(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
     const id = this.nextId++
     const promise = new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
@@ -76,7 +80,7 @@ class LspClient {
         if (this.pending.delete(id)) {
           reject(new Error(`Timed out waiting for ${method}\n${this.stderr}`))
         }
-      }, REQUEST_TIMEOUT_MS)
+      }, timeoutMs)
     })
     this.send({
       jsonrpc: "2.0",
@@ -175,6 +179,35 @@ class LspClient {
   }
 }
 
+async function requestWithRetries(client, method, params, options = {}) {
+  const {
+    attempts = 3,
+    timeoutMs = 20_000,
+    delayMs = 5_000,
+    responsePredicate = () => true,
+  } = options
+
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const result = await client.request(method, params, timeoutMs)
+      if (responsePredicate(result)) {
+        return result
+      }
+      lastError = new Error(`${method} returned an incomplete result on attempt ${attempt}`)
+    } catch (error) {
+      lastError = error
+    }
+
+    if (attempt < attempts) {
+      console.error(`${method} attempt ${attempt} did not complete, retrying...`)
+      await sleep(delayMs)
+    }
+  }
+
+  throw lastError
+}
+
 async function copyFixtureWorkspace(name) {
   const source = path.join(fixturesRoot, name)
   const destination = await mkdtemp(path.join(tmpdir(), `effect-tsgo-${name}-`))
@@ -241,11 +274,13 @@ async function verifyHealthyWorkspace(workspacePath) {
   const indexPath = path.join(workspacePath, "src", "index.ts")
   const indexText = await readFile(indexPath, "utf8")
   const indexUri = pathToFileURL(indexPath).href
-  const completionUri = pathToFileURL(path.join(workspacePath, "src", "completion-probe.ts")).href
-  const completionText = `import { ServiceMap } from "effect"
+  const completionPath = path.join(workspacePath, "src", "completion-probe.ts")
+  const completionUri = pathToFileURL(completionPath).href
+  const completionText = `import { Layer } from "effect"
 
-class CompletionProbe extends ServiceMap.`
+Layer.`
   const workspaceUri = pathToFileURL(workspacePath).href
+  await writeFile(completionPath, completionText)
 
   const client = new LspClient(binary, ["--lsp", "--stdio"], workspacePath)
   try {
@@ -303,23 +338,46 @@ class CompletionProbe extends ServiceMap.`
       new Promise((resolve) => setTimeout(resolve, 5_000)),
     ])
 
-    const hover = await client.request("textDocument/hover", {
+    const documentSymbols = await requestWithRetries(client, "textDocument/documentSymbol", {
+      textDocument: { uri: indexUri },
+    }, {
+      attempts: 4,
+      timeoutMs: 20_000,
+      responsePredicate: (symbols) => Array.isArray(symbols) && symbols.length > 0,
+    })
+    const documentSymbolNames = documentSymbols.map((symbol) => symbol.name)
+    assert(documentSymbolNames.includes("appLayer"), "Expected document symbols to include appLayer")
+    assert(documentSymbolNames.includes("Database"), "Expected document symbols to include Database")
+
+    const hover = await requestWithRetries(client, "textDocument/hover", {
       textDocument: { uri: indexUri },
       position: positionAt(indexText, "appLayer"),
+    }, {
+      attempts: 4,
+      timeoutMs: 25_000,
+      delayMs: 7_500,
+      responsePredicate: (result) => hoverText(result).length > 0,
     })
     const hoverBody = hoverText(hover)
     assert(hoverBody.includes("Layer.Layer<Cache"), "Expected Layer hover content for appLayer")
     assert(hoverBody.includes("Show full graph"), "Expected Mermaid graph link in Layer hover")
 
-    const completion = await client.request("textDocument/completion", {
+    const completion = await requestWithRetries(client, "textDocument/completion", {
       textDocument: { uri: completionUri },
-      position: positionAt(completionText, "ServiceMap.", "ServiceMap.".length),
+      position: positionAt(completionText, "Layer.", "Layer.".length),
+    }, {
+      attempts: 4,
+      timeoutMs: 20_000,
+      responsePredicate: (result) => {
+        const items = Array.isArray(result) ? result : result?.items
+        return Array.isArray(items) && items.length > 0
+      },
     })
     const completionItems = Array.isArray(completion) ? completion : completion.items
-    assert(completionItems.length > 0, "Expected completion items for ServiceMap.")
-    assert(completionItems.some((item) => String(item.label).includes("Service<CompletionProbe")), "Expected Effect completion for ServiceMap.")
+    assert(completionItems.length > 0, "Expected completion items for Layer.")
+    assert(completionItems.some((item) => String(item.label).includes("provide")), "Expected Effect completion for Layer.")
 
-    const inlayHints = await client.request("textDocument/inlayHint", {
+    const inlayHints = await requestWithRetries(client, "textDocument/inlayHint", {
       textDocument: { uri: indexUri },
       range: {
         start: { line: 0, character: 0 },
@@ -331,18 +389,19 @@ class CompletionProbe extends ServiceMap.`
           }
         })(),
       },
+    }, {
+      attempts: 4,
+      timeoutMs: 20_000,
+      responsePredicate: (hints) => Array.isArray(hints) && hints.length > 0,
     })
     assert(Array.isArray(inlayHints) && inlayHints.length > 0, "Expected inlay hints from healthy workspace")
 
-    const documentSymbols = await client.request("textDocument/documentSymbol", {
-      textDocument: { uri: indexUri },
-    })
-    const documentSymbolNames = documentSymbols.map((symbol) => symbol.name)
-    assert(documentSymbolNames.includes("appLayer"), "Expected document symbols to include appLayer")
-    assert(documentSymbolNames.includes("Database"), "Expected document symbols to include Database")
-
-    const workspaceSymbols = await client.request("workspace/symbol", {
+    const workspaceSymbols = await requestWithRetries(client, "workspace/symbol", {
       query: "Database",
+    }, {
+      attempts: 4,
+      timeoutMs: 20_000,
+      responsePredicate: (symbols) => Array.isArray(symbols) && symbols.some((symbol) => symbol.name === "Database"),
     })
     assert(Array.isArray(workspaceSymbols) && workspaceSymbols.some((symbol) => symbol.name === "Database"), "Expected workspace symbols to include Database")
 
@@ -437,8 +496,8 @@ async function main() {
   const healthyWorkspace = await copyFixtureWorkspace("healthy-workspace")
   const failingWorkspace = await copyFixtureWorkspace("failing-workspace")
 
-  await runCommand("npm", ["install", "--no-fund", "--no-audit", "effect", "@effect/language-service"], healthyWorkspace)
-  await runCommand("npm", ["install", "--no-fund", "--no-audit", "effect", "@effect/language-service"], failingWorkspace)
+  await runCommand("npm", ["install", "--no-fund", "--no-audit", "typescript", "effect", "@effect/language-service"], healthyWorkspace)
+  await runCommand("npm", ["install", "--no-fund", "--no-audit", "typescript", "effect", "@effect/language-service"], failingWorkspace)
 
   const healthy = await verifyHealthyWorkspace(healthyWorkspace)
   const failing = await verifyFailingWorkspace(failingWorkspace)

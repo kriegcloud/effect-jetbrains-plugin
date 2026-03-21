@@ -113,7 +113,7 @@ class EffectBinaryService {
         require(path.toString().isNotBlank()) { "Manual binary path is blank." }
         require(Files.exists(path)) { "Manual binary path does not exist: $path" }
         require(Files.isRegularFile(path)) { "Manual binary path must point to a file: $path" }
-        ensureExecutable(path)
+        require(Files.isExecutable(path)) { "Manual binary path must be executable: $path" }
     }
 
     private fun managedCacheRoot(): Path {
@@ -176,7 +176,7 @@ class EffectBinaryService {
             GzipCompressorInputStream(BufferedInputStream(rawInput)).use { gzipInput ->
                 TarArchiveInputStream(gzipInput).use { tarInput ->
                     while (true) {
-                        val entry = tarInput.nextTarEntry ?: break
+                        val entry = tarInput.nextEntry ?: break
                         val entryPath = destinationRoot.resolve(entry.name).normalize()
                         if (!entryPath.startsWith(destinationRoot)) {
                             throw EffectBinaryException("Refusing to extract archive entry outside the cache root: ${entry.name}")

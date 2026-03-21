@@ -12,6 +12,7 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermission
 
 class EffectBinaryServiceTest : BasePlatformTestCase() {
     private lateinit var server: HttpServer
@@ -100,6 +101,28 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         assertEquals(manual, resolution.binaryPath)
     }
 
+    fun testManualModeRejectsNonExecutableBinaryWithoutMutatingIt() {
+        val manual = Files.createTempFile(tempDir, "manual-non-exec", ".tmp")
+        Files.writeString(manual, "manual")
+        makeNonExecutable(manual)
+
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.MANUAL,
+                manualBinaryPath = manual.toString(),
+            ),
+        )
+
+        try {
+            EffectBinaryService.getInstance().ensureAvailable(project)
+            fail("Expected manual mode to reject a non-executable binary")
+        } catch (error: IllegalArgumentException) {
+            assertTrue(error.message?.contains("executable") == true)
+        }
+
+        assertFalse(Files.isExecutable(manual))
+    }
+
     private fun registerLatestEndpoints(version: String) {
         server.createContext("/@effect/tsgo") { exchange ->
             respondJson(exchange, """{"dist-tags":{"latest":"$version"}}""")
@@ -145,5 +168,22 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         exchange.responseHeaders.add("Content-Type", "application/json")
         exchange.sendResponseHeaders(200, bytes.size.toLong())
         exchange.responseBody.use { it.write(bytes) }
+    }
+
+    private fun makeNonExecutable(path: Path) {
+        if (System.getProperty("os.name").contains("win", ignoreCase = true)) {
+            path.toFile().setExecutable(false, false)
+            return
+        }
+
+        Files.setPosixFilePermissions(
+            path,
+            setOf(
+                PosixFilePermission.OWNER_READ,
+                PosixFilePermission.OWNER_WRITE,
+                PosixFilePermission.GROUP_READ,
+                PosixFilePermission.OTHERS_READ,
+            ),
+        )
     }
 }

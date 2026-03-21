@@ -388,7 +388,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             }
 
             "Frequency" -> {
-                val occurrences = node.path("state").path("occurrences").fields().asSequence().map { it.key to it.value }.toList()
+                val occurrences = node.path("state").path("occurrences").properties().asSequence().map { it.key to it.value }.toList()
                     .sortedBy { it.first }
                 occurrences.forEach { (key, value) ->
                     details += RuntimeDetailEntry(key, "${formattedScalar(value)}$unitSuffix")
@@ -417,7 +417,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
                 RuntimeMetricTagSnapshot(key = key, value = scalarText(tag.path("value")))
             }
 
-            node.isObject -> node.fields().asSequence().map { (key, value) ->
+            node.isObject -> node.properties().asSequence().map { (key, value) ->
                 RuntimeMetricTagSnapshot(key = key, value = scalarText(value))
             }.toList()
 
@@ -456,7 +456,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
                 return@forEach
             }
 
-            val bucketCount = if (previousAccumulated == null) accumulated else accumulated - previousAccumulated!!
+            val bucketCount = previousAccumulated?.let { accumulated - it } ?: accumulated
             val midpoint = (boundary + previousBoundary) / 2
             multiplied += midpoint * bucketCount
             previousBoundary = boundary
@@ -489,7 +489,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         }
 
     private fun parseObject(node: JsonNode, prefix: String = ""): List<RuntimeDetailEntry> =
-        node.fields().asSequence().map { (key, value) -> RuntimeDetailEntry("$prefix$key", scalarText(value)) }.toList()
+        node.properties().asSequence().map { (key, value) -> RuntimeDetailEntry("$prefix$key", scalarText(value)) }.toList()
 
     private fun formattedScalar(node: JsonNode?): String =
         node?.doubleValueOrNull()?.let(::formatNumber) ?: scalarText(node)
