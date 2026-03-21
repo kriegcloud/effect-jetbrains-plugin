@@ -1,5 +1,6 @@
 package dev.effect.intellij.debug
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.intellij.util.EventDispatcher
@@ -26,6 +27,10 @@ class EffectDebugBridgeService {
 
     fun addListener(listener: EffectDebugBridgeListener) {
         dispatcher.addListener(listener)
+    }
+
+    fun addListener(listener: EffectDebugBridgeListener, parentDisposable: Disposable) {
+        dispatcher.addListener(listener, parentDisposable)
     }
 
     fun attachToSession(project: Project, sessionId: String) {

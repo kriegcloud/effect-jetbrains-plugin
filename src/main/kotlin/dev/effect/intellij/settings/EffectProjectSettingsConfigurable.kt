@@ -37,7 +37,7 @@ class EffectProjectSettingsConfigurable(private val project: Project) : Searchab
         return ui.panel
     }
 
-    override fun isModified(): Boolean = component?.toSettings() != settingsService.currentSettings()
+    override fun isModified(): Boolean = component?.toSettings()?.let { it != settingsService.currentSettings() } ?: false
 
     override fun apply() {
         val ui = component ?: return

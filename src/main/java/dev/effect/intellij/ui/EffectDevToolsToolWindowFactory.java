@@ -9,8 +9,12 @@ import org.jetbrains.annotations.NotNull;
 public final class EffectDevToolsToolWindowFactory implements ToolWindowFactory {
     @Override
     public void createToolWindowContent(@NotNull Project project, @NotNull ToolWindow toolWindow) {
+        if (toolWindow.getContentManager().getContentCount() > 0) {
+            return;
+        }
         EffectDevToolsToolWindowPanel panel = new EffectDevToolsToolWindowPanel(project);
         var content = ContentFactory.getInstance().createContent(panel.getComponent(), "", false);
+        content.setDisposer(panel);
         toolWindow.getContentManager().addContent(content);
     }
 

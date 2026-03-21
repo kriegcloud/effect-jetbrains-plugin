@@ -5,6 +5,12 @@ import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
 
 class EffectSettingsValidationTest : BasePlatformTestCase() {
+    fun testConfigurableIsNotModifiedBeforeComponentCreation() {
+        val configurable = EffectProjectSettingsConfigurable(project)
+
+        assertFalse(configurable.isModified)
+    }
+
     fun testPinnedModeRequiresVersion() {
         val service = project.getService(EffectProjectSettingsService::class.java)
 

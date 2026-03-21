@@ -4,6 +4,7 @@ import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
@@ -38,9 +39,11 @@ import javax.swing.event.TreeSelectionListener
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
-class EffectDevToolsToolWindowPanel(private val project: Project) {
+class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
     private val devToolsService = project.getService(EffectDevToolsService::class.java)
     private val debugBridgeService = project.getService(EffectDebugBridgeService::class.java)
+    @Volatile
+    private var disposed = false
 
     val component: JComponent = SimpleToolWindowPanel(true, true).apply {
         setToolbar(
@@ -68,18 +71,18 @@ class EffectDevToolsToolWindowPanel(private val project: Project) {
         val tracerPanel = TracerTabPanel(devToolsService)
         val debugPanel = DebugTabGroup(debugBridgeService)
 
-        devToolsService.addListener { state ->
+        devToolsService.addListener({ state ->
             onEdt {
                 clientsPanel.refresh(state)
                 metricsPanel.refresh(state)
                 tracerPanel.refresh(state)
             }
-        }
-        debugBridgeService.addListener { state ->
+        }, this)
+        debugBridgeService.addListener({ state ->
             onEdt {
                 debugPanel.refresh(state)
             }
-        }
+        }, this)
 
         val initialRuntimeState = devToolsService.currentState()
         clientsPanel.refresh(initialRuntimeState)
@@ -96,7 +99,15 @@ class EffectDevToolsToolWindowPanel(private val project: Project) {
     }
 
     private fun onEdt(block: () -> Unit) {
-        ApplicationManager.getApplication().invokeLater(block)
+        ApplicationManager.getApplication().invokeLater {
+            if (!project.isDisposed && !disposed) {
+                block()
+            }
+        }
+    }
+
+    override fun dispose() {
+        disposed = true
     }
 }
 

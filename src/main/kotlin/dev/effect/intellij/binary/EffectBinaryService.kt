@@ -26,6 +26,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
 import java.time.Duration
+import java.util.UUID
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.inputStream
@@ -33,6 +34,7 @@ import kotlin.io.path.inputStream
 @Service(Service.Level.APP)
 class EffectBinaryService {
     private val log = logger<EffectBinaryService>()
+    private val cacheOperationLock = Any()
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .followRedirects(HttpClient.Redirect.NORMAL)
         .connectTimeout(Duration.ofSeconds(20))
@@ -77,11 +79,12 @@ class EffectBinaryService {
                 val versionRoot = cacheRoot.resolve(version).resolve(platform.packageName)
                 val binaryPath = versionRoot.resolve("package").resolve("lib").resolve(platform.binaryName)
 
-                if (!binaryPath.exists()) {
-                    downloadPackage(platform.packageName, version, versionRoot, binaryPath)
+                synchronized(cacheOperationLock) {
+                    if (!binaryPath.exists()) {
+                        installManagedPackage(platform.packageName, version, versionRoot, binaryPath)
+                    }
+                    ensureExecutable(binaryPath)
                 }
-
-                ensureExecutable(binaryPath)
 
                 BinaryResolution(
                     mode = settings.binaryMode,
@@ -101,20 +104,24 @@ class EffectBinaryService {
             return
         }
 
-        val cacheRoot = managedCacheRoot()
-        val version = settings.pinnedVersion.takeIf { it.isNotBlank() }
-        if (settings.binaryMode == EffectBinaryMode.PINNED && version != null) {
-            cacheRoot.resolve(version).deleteRecursively()
-        } else {
-            cacheRoot.deleteRecursively()
+        synchronized(cacheOperationLock) {
+            val cacheRoot = managedCacheRoot()
+            val version = settings.pinnedVersion.takeIf { it.isNotBlank() }
+            if (settings.binaryMode == EffectBinaryMode.PINNED && version != null) {
+                cacheRoot.resolve(version).deleteRecursively()
+            } else {
+                cacheRoot.deleteRecursively()
+            }
         }
     }
 
     private fun validateManualBinary(path: Path) {
-        require(path.toString().isNotBlank()) { "Manual binary path is blank." }
-        require(Files.exists(path)) { "Manual binary path does not exist: $path" }
-        require(Files.isRegularFile(path)) { "Manual binary path must point to a file: $path" }
-        require(Files.isExecutable(path)) { "Manual binary path must be executable: $path" }
+        when {
+            path.toString().isBlank() -> throw EffectBinaryException("Manual binary path is blank.")
+            !Files.exists(path) -> throw EffectBinaryException("Manual binary path does not exist: $path")
+            !Files.isRegularFile(path) -> throw EffectBinaryException("Manual binary path must point to a file: $path")
+            !Files.isExecutable(path) -> throw EffectBinaryException("Manual binary path must be executable: $path")
+        }
     }
 
     private fun managedCacheRoot(): Path {
@@ -136,7 +143,7 @@ class EffectBinaryService {
         }
     }
 
-    private fun downloadPackage(packageName: String, version: String, versionRoot: Path, binaryPath: Path) {
+    private fun installManagedPackage(packageName: String, version: String, versionRoot: Path, binaryPath: Path) {
         val metadataUrl = "${registryBaseUrl.trimEnd('/')}/${encodePackageName(packageName)}/$version"
         val metadataResponse = sendStringRequest(HttpRequest.newBuilder(URI.create(metadataUrl)).GET().build())
         val metadataJson = EffectJson.mapper.readTree(metadataResponse.body())
@@ -146,6 +153,8 @@ class EffectBinaryService {
 
         val tempRoot = Files.createTempDirectory("effect-tsgo-download")
         val archivePath = tempRoot.resolve("package.tgz")
+        val stagingRoot = versionRoot.resolveSibling("${versionRoot.fileName}.staging-${UUID.randomUUID()}")
+        val stagedBinary = stagingRoot.resolve("package").resolve("lib").resolve(binaryPath.fileName.toString())
         val archiveResponse = sendFileRequest(HttpRequest.newBuilder(URI.create(tarballUrl)).GET().build(), archivePath)
         if (archiveResponse.statusCode() !in 200..299) {
             archivePath.deleteIfExists()
@@ -153,19 +162,23 @@ class EffectBinaryService {
         }
 
         try {
-            extractArchive(archivePath, versionRoot)
-        } catch (error: Exception) {
+            extractArchive(archivePath, stagingRoot)
+            if (!stagedBinary.exists()) {
+                throw EffectBinaryException(
+                    "Downloaded $packageName@$version successfully, but the native binary was not found at $stagedBinary.",
+                )
+            }
+            ensureExecutable(stagedBinary)
             versionRoot.deleteRecursively()
+            EffectFileUtil.atomicMove(stagingRoot, versionRoot)
+        } catch (error: Exception) {
+            if (error is EffectBinaryException) {
+                throw error
+            }
             throw EffectBinaryException("Failed to extract $packageName@$version: ${error.message}", error)
         } finally {
             tempRoot.deleteRecursively()
-        }
-
-        if (!binaryPath.exists()) {
-            versionRoot.deleteRecursively()
-            throw EffectBinaryException(
-                "Downloaded $packageName@$version successfully, but the native binary was not found at $binaryPath.",
-            )
+            stagingRoot.deleteRecursively()
         }
     }
 

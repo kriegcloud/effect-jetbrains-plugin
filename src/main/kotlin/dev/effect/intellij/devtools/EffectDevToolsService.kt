@@ -68,6 +68,10 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         dispatcher.addListener(listener)
     }
 
+    fun addListener(listener: EffectDevToolsListener, parentDisposable: Disposable) {
+        dispatcher.addListener(listener, parentDisposable)
+    }
+
     fun startServer(project: Project = this.project) {
         val settings = EffectProjectSettingsService.getInstance(project).currentSettings()
 
@@ -108,6 +112,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             val existing = server
             running = false
             server = null
+            lastError = null
             clients.clear()
             connectionToClientId.clear()
             messageBuffers.clear()
@@ -544,13 +549,32 @@ class EffectDevToolsService(private val project: Project) : Disposable {
 
     private fun setRuntimeError(message: String, shutdown: Boolean) {
         log.warn(message)
-        synchronized(lock) {
+        val serverToStop = synchronized(lock) {
             lastError = message
             if (shutdown) {
+                metricsPollFuture?.cancel(false)
+                metricsPollFuture = null
                 running = false
+                val currentServer = server
                 server = null
+                clients.clear()
+                connectionToClientId.clear()
+                messageBuffers.clear()
+                activeClientId = null
+                publishLocked()
+                currentServer
+            } else {
+                publishLocked()
+                null
             }
-            publishLocked()
+        }
+
+        if (shutdown) {
+            try {
+                serverToStop?.stop(500)
+            } catch (error: Exception) {
+                log.warn("Failed to stop Effect Dev Tools runtime server after an error", error)
+            }
         }
     }
 

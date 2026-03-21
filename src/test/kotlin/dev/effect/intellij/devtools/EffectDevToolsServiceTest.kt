@@ -150,6 +150,36 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         }
     }
 
+    fun testStoppingRuntimeServerClearsStaleErrorState() {
+        val freePort = ServerSocket(0).use { it.localPort }
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(devToolsPort = freePort),
+        )
+
+        val service = project.getService(EffectDevToolsService::class.java)
+        service.startServer()
+
+        val client = createConnectedClient(freePort)
+
+        try {
+            client.send("""{"_tag":"MetricsSnapshot","metrics":[""" + "\n")
+
+            waitForCondition {
+                service.currentState().error?.contains("Malformed runtime payload") == true
+            }
+
+            service.stopServer()
+
+            val state = service.currentState()
+            assertFalse(state.running)
+            assertNull(state.error)
+            assertEmpty(state.clients)
+        } finally {
+            client.closeBlocking()
+            service.stopServer()
+        }
+    }
+
     override fun getTestDataPath(): String = Path.of("src", "test", "testData").toAbsolutePath().toString()
 
     private fun waitForCondition(timeoutMs: Long = 5000, condition: () -> Boolean) {

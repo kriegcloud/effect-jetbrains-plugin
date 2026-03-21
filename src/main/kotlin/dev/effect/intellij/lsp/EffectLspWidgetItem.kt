@@ -40,6 +40,12 @@ class EffectLspWidgetItem(
 
     override fun createAdditionalInlineActions(): List<AnAction> =
         listOf(
+            object : AnAction("Restart", "Restart the Effect language server", AllIcons.Actions.Restart) {
+                override fun actionPerformed(event: AnActionEvent) {
+                    lspServer.project.getService(EffectLspProjectService::class.java)
+                        .restart("Effect LSP restart requested from the widget")
+                }
+            },
             object : AnAction("Settings", "Open Effect settings", AllIcons.General.Settings) {
                 override fun actionPerformed(event: AnActionEvent) {
                     ShowSettingsUtil.getInstance().showSettingsDialog(lspServer.project, EffectProjectSettingsConfigurable::class.java)

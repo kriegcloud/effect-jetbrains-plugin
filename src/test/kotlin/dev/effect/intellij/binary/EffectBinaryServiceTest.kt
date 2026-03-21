@@ -13,12 +13,19 @@ import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class EffectBinaryServiceTest : BasePlatformTestCase() {
     private lateinit var server: HttpServer
+    private lateinit var serverExecutor: ExecutorService
     private lateinit var tempDir: Path
     private lateinit var platformPackage: String
     private lateinit var binaryName: String
+    private lateinit var originalRegistryBaseUrl: String
 
     override fun setUp() {
         super.setUp()
@@ -38,12 +45,17 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         platformPackage = "@effect/tsgo-$os-$arch"
         binaryName = if (os == "win32") "tsgo.exe" else "tsgo"
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        serverExecutor = Executors.newCachedThreadPool()
+        server.executor = serverExecutor
         server.start()
+        originalRegistryBaseUrl = EffectBinaryService.getInstance().registryBaseUrl
     }
 
     override fun tearDown() {
         try {
             server.stop(0)
+            serverExecutor.shutdownNow()
+            EffectBinaryService.getInstance().registryBaseUrl = originalRegistryBaseUrl
         } finally {
             super.tearDown()
         }
@@ -116,7 +128,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         try {
             EffectBinaryService.getInstance().ensureAvailable(project)
             fail("Expected manual mode to reject a non-executable binary")
-        } catch (error: IllegalArgumentException) {
+        } catch (error: EffectBinaryException) {
             assertTrue(error.message?.contains("executable") == true)
         }
 
@@ -136,6 +148,69 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
             fail("Expected manual mode to reject an invalid filesystem path")
         } catch (error: EffectBinaryException) {
             assertTrue(error.message?.contains("valid filesystem path") == true)
+        }
+    }
+
+    fun testConcurrentManagedResolutionInstallsIntoCacheOnce() {
+        val version = "4.5.6"
+        val tarballName = "${platformPackage.substringAfter('/')}-${version}.tgz"
+        val tarballPath = tempDir.resolve(tarballName)
+        val cacheRoot = tempDir.resolve("managed-cache")
+        val metadataRequests = AtomicInteger(0)
+        val tarballRequests = AtomicInteger(0)
+        val startGate = CountDownLatch(1)
+        writeTarball(tarballPath)
+
+        server.createContext("/$platformPackage/$version") { exchange ->
+            metadataRequests.incrementAndGet()
+            respondJson(
+                exchange,
+                """{"dist":{"tarball":"http://127.0.0.1:${server.address.port}/tarballs/$tarballName"}}""",
+            )
+        }
+        server.createContext("/tarballs/$tarballName") { exchange ->
+            tarballRequests.incrementAndGet()
+            Thread.sleep(250)
+            val bytes = Files.readAllBytes(tarballPath)
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+
+        val binaryService = EffectBinaryService.getInstance()
+        binaryService.registryBaseUrl = "http://127.0.0.1:${server.address.port}"
+        val applicationStateService = dev.effect.intellij.settings.EffectApplicationStateService.getInstance()
+        val originalApplicationState = applicationStateService.currentState()
+        applicationStateService.loadState(originalApplicationState.copy(binaryCacheDirOverride = cacheRoot.toString()))
+
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.PINNED,
+                pinnedVersion = version,
+            ),
+        )
+
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val first = executor.submit<BinaryResolution> {
+                startGate.await(5, TimeUnit.SECONDS)
+                binaryService.ensureAvailable(project)
+            }
+            val second = executor.submit<BinaryResolution> {
+                startGate.await(5, TimeUnit.SECONDS)
+                binaryService.ensureAvailable(project)
+            }
+            startGate.countDown()
+
+            val firstResolution = first.get(10, TimeUnit.SECONDS)
+            val secondResolution = second.get(10, TimeUnit.SECONDS)
+
+            assertEquals(firstResolution.binaryPath, secondResolution.binaryPath)
+            assertTrue(Files.exists(firstResolution.binaryPath))
+            assertEquals(1, metadataRequests.get())
+            assertEquals(1, tarballRequests.get())
+        } finally {
+            executor.shutdownNow()
+            applicationStateService.loadState(originalApplicationState)
         }
     }
 
