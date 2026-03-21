@@ -12,6 +12,7 @@ import dev.effect.intellij.core.EffectJson
 import dev.effect.intellij.core.EffectPluginConstants
 import dev.effect.intellij.status.EffectStatusService
 import java.nio.file.Files
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 
 @Service(Service.Level.PROJECT)
@@ -65,11 +66,15 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
             if (settings.manualBinaryPath.isBlank()) {
                 problems += SettingProblem("manualBinaryPath", "Manual mode requires an executable path.")
             } else {
-                val manualPath = Path.of(settings.manualBinaryPath)
-                when {
-                    !Files.exists(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path does not exist.")
-                    !Files.isRegularFile(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path must point to a file.")
-                    !Files.isExecutable(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path must be executable.")
+                try {
+                    val manualPath = Path.of(settings.manualBinaryPath)
+                    when {
+                        !Files.exists(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path does not exist.")
+                        !Files.isRegularFile(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path must point to a file.")
+                        !Files.isExecutable(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path must be executable.")
+                    }
+                } catch (_: InvalidPathException) {
+                    problems += SettingProblem("manualBinaryPath", "The manual binary path is not a valid filesystem path.")
                 }
             }
         }

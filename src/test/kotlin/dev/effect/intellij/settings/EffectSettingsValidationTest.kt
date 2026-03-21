@@ -32,6 +32,20 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         assertTrue(problems.any { it.field == "workspaceConfigurationJson" })
     }
 
+    fun testJsonValidationRejectsNonObjectPayloads() {
+        val service = project.getService(EffectProjectSettingsService::class.java)
+
+        val problems = service.validate(
+            EffectProjectSettings(
+                initializationOptionsJson = """["not-an-object"]""",
+                workspaceConfigurationJson = """"still-not-an-object"""",
+            ),
+        )
+
+        assertTrue(problems.any { it.field == "initializationOptionsJson" && it.message.contains("JSON object") })
+        assertTrue(problems.any { it.field == "workspaceConfigurationJson" && it.message.contains("JSON object") })
+    }
+
     fun testManualModeAcceptsExistingExecutable() {
         val service = project.getService(EffectProjectSettingsService::class.java)
         val executable = Files.createTempFile("effect-manual", if (System.getProperty("os.name").contains("win", ignoreCase = true)) ".exe" else "")
@@ -61,6 +75,19 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         )
 
         assertTrue(problems.any { it.field == "manualBinaryPath" && it.message.contains("executable") })
+    }
+
+    fun testManualModeRejectsInvalidFilesystemPath() {
+        val service = project.getService(EffectProjectSettingsService::class.java)
+
+        val problems = service.validate(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.MANUAL,
+                manualBinaryPath = "\u0000invalid",
+            ),
+        )
+
+        assertTrue(problems.any { it.field == "manualBinaryPath" && it.message.contains("valid filesystem path") })
     }
 
     private fun makeNonExecutable(path: java.nio.file.Path) {

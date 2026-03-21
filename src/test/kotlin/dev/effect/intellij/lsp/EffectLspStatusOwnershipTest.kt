@@ -171,11 +171,15 @@ class EffectLspStatusOwnershipTest : BasePlatformTestCase() {
             val workspaceConfiguration = descriptor.getWorkspaceConfiguration(
                 ConfigurationItem().apply { section = "effect" },
             )
+            val nestedWorkspaceConfiguration = descriptor.getWorkspaceConfiguration(
+                ConfigurationItem().apply { section = "effect.inlays" },
+            )
             descriptor.lspServerListener.serverInitialized(InitializeResult())
 
             assertTrue(commandLine.exePath.endsWith(binaryName))
             assertEquals("""{"feature":"enabled"}""", initializationOptions.toString())
             assertEquals(mapOf("inlays" to true), workspaceConfiguration)
+            assertEquals(true, nestedWorkspaceConfiguration)
             assertEquals(EffectLspStatus.RUNNING, project.getService(EffectStatusService::class.java).currentSnapshot().status)
         } finally {
             server.stop(0)

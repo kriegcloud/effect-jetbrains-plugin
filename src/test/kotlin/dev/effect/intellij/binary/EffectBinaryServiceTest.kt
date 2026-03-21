@@ -123,6 +123,22 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         assertFalse(Files.isExecutable(manual))
     }
 
+    fun testManualModeRejectsInvalidFilesystemPath() {
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.MANUAL,
+                manualBinaryPath = "\u0000invalid",
+            ),
+        )
+
+        try {
+            EffectBinaryService.getInstance().ensureAvailable(project)
+            fail("Expected manual mode to reject an invalid filesystem path")
+        } catch (error: EffectBinaryException) {
+            assertTrue(error.message?.contains("valid filesystem path") == true)
+        }
+    }
+
     private fun registerLatestEndpoints(version: String) {
         server.createContext("/@effect/tsgo") { exchange ->
             respondJson(exchange, """{"dist-tags":{"latest":"$version"}}""")

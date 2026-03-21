@@ -34,32 +34,32 @@ class EffectLspServerDescriptor(project: Project) : ProjectWideLspServerDescript
             .activeLaunchConfiguration()
             .initializationOptions
 
-    override fun getWorkspaceConfiguration(configurationItem: ConfigurationItem): Any? {
+    override fun getWorkspaceConfiguration(item: ConfigurationItem): Any? {
         val workspaceConfiguration = project.getService(EffectLspProjectService::class.java)
             .activeLaunchConfiguration()
             .workspaceConfiguration
             ?: return null
 
-        val section = configurationItem.section
+        val section = item.section
         val node = if (section.isNullOrBlank()) {
             workspaceConfiguration
         } else {
-            workspaceConfiguration.path(section)
+            section.split('.').fold(workspaceConfiguration) { current, part -> current.path(part) }
         }
 
         return if (node.isMissingNode || node.isNull) null else EffectJson.mapper.convertValue(node, Any::class.java)
     }
 
     override val lspServerListener: LspServerListener = object : LspServerListener {
-        override fun serverInitialized(initializeResult: InitializeResult) {
+        override fun serverInitialized(params: InitializeResult) {
             project.getService(EffectStatusService::class.java)
                 .markRunning(project.getService(EffectLspProjectService::class.java).activeLaunchConfiguration().resolution.binaryPath.toString())
         }
 
-        override fun serverStopped(restartable: Boolean) {
+        override fun serverStopped(shutdownNormally: Boolean) {
             project.getService(EffectLspProjectService::class.java).clearActiveLaunchConfiguration()
             val status = project.getService(EffectStatusService::class.java)
-            if (restartable) {
+            if (shutdownNormally) {
                 status.markRestartRequired("Effect LSP stopped and can be restarted.")
             } else {
                 status.markError("Effect LSP stopped unexpectedly.")

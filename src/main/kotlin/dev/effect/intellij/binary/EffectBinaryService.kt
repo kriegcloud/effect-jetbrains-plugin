@@ -21,6 +21,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
@@ -47,7 +48,7 @@ class EffectBinaryService {
 
         return when (settings.binaryMode) {
             EffectBinaryMode.MANUAL -> {
-                val manualPath = Path.of(settings.manualBinaryPath)
+                val manualPath = parsePath(settings.manualBinaryPath, "Manual binary path")
                 validateManualBinary(manualPath)
                 BinaryResolution(
                     mode = EffectBinaryMode.MANUAL,
@@ -120,7 +121,7 @@ class EffectBinaryService {
         val state = EffectApplicationStateService.getInstance().currentState()
         val override = state.binaryCacheDirOverride.trim()
         return if (override.isNotBlank()) {
-            EffectFileUtil.ensureDirectory(Path.of(override))
+            EffectFileUtil.ensureDirectory(parsePath(override, "Binary cache override"))
         } else {
             EffectFileUtil.systemCacheDir(EffectPluginConstants.DEFAULT_BINARY_CACHE_DIR)
         }
@@ -275,18 +276,27 @@ class EffectBinaryService {
         if (!exists()) {
             return
         }
-        Files.walk(this)
-            .sorted(Comparator.reverseOrder())
-            .forEach { path ->
-                try {
-                    Files.deleteIfExists(path)
-                } catch (error: Exception) {
-                    log.warn("Failed to delete $path", error)
+        Files.walk(this).use { paths ->
+            paths
+                .sorted(Comparator.reverseOrder())
+                .forEach { path ->
+                    try {
+                        Files.deleteIfExists(path)
+                    } catch (error: Exception) {
+                        log.warn("Failed to delete $path", error)
+                    }
                 }
-            }
+        }
     }
 
     private fun isWindows(): Boolean = System.getProperty("os.name").lowercase().contains("win")
+
+    private fun parsePath(raw: String, label: String): Path =
+        try {
+            Path.of(raw)
+        } catch (error: InvalidPathException) {
+            throw EffectBinaryException("$label is not a valid filesystem path: $raw", error)
+        }
 
     companion object {
         private const val DEFAULT_REGISTRY_BASE_URL = "https://registry.npmjs.org"

@@ -11,7 +11,9 @@ object EffectJson {
         if (raw.isBlank()) {
             return null
         }
-        return mapper.readTree(raw)
+        val node = mapper.readTree(raw)
+        require(node.isObject) { "Expected a JSON object." }
+        return node
     }
 
     fun emptyObject(): ObjectNode = mapper.createObjectNode()
