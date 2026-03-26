@@ -1,5 +1,6 @@
 package dev.effect.intellij.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -357,25 +358,41 @@ private class DebugStatePanel(private val title: String) {
     }
 }
 
-private class StartRuntimeAction(private val project: Project) : AnAction("Start Runtime") {
+private class StartRuntimeAction(private val project: Project) : AnAction(
+    "Start Runtime",
+    "Start the local Effect Dev Tools runtime server",
+    AllIcons.Actions.Execute,
+) {
     override fun actionPerformed(event: AnActionEvent) {
         project.getService(EffectDevToolsService::class.java).startServer()
     }
 }
 
-private class StopRuntimeAction(private val project: Project) : AnAction("Stop Runtime") {
+private class StopRuntimeAction(private val project: Project) : AnAction(
+    "Stop Runtime",
+    "Stop the local Effect Dev Tools runtime server",
+    AllIcons.Run.Stop,
+) {
     override fun actionPerformed(event: AnActionEvent) {
         project.getService(EffectDevToolsService::class.java).stopServer()
     }
 }
 
-private class RestartRuntimeAction(private val project: Project) : AnAction("Restart Runtime") {
+private class RestartRuntimeAction(private val project: Project) : AnAction(
+    "Restart Runtime",
+    "Restart the local Effect Dev Tools runtime server",
+    AllIcons.Run.Restart,
+) {
     override fun actionPerformed(event: AnActionEvent) {
         project.getService(EffectDevToolsService::class.java).restartServer()
     }
 }
 
-private class SelectActiveClientAction(private val project: Project) : AnAction("Select Client") {
+private class SelectActiveClientAction(private val project: Project) : AnAction(
+    "Select Client",
+    "Switch the active runtime client",
+    AllIcons.Nodes.Target,
+) {
     override fun actionPerformed(event: AnActionEvent) {
         val service = project.getService(EffectDevToolsService::class.java)
         val state = service.currentState()
@@ -389,25 +406,41 @@ private class SelectActiveClientAction(private val project: Project) : AnAction(
     }
 }
 
-private class OpenSettingsAction(private val project: Project) : AnAction("Open Settings") {
+private class OpenSettingsAction(private val project: Project) : AnAction(
+    "Open Settings",
+    "Open project-scoped Effect settings",
+    AllIcons.General.Settings,
+) {
     override fun actionPerformed(event: AnActionEvent) {
         ShowSettingsUtil.getInstance().showSettingsDialog(project, EffectProjectSettingsConfigurable::class.java)
     }
 }
 
-private class ResetMetricsAction(private val project: Project) : AnAction("Reset Metrics") {
+private class ResetMetricsAction(private val project: Project) : AnAction(
+    "Reset Metrics",
+    "Clear the current metrics snapshot for the active client",
+    AllIcons.Actions.Refresh,
+) {
     override fun actionPerformed(event: AnActionEvent) {
         project.getService(EffectDevToolsService::class.java).resetMetrics()
     }
 }
 
-private class ResetTracerAction(private val project: Project) : AnAction("Reset Tracer") {
+private class ResetTracerAction(private val project: Project) : AnAction(
+    "Reset Tracer",
+    "Clear the current tracer snapshot for the active client",
+    AllIcons.General.Reset,
+) {
     override fun actionPerformed(event: AnActionEvent) {
         project.getService(EffectDevToolsService::class.java).resetTracer()
     }
 }
 
-private class AttachDebugAction(private val project: Project) : AnAction("Attach Debug") {
+private class AttachDebugAction(private val project: Project) : AnAction(
+    "Attach Debug",
+    "Attach the current JetBrains debug session to Effect Dev Tools",
+    AllIcons.Debugger.AttachToProcess,
+) {
     override fun actionPerformed(event: AnActionEvent) {
         val session = XDebuggerManager.getInstance(project).currentSession
         val bridge = project.getService(EffectDebugBridgeService::class.java)
