@@ -1,13 +1,13 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/core"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var LayerMergeAllWithDependenciesFix = fixable.Fixable{
@@ -19,15 +19,11 @@ var LayerMergeAllWithDependenciesFix = fixable.Fixable{
 }
 
 func runLayerMergeAllWithDependenciesFix(ctx *fixable.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeLayerMergeAllWithDependencies(c, sf)
+	matches := rules.AnalyzeLayerMergeAllWithDependencies(ctx.TypeParser, c, sf)
 	for _, match := range matches {
 		if !match.Location.Intersects(ctx.Span) && !ctx.Span.ContainedBy(match.Location) {
 			continue
@@ -35,7 +31,7 @@ func runLayerMergeAllWithDependenciesFix(ctx *fixable.Context) []ls.CodeAction {
 
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Move layer to Layer.provideMerge",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				// Step A: Delete the provider argument from the mergeAll call
 				if match.ProviderIndex == 0 && len(match.AllArgs) > 1 {
 					// First argument with more args: delete from arg start to next arg start
@@ -79,7 +75,7 @@ func runLayerMergeAllWithDependenciesFix(ctx *fixable.Context) []ls.CodeAction {
 				// Step C: Insert .pipe(Layer.provideMerge(...)) at the end of the call
 				// Use two separate operations because the Suffix dedup logic in the
 				// change tracker skips ")" when the formatted call already ends with ")".
-				tracker.InsertNodeAt(sf, core.TextPos(match.CallNode.End()), provideMergeCall, change.NodeOptions{
+				tracker.InsertNodeAt(sf, core.TextPos(match.CallNode.End()), provideMergeCall, rewriter.NodeOptions{
 					Prefix: ".pipe(",
 				})
 				tracker.InsertText(sf, ctx.BytePosToLSPPosition(match.CallNode.End()), ")")

@@ -1,20 +1,20 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var EffectFnOpportunityFix = fixable.Fixable{
 	Name:        "effectFnOpportunity",
 	Description: "Convert to Effect.fn",
-	ErrorCodes:  []int32{tsdiag.Can_be_rewritten_as_a_reusable_function_Colon_0_effect_effectFnOpportunity.Code()},
+	ErrorCodes:  []int32{tsdiag.This_expression_can_be_rewritten_in_the_reusable_function_form_0_effect_effectFnOpportunity.Code()},
 	FixIDs: []string{
 		"effectFnOpportunity_toEffectFnWithSpan",
 		"effectFnOpportunity_toEffectFnUntraced",
@@ -27,17 +27,13 @@ var EffectFnOpportunityFix = fixable.Fixable{
 
 func runEffectFnOpportunityFix(ctx *fixable.Context) []ls.CodeAction {
 
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	effectConfig := c.Program().Options().Effect
+	effectConfig := ctx.Options
 
-	matches := rules.AnalyzeEffectFnOpportunity(c, sf)
+	matches := rules.AnalyzeEffectFnOpportunity(ctx.TypeParser, c, sf)
 
 	var result *typeparser.EffectFnOpportunityResult
 	for _, match := range matches {
@@ -64,7 +60,7 @@ func runEffectFnOpportunityFix(ctx *fixable.Context) []ls.CodeAction {
 		}
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Convert to Effect.fn (with span from withSpan)",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				traceNode := tracker.DeepCloneNode(result.ExplicitTraceExpression)
 				effectFnBuildReplacement(tracker, sf, result, "fn", traceNode, pipeArgs, isFuncDecl)
 			},
@@ -77,7 +73,7 @@ func runEffectFnOpportunityFix(ctx *fixable.Context) []ls.CodeAction {
 	if effectConfig.EffectFnIncludes(etscore.EffectFnUntraced) && result.GeneratorFunction != nil {
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Convert to Effect.fnUntraced",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				effectFnBuildReplacement(tracker, sf, result, "fnUntraced", nil, result.PipeArguments, isFuncDecl)
 			},
 		}); action != nil {
@@ -89,7 +85,7 @@ func runEffectFnOpportunityFix(ctx *fixable.Context) []ls.CodeAction {
 	if effectConfig.EffectFnIncludes(etscore.EffectFnNoSpan) {
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Convert to Effect.fn (no span)",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				effectFnBuildReplacement(tracker, sf, result, "fn", nil, result.PipeArguments, isFuncDecl)
 			},
 		}); action != nil {
@@ -101,7 +97,7 @@ func runEffectFnOpportunityFix(ctx *fixable.Context) []ls.CodeAction {
 	if effectConfig.EffectFnIncludes(etscore.EffectFnInferredSpan) && result.ExplicitTraceExpression == nil && result.InferredTraceName != "" {
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Convert to Effect.fn(\"" + result.InferredTraceName + "\")",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				traceNode := tracker.NewStringLiteral(result.InferredTraceName, 0)
 				effectFnBuildReplacement(tracker, sf, result, "fn", traceNode, result.PipeArguments, isFuncDecl)
 			},
@@ -116,7 +112,7 @@ func runEffectFnOpportunityFix(ctx *fixable.Context) []ls.CodeAction {
 		(!effectConfig.EffectFnIncludes(etscore.EffectFnInferredSpan) || result.SuggestedTraceName != result.InferredTraceName) {
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Convert to Effect.fn(\"" + result.SuggestedTraceName + "\")",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				traceNode := tracker.NewStringLiteral(result.SuggestedTraceName, 0)
 				effectFnBuildReplacement(tracker, sf, result, "fn", traceNode, result.PipeArguments, isFuncDecl)
 			},
@@ -131,7 +127,7 @@ func runEffectFnOpportunityFix(ctx *fixable.Context) []ls.CodeAction {
 // effectFnBuildReplacement builds the complete Effect.fn/fnUntraced replacement AST node
 // and applies it via tracker.ReplaceNode.
 func effectFnBuildReplacement(
-	tracker *change.Tracker,
+	tracker *rewriter.Tracker,
 	sf *ast.SourceFile,
 	result *typeparser.EffectFnOpportunityResult,
 	variant string,
@@ -217,7 +213,7 @@ func effectFnBuildReplacement(
 
 // effectFnBuildGenBody builds a generator function expression for a gen opportunity:
 // function*<TypeParams>(params) { ...generatorBody... }
-func effectFnBuildGenBody(tracker *change.Tracker, result *typeparser.EffectFnOpportunityResult) *ast.Node {
+func effectFnBuildGenBody(tracker *rewriter.Tracker, result *typeparser.EffectFnOpportunityResult) *ast.Node {
 	genFn := result.GeneratorFunction
 	if genFn == nil || genFn.Body == nil {
 		return nil
@@ -228,21 +224,21 @@ func effectFnBuildGenBody(tracker *change.Tracker, result *typeparser.EffectFnOp
 	body := tracker.DeepCloneNode(genFn.Body)
 
 	return tracker.NewFunctionExpression(
-		nil,                                    // modifiers
+		nil,                                     // modifiers
 		tracker.NewToken(ast.KindAsteriskToken), // asteriskToken
-		nil,                                    // name (anonymous)
-		typeParams,                             // typeParameters
-		params,                                 // parameters
-		nil,                                    // returnType
-		nil,                                    // fullSignature
-		body,                                   // body
+		nil,                                     // name (anonymous)
+		typeParams,                              // typeParameters
+		params,                                  // parameters
+		nil,                                     // returnType
+		nil,                                     // fullSignature
+		body,                                    // body
 	)
 }
 
 // effectFnBuildRegularBody builds the body function for a regular (non-gen) opportunity.
 // For function declarations and arrow functions, creates an anonymous function expression.
 // For function expressions, deep-clones the entire node.
-func effectFnBuildRegularBody(tracker *change.Tracker, result *typeparser.EffectFnOpportunityResult) *ast.Node {
+func effectFnBuildRegularBody(tracker *rewriter.Tracker, result *typeparser.EffectFnOpportunityResult) *ast.Node {
 	if result.TargetNode.Kind == ast.KindFunctionDeclaration {
 		fd := result.TargetNode.AsFunctionDeclaration()
 		if fd == nil || fd.Body == nil {
@@ -302,7 +298,7 @@ func effectFnBuildRegularBody(tracker *change.Tracker, result *typeparser.Effect
 
 // effectFnBuildVarStatement wraps a call expression in a variable statement:
 // [export] const name = callExpr
-func effectFnBuildVarStatement(tracker *change.Tracker, fnNode *ast.Node, callExpr *ast.Node) *ast.Node {
+func effectFnBuildVarStatement(tracker *rewriter.Tracker, fnNode *ast.Node, callExpr *ast.Node) *ast.Node {
 	fd := fnNode.AsFunctionDeclaration()
 	if fd == nil {
 		return callExpr
@@ -315,7 +311,7 @@ func effectFnBuildVarStatement(tracker *change.Tracker, fnNode *ast.Node, callEx
 
 	// Build variable declaration: const name = callExpr
 	varDecl := tracker.NewVariableDeclaration(tracker.DeepCloneNode(name), nil, nil, callExpr)
-	varDeclList := tracker.NewVariableDeclarationList(ast.NodeFlagsConst, tracker.NewNodeList([]*ast.Node{varDecl}))
+	varDeclList := tracker.NewVariableDeclarationList(tracker.NewNodeList([]*ast.Node{varDecl}), ast.NodeFlagsConst)
 
 	// Build modifier list (export etc.), excluding async
 	var modifierList *ast.ModifierList
@@ -336,7 +332,7 @@ func effectFnBuildVarStatement(tracker *change.Tracker, fnNode *ast.Node, callEx
 }
 
 // effectFnCloneNodeList deep-clones all nodes in a NodeList, returning a new synthesized NodeList.
-func effectFnCloneNodeList(tracker *change.Tracker, list *ast.NodeList) *ast.NodeList {
+func effectFnCloneNodeList(tracker *rewriter.Tracker, list *ast.NodeList) *ast.NodeList {
 	if list == nil || len(list.Nodes) == 0 {
 		return nil
 	}
@@ -383,7 +379,7 @@ func effectFnFindEnclosingReturnedObject(node *ast.Node) *ast.Node {
 
 // effectFnBuildLayerMemberReturnStatement rebuilds a `return { ... }` statement,
 // replacing the target property's initializer with the synthesized Effect.fn call.
-func effectFnBuildLayerMemberReturnStatement(tracker *change.Tracker, returnStmt *ast.Node, targetNode *ast.Node, callExpr *ast.Node) *ast.Node {
+func effectFnBuildLayerMemberReturnStatement(tracker *rewriter.Tracker, returnStmt *ast.Node, targetNode *ast.Node, callExpr *ast.Node) *ast.Node {
 	rs := returnStmt.AsReturnStatement()
 	if rs == nil || rs.Expression == nil || rs.Expression.Kind != ast.KindObjectLiteralExpression {
 		return callExpr
@@ -433,7 +429,7 @@ func effectFnBuildLayerMemberReturnStatement(tracker *change.Tracker, returnStmt
 // effectFnBuildVarStatementFromEnclosing builds a replacement VariableStatement from an
 // existing one, replacing the target node's initializer with callExpr.
 // This preserves the variable name, type annotation, modifiers, and const/let/var flag.
-func effectFnBuildVarStatementFromEnclosing(tracker *change.Tracker, varStmt *ast.Node, targetNode *ast.Node, callExpr *ast.Node) *ast.Node {
+func effectFnBuildVarStatementFromEnclosing(tracker *rewriter.Tracker, varStmt *ast.Node, targetNode *ast.Node, callExpr *ast.Node) *ast.Node {
 	vs := varStmt.AsVariableStatement()
 	if vs == nil {
 		return callExpr
@@ -466,7 +462,7 @@ func effectFnBuildVarStatementFromEnclosing(tracker *change.Tracker, varStmt *as
 
 	// Preserve const/let/var flags from the original declaration list node
 	flags := vs.DeclarationList.Flags & (ast.NodeFlagsConst | ast.NodeFlagsLet | ast.NodeFlagsUsing | ast.NodeFlagsAwaitUsing)
-	newDeclList := tracker.NewVariableDeclarationList(flags, tracker.NewNodeList([]*ast.Node{newDecl}))
+	newDeclList := tracker.NewVariableDeclarationList(tracker.NewNodeList([]*ast.Node{newDecl}), flags)
 
 	// Build modifier list (export, declare, etc.)
 	var modifierList *ast.ModifierList

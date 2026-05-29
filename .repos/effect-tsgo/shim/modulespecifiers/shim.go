@@ -14,7 +14,6 @@ type CheckerShape = modulespecifiers.CheckerShape
 func ContainsNodeModules(s string) bool
 //go:linkname CountPathComponents github.com/microsoft/typescript-go/internal/modulespecifiers.CountPathComponents
 func CountPathComponents(path string) int
-type EffectAutoImportStylePreferences = modulespecifiers.EffectAutoImportStylePreferences
 //go:linkname GetAllowedEndingsInPreferredOrder github.com/microsoft/typescript-go/internal/modulespecifiers.GetAllowedEndingsInPreferredOrder
 func GetAllowedEndingsInPreferredOrder(prefs modulespecifiers.UserPreferences, host modulespecifiers.ModuleSpecifierGenerationHost, compilerOptions *core.CompilerOptions, importingSourceFile modulespecifiers.SourceFileForSpecifierGeneration, oldImportSpecifier string, syntaxImpliedNodeFormat core.ResolutionMode) []modulespecifiers.ModuleSpecifierEnding
 //go:linkname GetEachFileNameOfModule github.com/microsoft/typescript-go/internal/modulespecifiers.GetEachFileNameOfModule
@@ -81,4 +80,8 @@ const ResultKindPaths = modulespecifiers.ResultKindPaths
 const ResultKindRedirect = modulespecifiers.ResultKindRedirect
 const ResultKindRelative = modulespecifiers.ResultKindRelative
 type SourceFileForSpecifierGeneration = modulespecifiers.SourceFileForSpecifierGeneration
+//go:linkname TryGetRealFileNameForNonJSDeclarationFileName github.com/microsoft/typescript-go/internal/modulespecifiers.TryGetRealFileNameForNonJSDeclarationFileName
+func TryGetRealFileNameForNonJSDeclarationFileName(fileName string) string
+//go:linkname UpdateModuleSpecifier github.com/microsoft/typescript-go/internal/modulespecifiers.UpdateModuleSpecifier
+func UpdateModuleSpecifier(compilerOptions *core.CompilerOptions, host modulespecifiers.ModuleSpecifierGenerationHost, importingSourceFile *ast.SourceFile, importingSourceFileName string, oldImportSpecifier string, toFileName string, userPreferences modulespecifiers.UserPreferences, options modulespecifiers.ModuleSpecifierOptions) string
 type UserPreferences = modulespecifiers.UserPreferences

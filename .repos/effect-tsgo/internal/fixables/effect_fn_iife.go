@@ -1,36 +1,31 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var EffectFnIifeFix = fixable.Fixable{
 	Name:        "effectFnIife",
 	Description: "Convert Effect.fn IIFE to Effect.gen",
-	ErrorCodes:  []int32{tsdiag.X_0_1_returns_a_reusable_function_that_can_take_arguments_but_here_it_s_called_immediately_Use_Effect_gen_instead_2_effect_effectFnIife.Code()},
+	ErrorCodes:  []int32{tsdiag.X_0_1_returns_a_reusable_function_that_can_take_arguments_but_it_is_invoked_immediately_here_Effect_gen_represents_the_immediate_use_form_for_this_pattern_2_effect_effectFnIife.Code()},
 	FixIDs:      []string{"effectFnIife_toEffectGen"},
 	Run:         runEffectFnIifeFix,
 }
 
 func runEffectFnIifeFix(ctx *fixable.Context) []ls.CodeAction {
 
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
 	// Use shared analysis to find all IIFE matches, then find the one at the diagnostic span
-	matches := rules.AnalyzeEffectFnIife(c, sf)
-	var result *typeparser.EffectFnIifeResult
+	matches := rules.AnalyzeEffectFnIife(ctx.TypeParser, c, sf)
+	var result *rules.EffectFnIifeResult
 	for _, match := range matches {
 		diagRange := match.Location
 		if diagRange.Intersects(ctx.Span) || ctx.Span.ContainedBy(diagRange) {
@@ -53,7 +48,7 @@ func runEffectFnIifeFix(ctx *fixable.Context) []ls.CodeAction {
 
 	if action := ctx.NewFixAction(fixable.FixAction{
 		Description: "Convert to Effect.gen",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			// Deep-clone the generator function to produce a synthesized copy
 			clonedGenFn := tracker.DeepCloneNode(genFn.AsNode())
 

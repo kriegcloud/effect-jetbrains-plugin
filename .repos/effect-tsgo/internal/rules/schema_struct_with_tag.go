@@ -1,9 +1,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -20,12 +20,12 @@ var SchemaStructWithTag = rule.Rule{
 	Description:     "Suggests using Schema.TaggedStruct instead of Schema.Struct with _tag field",
 	DefaultSeverity: etscore.SeveritySuggestion,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.Schema_Struct_with_a_tag_field_can_be_simplified_to_Schema_TaggedStruct_to_make_the_tag_optional_in_the_constructor_effect_schemaStructWithTag.Code()},
+	Codes:           []int32{tsdiag.This_Schema_Struct_includes_a_tag_field_Schema_TaggedStruct_is_the_tagged_struct_form_for_this_pattern_and_makes_the_tag_optional_in_the_constructor_effect_schemaStructWithTag.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		matches := AnalyzeSchemaStructWithTag(ctx.Checker, ctx.SourceFile)
+		matches := AnalyzeSchemaStructWithTag(ctx.TypeParser, ctx.Checker, ctx.SourceFile)
 		diags := make([]*ast.Diagnostic, len(matches))
 		for i, m := range matches {
-			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.Schema_Struct_with_a_tag_field_can_be_simplified_to_Schema_TaggedStruct_to_make_the_tag_optional_in_the_constructor_effect_schemaStructWithTag, nil)
+			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.This_Schema_Struct_includes_a_tag_field_Schema_TaggedStruct_is_the_tagged_struct_form_for_this_pattern_and_makes_the_tag_optional_in_the_constructor_effect_schemaStructWithTag, nil)
 		}
 		return diags
 	},
@@ -44,7 +44,7 @@ type SchemaStructWithTagMatch struct {
 
 // AnalyzeSchemaStructWithTag finds all Schema.Struct({ _tag: Schema.Literal("..."), ... })
 // call expressions and returns match structs for each.
-func AnalyzeSchemaStructWithTag(c *checker.Checker, sf *ast.SourceFile) []SchemaStructWithTagMatch {
+func AnalyzeSchemaStructWithTag(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile) []SchemaStructWithTagMatch {
 	var matches []SchemaStructWithTagMatch
 
 	// Stack-based traversal
@@ -60,7 +60,7 @@ func AnalyzeSchemaStructWithTag(c *checker.Checker, sf *ast.SourceFile) []Schema
 		nodeToVisit = nodeToVisit[:len(nodeToVisit)-1]
 
 		if node.Kind == ast.KindCallExpression {
-			if m, ok := analyzeSchemaStructWithTagNode(c, sf, node); ok {
+			if m, ok := analyzeSchemaStructWithTagNode(tp, c, sf, node); ok {
 				matches = append(matches, m)
 			}
 		}
@@ -73,14 +73,14 @@ func AnalyzeSchemaStructWithTag(c *checker.Checker, sf *ast.SourceFile) []Schema
 }
 
 // analyzeSchemaStructWithTagNode checks a call expression for Schema.Struct({ _tag: Schema.Literal("...") }).
-func analyzeSchemaStructWithTagNode(c *checker.Checker, sf *ast.SourceFile, node *ast.Node) (SchemaStructWithTagMatch, bool) {
+func analyzeSchemaStructWithTagNode(tp *typeparser.TypeParser, _ *checker.Checker, sf *ast.SourceFile, node *ast.Node) (SchemaStructWithTagMatch, bool) {
 	if node.Kind != ast.KindCallExpression {
 		return SchemaStructWithTagMatch{}, false
 	}
 	call := node.AsCallExpression()
 
 	// Check if this is Schema.Struct
-	if !typeparser.IsNodeReferenceToEffectSchemaModuleApi(c, call.Expression, "Struct") {
+	if !tp.IsNodeReferenceToEffectSchemaModuleApi(call.Expression, "Struct") {
 		return SchemaStructWithTagMatch{}, false
 	}
 
@@ -119,7 +119,7 @@ func analyzeSchemaStructWithTagNode(c *checker.Checker, sf *ast.SourceFile, node
 		}
 
 		literalCall := init.AsCallExpression()
-		if !typeparser.IsNodeReferenceToEffectSchemaModuleApi(c, literalCall.Expression, "Literal") {
+		if !tp.IsNodeReferenceToEffectSchemaModuleApi(literalCall.Expression, "Literal") {
 			return SchemaStructWithTagMatch{}, false
 		}
 

@@ -38,9 +38,9 @@ type Index[T autoimport.Named] = autoimport.Index[T]
 type ModuleID = autoimport.ModuleID
 type Named = autoimport.Named
 //go:linkname NewImportAdder github.com/microsoft/typescript-go/internal/ls/autoimport.NewImportAdder
-func NewImportAdder(ctx context.Context, program *compiler.Program, checker *checker.Checker, file *ast.SourceFile, view *autoimport.View, formatOptions *lsutil.FormatCodeSettings, converters *lsconv.Converters, preferences *lsutil.UserPreferences) autoimport.ImportAdder
+func NewImportAdder(ctx context.Context, program *compiler.Program, checker *checker.Checker, file *ast.SourceFile, view *autoimport.View, formatOptions lsutil.FormatCodeSettings, converters *lsconv.Converters, preferences lsutil.UserPreferences) autoimport.ImportAdder
 //go:linkname NewRegistry github.com/microsoft/typescript-go/internal/ls/autoimport.NewRegistry
-func NewRegistry(toPath func(fileName string) tspath.Path, preferences *lsutil.UserPreferences) *autoimport.Registry
+func NewRegistry(toPath func(fileName string) tspath.Path, preferences lsutil.UserPreferences) *autoimport.Registry
 //go:linkname NewView github.com/microsoft/typescript-go/internal/ls/autoimport.NewView
 func NewView(registry *autoimport.Registry, importingFile *ast.SourceFile, projectKey tspath.Path, program *compiler.Program, preferences modulespecifiers.UserPreferences) *autoimport.View
 type QueryKind = autoimport.QueryKind
@@ -48,13 +48,17 @@ const QueryKindCaseInsensitiveMatch = autoimport.QueryKindCaseInsensitiveMatch
 const QueryKindExactMatch = autoimport.QueryKindExactMatch
 const QueryKindWordPrefix = autoimport.QueryKindWordPrefix
 //go:linkname RegisterAutoImportFixTransformer github.com/microsoft/typescript-go/internal/ls/autoimport.RegisterAutoImportFixTransformer
-func RegisterAutoImportFixTransformer(factory func(prefs modulespecifiers.UserPreferences, program *compiler.Program) autoimport.FixTransformer)
+func RegisterAutoImportFixTransformer(factory func(prefs modulespecifiers.UserPreferences, program *compiler.Program, importingFile *ast.SourceFile) autoimport.FixTransformer)
 type Registry = autoimport.Registry
 type RegistryBucket = autoimport.RegistryBucket
 type RegistryChange = autoimport.RegistryChange
 type RegistryCloneHost = autoimport.RegistryCloneHost
 //go:linkname SymbolToExport github.com/microsoft/typescript-go/internal/ls/autoimport.SymbolToExport
 func SymbolToExport(symbol *ast.Symbol, ch *checker.Checker) *autoimport.Export
+//go:linkname TryGetAutoImportableReferenceFromTypeNode github.com/microsoft/typescript-go/internal/ls/autoimport.TryGetAutoImportableReferenceFromTypeNode
+func TryGetAutoImportableReferenceFromTypeNode(importTypeNode *ast.TypeNode, idToSymbol map[*ast.IdentifierNode]*ast.Symbol) (*ast.TypeNode, []*ast.Symbol)
+//go:linkname TypeNodeToAutoImportableTypeNode github.com/microsoft/typescript-go/internal/ls/autoimport.TypeNodeToAutoImportableTypeNode
+func TypeNodeToAutoImportableTypeNode(typeNode *ast.TypeNode, importAdder autoimport.ImportAdder, idToSymbol map[*ast.IdentifierNode]*ast.Symbol) *ast.TypeNode
 //go:linkname TypeToAutoImportableTypeNode github.com/microsoft/typescript-go/internal/ls/autoimport.TypeToAutoImportableTypeNode
 func TypeToAutoImportableTypeNode(c *checker.Checker, importAdder autoimport.ImportAdder, t *checker.Type, contextNode *ast.Node) *ast.TypeNode
 type View = autoimport.View

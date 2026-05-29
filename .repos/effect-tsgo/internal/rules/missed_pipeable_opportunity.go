@@ -3,15 +3,15 @@ package rules
 import (
 	"strings"
 
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/scanner"
 
-	"github.com/effect-ts/effect-typescript-go/etscore"
+	"github.com/effect-ts/tsgo/etscore"
 )
 
 // MissedPipeableOpportunity detects nested function call chains that can be converted to .pipe() style.
@@ -21,21 +21,21 @@ var MissedPipeableOpportunity = rule.Rule{
 	Description:     "Suggests using .pipe() for nested function calls",
 	DefaultSeverity: etscore.SeverityOff,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.Nested_function_calls_can_be_converted_to_pipeable_style_for_better_readability_consider_using_0_pipe_instead_effect_missedPipeableOpportunity.Code()},
+	Codes:           []int32{tsdiag.This_nested_call_structure_has_a_pipeable_form_0_pipe_represents_the_same_call_sequence_in_pipe_style_and_may_be_easier_to_read_effect_missedPipeableOpportunity.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
 		minArgCount := 2
-		effectConfig := ctx.Checker.Program().Options().Effect
+		effectConfig := ctx.Options
 		if effectConfig != nil {
 			minArgCount = effectConfig.GetPipeableMinArgCount()
 		}
 
-		matches := AnalyzeMissedPipeableOpportunity(ctx.Checker, ctx.SourceFile, minArgCount)
+		matches := AnalyzeMissedPipeableOpportunity(ctx.TypeParser, ctx.Checker, ctx.SourceFile, minArgCount)
 		diags := make([]*ast.Diagnostic, len(matches))
 		for i, m := range matches {
 			diags[i] = ctx.NewDiagnostic(
 				m.SourceFile,
 				m.Location,
-				tsdiag.Nested_function_calls_can_be_converted_to_pipeable_style_for_better_readability_consider_using_0_pipe_instead_effect_missedPipeableOpportunity,
+				tsdiag.This_nested_call_structure_has_a_pipeable_form_0_pipe_represents_the_same_call_sequence_in_pipe_style_and_may_be_easier_to_read_effect_missedPipeableOpportunity,
 				nil,
 				m.SubjectText,
 			)
@@ -57,8 +57,8 @@ type MissedPipeableOpportunityMatch struct {
 }
 
 // AnalyzeMissedPipeableOpportunity finds all nested call chains that can be converted to .pipe() style.
-func AnalyzeMissedPipeableOpportunity(c *checker.Checker, sf *ast.SourceFile, minArgCount int) []MissedPipeableOpportunityMatch {
-	flows := typeparser.PipingFlows(c, sf, false)
+func AnalyzeMissedPipeableOpportunity(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile, minArgCount int) []MissedPipeableOpportunityMatch {
+	flows := tp.PipingFlows(sf, false)
 
 	var matches []MissedPipeableOpportunityMatch
 
@@ -85,7 +85,7 @@ func AnalyzeMissedPipeableOpportunity(c *checker.Checker, sf *ast.SourceFile, mi
 			firstPipeableIndex := -1
 
 			for i := searchStartIndex; i <= len(flow.Transformations); i++ {
-				if isPipeableAtIndex(c, flow, i) {
+				if isPipeableAtIndex(tp, flow, i) {
 					firstPipeableIndex = i
 					break
 				}
@@ -100,7 +100,7 @@ func AnalyzeMissedPipeableOpportunity(c *checker.Checker, sf *ast.SourceFile, mi
 
 			for i := firstPipeableIndex; i < len(flow.Transformations); i++ {
 				t := flow.Transformations[i]
-				if !typeparser.IsSafelyPipeableCallee(c, t.Callee) {
+				if !tp.IsSafelyPipeableCallee(t.Callee) {
 					break
 				}
 				pipeableTransformations = append(pipeableTransformations, t)
@@ -146,20 +146,20 @@ func AnalyzeMissedPipeableOpportunity(c *checker.Checker, sf *ast.SourceFile, mi
 
 // isPipeableAtIndex checks if the type at a given index in a flow is pipeable.
 // Index 0 = subject, index > 0 = transformations[index - 1].outType
-func isPipeableAtIndex(c *checker.Checker, flow *typeparser.PipingFlow, index int) bool {
+func isPipeableAtIndex(tp *typeparser.TypeParser, flow *typeparser.PipingFlow, index int) bool {
 	if index == 0 {
 		subjectType := flow.Subject.OutType
 		if subjectType == nil {
 			return false
 		}
-		return typeparser.IsPipeableType(c, subjectType, flow.Subject.Node)
+		return tp.IsPipeableType(subjectType, flow.Subject.Node)
 	}
 
 	t := flow.Transformations[index-1]
 	if t.OutType == nil {
 		return false
 	}
-	return typeparser.IsPipeableType(c, t.OutType, flow.Node)
+	return tp.IsPipeableType(t.OutType, flow.Node)
 }
 
 // getSubjectText extracts the subject text for the diagnostic message.

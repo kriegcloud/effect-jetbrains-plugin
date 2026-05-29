@@ -1,21 +1,27 @@
 package typeparser
 
 import (
-	"sort"
-	"strings"
-
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 )
 
+// ServiceTypeId is the property key for the newer Context.Service variance struct.
+const ServiceTypeId = "~effect/Context/Service"
+
+// Service represents parsed v4 service type parameters.
+type Service struct {
+	Identifier *checker.Type // The service identifier/tag type
+	Shape      *checker.Type // The service implementation shape
+}
+
 // parseServiceVarianceStruct extracts Identifier and Shape from a Service variance struct type.
-func parseServiceVarianceStruct(c *checker.Checker, t *checker.Type, atLocation *ast.Node) *Service {
-	identifier := extractInvariantType(c, t, atLocation, "_Identifier")
+func (tp *TypeParser) parseServiceVarianceStruct(t *checker.Type) *Service {
+	identifier := tp.extractInvariantType(t, "_Identifier")
 	if identifier == nil {
 		return nil
 	}
 
-	shape := extractInvariantType(c, t, atLocation, "_Service")
+	shape := tp.extractInvariantType(t, "_Service")
 	if shape == nil {
 		return nil
 	}
@@ -23,94 +29,38 @@ func parseServiceVarianceStruct(c *checker.Checker, t *checker.Type, atLocation 
 	return &Service{Identifier: identifier, Shape: shape}
 }
 
-// ServiceType parses a Service type and extracts Identifier, Shape parameters.
-// Returns nil if the type is not a Service.
-func ServiceType(c *checker.Checker, t *checker.Type, atLocation *ast.Node) *Service {
-	if c == nil || t == nil {
+// ServiceType parses a v4 service type and extracts Identifier, Shape parameters.
+// Returns nil if the type is not a v4 service.
+func (tp *TypeParser) ServiceType(t *checker.Type, atLocation *ast.Node) *Service {
+	if tp == nil || tp.checker == nil || t == nil {
 		return nil
 	}
-	links := GetEffectLinks(c)
-	return Cached(&links.ServiceType, t, func() *Service {
-		propSymbol := GetPropertyOfTypeByName(c, t, ServiceTypeId)
-		if propSymbol == nil {
+	return Cached(&tp.links.ServiceType, t, func() *Service {
+		if tp.DetectEffectVersion() != EffectMajorV4 {
+			return nil
+		}
+		if !tp.IsPipeableType(t, atLocation) {
 			return nil
 		}
 
-		varianceStructType := c.GetTypeOfSymbolAtLocation(propSymbol, atLocation)
+		serviceKeyTypeIDType := tp.GetTypeOfPropertyByName(t, ServiceTypeId)
+		if serviceKeyTypeIDType == nil {
+			return nil
+		}
+		identifier := tp.GetTypeOfPropertyByName(t, "Identifier")
+		if identifier == nil {
+			return nil
+		}
+		shape := tp.GetTypeOfPropertyByName(t, "Service")
+		if shape == nil {
+			return nil
+		}
 
-		return parseServiceVarianceStruct(c, varianceStructType, atLocation)
+		return &Service{Identifier: identifier, Shape: shape}
 	})
 }
 
 // IsServiceType returns true if the type has the Service variance struct.
-func IsServiceType(c *checker.Checker, t *checker.Type, atLocation *ast.Node) bool {
-	return ServiceType(c, t, atLocation) != nil
-}
-
-// ContextTag parses a Context.Tag type and extracts Identifier, Shape parameters.
-// Returns nil if the type is not a Context.Tag.
-// For V4, this delegates to ServiceType() since both resolve to the same type ID.
-// For V3/unknown, this iterates properties looking for a service variance struct,
-// following the same pattern as LayerType() and EffectType().
-func ContextTag(c *checker.Checker, t *checker.Type, atLocation *ast.Node) *Service {
-	if c == nil || t == nil {
-		return nil
-	}
-	links := GetEffectLinks(c)
-	return Cached(&links.ContextTag, t, func() *Service {
-		version := DetectEffectVersion(c)
-		if version == EffectMajorV4 {
-			return ServiceType(c, t, atLocation)
-		}
-
-		// v3 / unknown: iterate properties looking for a service variance struct
-		props := c.GetPropertiesOfType(t)
-
-		// Filter to required, non-optional properties with a value declaration
-		var candidates []*ast.Symbol
-		for _, prop := range props {
-			if prop == nil {
-				continue
-			}
-			if prop.Flags&ast.SymbolFlagsProperty == 0 {
-				continue
-			}
-			if prop.Flags&ast.SymbolFlagsOptional != 0 {
-				continue
-			}
-			if prop.ValueDeclaration == nil {
-				continue
-			}
-			candidates = append(candidates, prop)
-		}
-
-		if len(candidates) == 0 {
-			return nil
-		}
-
-		// Sort so properties containing "TypeId" come first (optimization heuristic)
-		sort.SliceStable(candidates, func(i, j int) bool {
-			iHas := strings.Contains(candidates[i].Name, "TypeId")
-			jHas := strings.Contains(candidates[j].Name, "TypeId")
-			if iHas && !jHas {
-				return true
-			}
-			return false
-		})
-
-		// Try each candidate as a service variance struct
-		for _, prop := range candidates {
-			propType := c.GetTypeOfSymbolAtLocation(prop, atLocation)
-			if result := parseServiceVarianceStruct(c, propType, atLocation); result != nil {
-				return result
-			}
-		}
-
-		return nil
-	})
-}
-
-// IsContextTag returns true if the type has the Context.Tag variance struct.
-func IsContextTag(c *checker.Checker, t *checker.Type, atLocation *ast.Node) bool {
-	return ContextTag(c, t, atLocation) != nil
+func (tp *TypeParser) IsServiceType(t *checker.Type, atLocation *ast.Node) bool {
+	return tp.ServiceType(t, atLocation) != nil
 }

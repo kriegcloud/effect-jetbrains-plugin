@@ -32,6 +32,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           submodules: recursive
 
+      - name: Track TypeScript-Go submodule updates in Git
+        run: git config submodule.typescript-go.ignore dirty
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -74,6 +77,9 @@ jobs:
       - name: Record updated TypeScript-Go commit
         id: after
         run: echo "sha=$(git -C typescript-go rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Stage TypeScript-Go submodule pointer
+        run: git add typescript-go
 
       - name: Build upstream changelog
         id: changelog
@@ -277,3 +283,16 @@ jobs:
                 summary: success ? 'Generated PR validation passed.' : 'Generated PR validation failed.',
               },
             })
+
+  refresh-flake-hash:
+    name: Refresh flake hash
+    needs:
+      - update
+      - validate-pr
+    if: needs.update.outputs.has_changes == 'true' && needs.validate-pr.result == 'success'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/refresh-flake-hash.yml
+    with:
+      target_ref: chore/update-typescript-go
+    secrets: inherit

@@ -3,13 +3,12 @@ package refactors
 import (
 	"fmt"
 
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var AsyncAwaitToGenTryPromise = refactor.Refactor{
@@ -31,12 +30,12 @@ func runAsyncAwaitToGenTryPromise(ctx *refactor.Context) []ls.CodeAction {
 		return nil
 	}
 
-	effectModuleName := effectutil.FindEffectModuleIdentifier(ctx.SourceFile)
-	dataModuleName := effectutil.FindModuleIdentifier(ctx.SourceFile, "Data")
+	effectModuleName := typeparser.FindEffectModuleIdentifier(ctx.SourceFile)
+	dataModuleName := typeparser.FindModuleIdentifier(ctx.SourceFile, "Data")
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Rewrite to Effect.gen with failures",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			transformAsyncToEffectGenTryPromise(tracker, ctx.SourceFile, asyncFn, effectModuleName, dataModuleName)
 		},
 	})
@@ -48,7 +47,7 @@ func runAsyncAwaitToGenTryPromise(ctx *refactor.Context) []ls.CodeAction {
 	return []ls.CodeAction{*action}
 }
 
-func transformAsyncToEffectGenTryPromise(tracker *change.Tracker, sf *ast.SourceFile, node *ast.Node, effectModuleName string, dataModuleName string) {
+func transformAsyncToEffectGenTryPromise(tracker *rewriter.Tracker, sf *ast.SourceFile, node *ast.Node, effectModuleName string, dataModuleName string) {
 	body := typeparser.GetFunctionLikeBody(node)
 	if body == nil {
 		return
@@ -69,7 +68,7 @@ func transformAsyncToEffectGenTryPromise(tracker *change.Tracker, sf *ast.Source
 	}
 
 	// Transform await expressions to yield* Effect.tryPromise(...)
-	transformedBody := transformBodyAwaitToYield(tracker, body, func(t *change.Tracker, expr *ast.Node) *ast.Node {
+	transformedBody := transformBodyAwaitToYield(tracker, body, func(t *rewriter.Tracker, expr *ast.Node) *ast.Node {
 		errorCount++
 		errorName := fmt.Sprintf("Error%d", errorCount)
 
@@ -97,7 +96,7 @@ func transformAsyncToEffectGenTryPromise(tracker *change.Tracker, sf *ast.Source
 	// Insert error classes before the top-level statement
 	for _, errorClass := range errorClasses {
 		ast.SetParentInChildren(errorClass)
-		tracker.InsertNodeBefore(sf, topLevelStmt, errorClass, true, change.LeadingTriviaOptionNone)
+		tracker.InsertNodeBefore(sf, topLevelStmt, errorClass, true, rewriter.LeadingTriviaOptionNone)
 	}
 
 	// Replace the function
@@ -119,14 +118,14 @@ func findTopLevelStatement(node *ast.Node) *ast.Node {
 }
 
 // buildYieldStarTryPromise builds: yield* Effect.tryPromise({ try: () => expr, catch: cause => new ErrorN({ cause }) })
-func buildYieldStarTryPromise(tracker *change.Tracker, expr *ast.Node, effectModuleName string, errorName string) *ast.Node {
+func buildYieldStarTryPromise(tracker *rewriter.Tracker, expr *ast.Node, effectModuleName string, errorName string) *ast.Node {
 	// try: () => expr
 	tryArrow := tracker.NewArrowFunction(
-		nil, // modifiers
-		nil, // typeParameters
+		nil,                                // modifiers
+		nil,                                // typeParameters
 		tracker.NewNodeList([]*ast.Node{}), // parameters (empty)
-		nil, // returnType
-		nil, // fullSignature
+		nil,                                // returnType
+		nil,                                // fullSignature
 		tracker.NewToken(ast.KindEqualsGreaterThanToken),
 		expr,
 	)
@@ -209,7 +208,7 @@ func buildYieldStarTryPromise(tracker *change.Tracker, expr *ast.Node, effectMod
 }
 
 // buildTaggedErrorClass builds: class ErrorN extends Data.TaggedError("ErrorN")<{ cause: unknown }> {}
-func buildTaggedErrorClass(tracker *change.Tracker, dataModuleName string, errorName string, isExported bool) *ast.Node {
+func buildTaggedErrorClass(tracker *rewriter.Tracker, dataModuleName string, errorName string, isExported bool) *ast.Node {
 	// Data.TaggedError("ErrorN")
 	dataId := tracker.NewIdentifier(dataModuleName)
 	taggedErrorAccess := tracker.NewPropertyAccessExpression(

@@ -7,13 +7,13 @@
     /* Source of truth: git submodule `typescript-go` commit.
        Keep in sync via `_tools/update-flake-vendor-hash.sh`. */
     typescript-go-src = {
-      url = "github:microsoft/typescript-go/86b0ba896640a56a94f52b102732e5ea029a14ac?submodules=1";
+      url = "github:microsoft/typescript-go/94f31f32f8b5713e8fb17aaa65ba73b596485459?submodules=1";
       flake = false;
     };
     /* Source of truth: typescript-go's `_submodules/TypeScript` commit.
        Keep in sync via `_tools/update-flake-vendor-hash.sh`. */
     typescript-src = {
-      url = "github:microsoft/TypeScript/2a3bed2b4265fa1173c88771a21ce044e6480f75";
+      url = "github:microsoft/TypeScript/c3bd12d888b86f676718b16e64d7d2abcb423514";
       flake = false;
     };
   };
@@ -46,7 +46,7 @@
        Refresh: ./_tools/update-flake-vendor-hash.sh
        Manual:  set to lib.fakeHash, build, copy the reported hash.
       */
-      vendorHash = "sha256-vmu1da/dP38QbB//fhYgSXqu3nvbns31Pc1KbMWp8yU=";
+      vendorHash = "sha256-iEuzyArW0UWSlxKmfcV/QP4XVWQgwKhQamnCwDHKS0s=";
       forAllSystems =
         f: lib.genAttrs supportedSystems (system: f system (import nixpkgs { inherit system; }));
     in

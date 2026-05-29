@@ -3,9 +3,9 @@ package rules
 import (
 	"strings"
 
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -20,10 +20,10 @@ var EffectFnOpportunity = rule.Rule{
 	Description:     "Suggests using Effect.fn for functions that return an Effect",
 	DefaultSeverity: etscore.SeveritySuggestion,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.Can_be_rewritten_as_a_reusable_function_Colon_0_effect_effectFnOpportunity.Code()},
+	Codes:           []int32{tsdiag.This_expression_can_be_rewritten_in_the_reusable_function_form_0_effect_effectFnOpportunity.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		effectConfig := ctx.Checker.Program().Options().Effect
-		matches := AnalyzeEffectFnOpportunity(ctx.Checker, ctx.SourceFile)
+		effectConfig := ctx.Options
+		matches := AnalyzeEffectFnOpportunity(ctx.TypeParser, ctx.Checker, ctx.SourceFile)
 		var diags []*ast.Diagnostic
 		for i := range matches {
 			m := &matches[i]
@@ -32,7 +32,7 @@ var EffectFnOpportunity = rule.Rule{
 				continue
 			}
 			expectedSignature := buildExpectedSignature(ctx.SourceFile, m, fixName)
-			diags = append(diags, ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.Can_be_rewritten_as_a_reusable_function_Colon_0_effect_effectFnOpportunity, nil, expectedSignature))
+			diags = append(diags, ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.This_expression_can_be_rewritten_in_the_reusable_function_form_0_effect_effectFnOpportunity, nil, expectedSignature))
 		}
 		return diags
 	},
@@ -48,7 +48,7 @@ type EffectFnOpportunityMatch struct {
 
 // AnalyzeEffectFnOpportunity finds all functions that can be converted to Effect.fn
 // in the given source file.
-func AnalyzeEffectFnOpportunity(c *checker.Checker, sf *ast.SourceFile) []EffectFnOpportunityMatch {
+func AnalyzeEffectFnOpportunity(tp *typeparser.TypeParser, _ *checker.Checker, sf *ast.SourceFile) []EffectFnOpportunityMatch {
 	var matches []EffectFnOpportunityMatch
 
 	var walk ast.Visitor
@@ -57,7 +57,7 @@ func AnalyzeEffectFnOpportunity(c *checker.Checker, sf *ast.SourceFile) []Effect
 			return false
 		}
 
-		if result := typeparser.ParseEffectFnOpportunity(c, n); result != nil {
+		if result := tp.ParseEffectFnOpportunity(n); result != nil {
 			// Report on the name identifier if available, otherwise the function node
 			reportNode := result.NameIdentifier
 			if reportNode == nil {
@@ -82,7 +82,7 @@ func AnalyzeEffectFnOpportunity(c *checker.Checker, sf *ast.SourceFile) []Effect
 // firstAvailableFixName determines which fix variant would be first (highest priority)
 // for the given match, matching the reference implementation's fix ordering.
 // Returns empty string when no fix variant passes the config filter.
-func firstAvailableFixName(result *typeparser.EffectFnOpportunityResult, effectConfig *etscore.EffectPluginOptions) string {
+func firstAvailableFixName(result *typeparser.EffectFnOpportunityResult, effectConfig *etscore.ResolvedEffectPluginOptions) string {
 	// Priority order matches upstream: withSpan > untraced > noSpan > spanInferred > spanSuggested
 	if effectConfig.EffectFnIncludes(etscore.EffectFnSpan) && result.ExplicitTraceExpression != nil {
 		return "effectFnOpportunity_toEffectFnWithSpan"
@@ -182,7 +182,10 @@ func getTypeParamString(fnNode *ast.Node) string {
 
 	var names []string
 	for _, tp := range typeParams.Nodes {
-		name := tp.AsTypeParameter().Name()
+		if !ast.IsTypeParameterDeclaration(tp) {
+			continue
+		}
+		name := tp.AsTypeParameterDeclaration().Name()
 		if name != nil {
 			names = append(names, scanner.GetTextOfNode(name))
 		}

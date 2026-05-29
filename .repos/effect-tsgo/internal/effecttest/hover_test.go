@@ -5,8 +5,8 @@ import (
 
 	"github.com/microsoft/typescript-go/shim/fourslash"
 
-	_ "github.com/effect-ts/effect-typescript-go/etslshooks"
-	_ "github.com/effect-ts/effect-typescript-go/etstesthooks"
+	_ "github.com/effect-ts/tsgo/etslshooks"
+	_ "github.com/effect-ts/tsgo/etstesthooks"
 )
 
 func TestEffectHoverYieldStar(t *testing.T) {
@@ -97,16 +97,16 @@ func TestEffectHoverLayerQuickInfo(t *testing.T) {
   }
 }
 // @Filename: /test.ts
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, Context } from "effect"
 
-class Database extends ServiceMap.Service<Database>()("Database", {
+class Database extends Context.Service<Database>()("Database", {
   make: Effect.succeed({})
 }) {
   static Default = Layer.effect(this, this.make)
 }
 
-class Cache extends ServiceMap.Service<Cache>()("Cache", {
-  make: Effect.as(Database.asEffect(), {})
+class Cache extends Context.Service<Cache>()("Cache", {
+  make: Effect.as(Database, {})
 }) {
   static Default = Layer.effect(this, this.make)
 }
@@ -151,16 +151,16 @@ func TestEffectHoverLayerNoExternal(t *testing.T) {
   }
 }
 // @Filename: /test.ts
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, Context } from "effect"
 
-class Database extends ServiceMap.Service<Database>()("Database", {
+class Database extends Context.Service<Database>()("Database", {
   make: Effect.succeed({})
 }) {
   static Default = Layer.effect(this, this.make)
 }
 
-class Cache extends ServiceMap.Service<Cache>()("Cache", {
-  make: Effect.as(Database.asEffect(), {})
+class Cache extends Context.Service<Cache>()("Cache", {
+  make: Effect.as(Database, {})
 }) {
   static Default = Layer.effect(this, this.make)
 }
@@ -195,16 +195,16 @@ func TestEffectHoverLayerNameOnly(t *testing.T) {
   }
 }
 // @Filename: /test.ts
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, Context } from "effect"
 
-class Database extends ServiceMap.Service<Database>()("Database", {
+class Database extends Context.Service<Database>()("Database", {
   make: Effect.succeed({})
 }) {
   static Default = Layer.effect(this, this.make)
 }
 
-class Cache extends ServiceMap.Service<Cache>()("Cache", {
-  make: Effect.as(Database.asEffect(), {})
+class Cache extends Context.Service<Cache>()("Cache", {
+  make: Effect.as(Database, {})
 }) {
   static Default = Layer.effect(this, this.make)
 }
@@ -232,6 +232,37 @@ const app2 = /*2*/app`
 	)
 }
 
+func TestEffectHoverDisabled(t *testing.T) {
+	t.Parallel()
+
+	const content = `// @Filename: /tsconfig.json
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "quickinfo": false
+      }
+    ]
+  }
+}
+// @Filename: /test.ts
+import { Effect } from "effect"
+declare const /*1*/myEffect: Effect.Effect<string, Error, never>`
+
+	f, done := fourslash.NewFourslash(t, nil /*capabilities*/, content)
+	defer done()
+
+	f.VerifyQuickInfoAt(t, "1",
+		"const myEffect: Effect.Effect<string, Error, never>",
+		"",
+	)
+}
+
 func TestEffectHoverLayerMermaidProvider(t *testing.T) {
 	t.Parallel()
 
@@ -251,16 +282,16 @@ func TestEffectHoverLayerMermaidProvider(t *testing.T) {
   }
 }
 // @Filename: /test.ts
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, Context } from "effect"
 
-class Database extends ServiceMap.Service<Database>()("Database", {
+class Database extends Context.Service<Database>()("Database", {
   make: Effect.succeed({})
 }) {
   static Default = Layer.effect(this, this.make)
 }
 
-class Cache extends ServiceMap.Service<Cache>()("Cache", {
-  make: Effect.as(Database.asEffect(), {})
+class Cache extends Context.Service<Cache>()("Cache", {
+  make: Effect.as(Database, {})
 }) {
   static Default = Layer.effect(this, this.make)
 }

@@ -1,39 +1,35 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var MissedPipeableOpportunityFix = fixable.Fixable{
 	Name:        "missedPipeableOpportunity",
 	Description: "Convert to pipe style",
-	ErrorCodes:  []int32{tsdiag.Nested_function_calls_can_be_converted_to_pipeable_style_for_better_readability_consider_using_0_pipe_instead_effect_missedPipeableOpportunity.Code()},
+	ErrorCodes:  []int32{tsdiag.This_nested_call_structure_has_a_pipeable_form_0_pipe_represents_the_same_call_sequence_in_pipe_style_and_may_be_easier_to_read_effect_missedPipeableOpportunity.Code()},
 	FixIDs:      []string{"missedPipeableOpportunity_fix"},
 	Run:         runMissedPipeableOpportunityFix,
 }
 
 func runMissedPipeableOpportunityFix(ctx *fixable.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
 	minArgCount := 2
-	effectConfig := c.Program().Options().Effect
+	effectConfig := ctx.Options
 	if effectConfig != nil {
 		minArgCount = effectConfig.GetPipeableMinArgCount()
 	}
 
-	matches := rules.AnalyzeMissedPipeableOpportunity(c, sf, minArgCount)
+	matches := rules.AnalyzeMissedPipeableOpportunity(ctx.TypeParser, c, sf, minArgCount)
 
 	var match *rules.MissedPipeableOpportunityMatch
 	for i := range matches {
@@ -49,7 +45,7 @@ func runMissedPipeableOpportunityFix(ctx *fixable.Context) []ls.CodeAction {
 
 	if action := ctx.NewFixAction(fixable.FixAction{
 		Description: "Convert to pipe style",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			buildMissedPipeableReplacement(tracker, sf, match)
 		},
 	}); action != nil {
@@ -59,7 +55,7 @@ func runMissedPipeableOpportunityFix(ctx *fixable.Context) []ls.CodeAction {
 }
 
 // buildMissedPipeableReplacement builds the .pipe() replacement and applies it via tracker.ReplaceNode.
-func buildMissedPipeableReplacement(tracker *change.Tracker, sf *ast.SourceFile, match *rules.MissedPipeableOpportunityMatch) {
+func buildMissedPipeableReplacement(tracker *rewriter.Tracker, sf *ast.SourceFile, match *rules.MissedPipeableOpportunityMatch) {
 	flow := match.Flow
 
 	// Build the subject node for the pipe call
@@ -111,7 +107,7 @@ func buildMissedPipeableReplacement(tracker *change.Tracker, sf *ast.SourceFile,
 
 // findSubjectNodeAtDepth traverses the flow node into arguments to find the subject at the right depth,
 // then deep-clones it.
-func findSubjectNodeAtDepth(tracker *change.Tracker, flow *typeparser.PipingFlow, firstPipeableIndex int) *ast.Node {
+func findSubjectNodeAtDepth(tracker *rewriter.Tracker, flow *typeparser.PipingFlow, firstPipeableIndex int) *ast.Node {
 	current := flow.Node
 	for i := len(flow.Transformations); i > firstPipeableIndex; i-- {
 		t := flow.Transformations[i-1]
@@ -133,7 +129,7 @@ func findSubjectNodeAtDepth(tracker *change.Tracker, flow *typeparser.PipingFlow
 // For "call" kind: callee(innerNode)
 // For "pipe"/"pipeable" kind with args: callee(args...)(innerNode) (curried)
 // For "pipe"/"pipeable" kind without args: callee(innerNode)
-func wrapWithAfterTransformations(tracker *change.Tracker, inner *ast.Node, transformations []typeparser.PipingFlowTransformation) *ast.Node {
+func wrapWithAfterTransformations(tracker *rewriter.Tracker, inner *ast.Node, transformations []typeparser.PipingFlowTransformation) *ast.Node {
 	result := inner
 	for _, t := range transformations {
 		if t.Kind == typeparser.TransformationKindEffectFn || t.Kind == typeparser.TransformationKindEffectFnUntraced {

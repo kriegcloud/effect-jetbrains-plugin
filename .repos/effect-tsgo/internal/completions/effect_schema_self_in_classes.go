@@ -3,9 +3,8 @@ package completions
 import (
 	"fmt"
 
-	"github.com/effect-ts/effect-typescript-go/internal/completion"
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/completion"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/lsp/lsproto"
 	"github.com/microsoft/typescript-go/shim/scanner"
 )
@@ -25,16 +24,14 @@ func runEffectSchemaSelfInClasses(ctx *completion.Context) []*lsproto.Completion
 		return nil
 	}
 
-	schemaIdentifier := effectutil.FindModuleIdentifier(ctx.SourceFile, "Schema")
+	schemaIdentifier := typeparser.FindModuleIdentifier(ctx.SourceFile, "Schema")
 	accessedText := data.AccessedObjectText()
 	isFullyQualified := schemaIdentifier == accessedText
 	className := data.ClassNameText()
 
-	// Get checker for version detection and API reference checks
-	ch, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	defer done()
+	tp := ctx.TypeParser
 
-	version := typeparser.SupportedEffectVersion(ch)
+	version := tp.SupportedEffectVersion()
 
 	// Build replacement range from byte offsets
 	replacementRange := byteSpanToRange(ctx, data.ReplacementStart, data.ReplacementLength)
@@ -43,7 +40,7 @@ func runEffectSchemaSelfInClasses(ctx *completion.Context) []*lsproto.Completion
 	var items []*lsproto.CompletionItem
 
 	// Schema.Class (both v3 and v4)
-	if isFullyQualified || typeparser.IsNodeReferenceToEffectSchemaModuleApi(ch, data.AccessedObject, "Class") {
+	if isFullyQualified || tp.IsNodeReferenceToEffectSchemaModuleApi(data.AccessedObject, "Class") {
 		var insertText string
 		if isFullyQualified {
 			insertText = fmt.Sprintf(`%s.Class<%s>("%s")({${0}}){}`, schemaIdentifier, className, className)
@@ -58,7 +55,7 @@ func runEffectSchemaSelfInClasses(ctx *completion.Context) []*lsproto.Completion
 
 	// Schema.TaggedError (v3 only)
 	if version == typeparser.EffectMajorV3 {
-		if isFullyQualified || typeparser.IsNodeReferenceToEffectSchemaModuleApi(ch, data.AccessedObject, "TaggedError") {
+		if isFullyQualified || tp.IsNodeReferenceToEffectSchemaModuleApi(data.AccessedObject, "TaggedError") {
 			var insertText string
 			if isFullyQualified {
 				insertText = fmt.Sprintf(`%s.TaggedError<%s>()("%s", {${0}}){}`, schemaIdentifier, className, className)
@@ -74,7 +71,7 @@ func runEffectSchemaSelfInClasses(ctx *completion.Context) []*lsproto.Completion
 
 	// Schema.TaggedErrorClass (v4 only)
 	if version == typeparser.EffectMajorV4 {
-		if isFullyQualified || typeparser.IsNodeReferenceToEffectSchemaModuleApi(ch, data.AccessedObject, "TaggedErrorClass") {
+		if isFullyQualified || tp.IsNodeReferenceToEffectSchemaModuleApi(data.AccessedObject, "TaggedErrorClass") {
 			var insertText string
 			if isFullyQualified {
 				insertText = fmt.Sprintf(`%s.TaggedErrorClass<%s>()("%s", {${0}}){}`, schemaIdentifier, className, className)
@@ -89,7 +86,7 @@ func runEffectSchemaSelfInClasses(ctx *completion.Context) []*lsproto.Completion
 	}
 
 	// Schema.TaggedClass (both v3 and v4)
-	if isFullyQualified || typeparser.IsNodeReferenceToEffectSchemaModuleApi(ch, data.AccessedObject, "TaggedClass") {
+	if isFullyQualified || tp.IsNodeReferenceToEffectSchemaModuleApi(data.AccessedObject, "TaggedClass") {
 		var insertText string
 		if isFullyQualified {
 			insertText = fmt.Sprintf(`%s.TaggedClass<%s>()("%s", {${0}}){}`, schemaIdentifier, className, className)
@@ -104,7 +101,7 @@ func runEffectSchemaSelfInClasses(ctx *completion.Context) []*lsproto.Completion
 
 	// Schema.TaggedRequest (v3 only)
 	if version == typeparser.EffectMajorV3 {
-		if isFullyQualified || typeparser.IsNodeReferenceToEffectSchemaModuleApi(ch, data.AccessedObject, "TaggedRequest") {
+		if isFullyQualified || tp.IsNodeReferenceToEffectSchemaModuleApi(data.AccessedObject, "TaggedRequest") {
 			var insertText string
 			if isFullyQualified {
 				insertText = fmt.Sprintf(`%s.TaggedRequest<%s>()("%s", {${0}}){}`, schemaIdentifier, className, className)
@@ -120,7 +117,7 @@ func runEffectSchemaSelfInClasses(ctx *completion.Context) []*lsproto.Completion
 
 	// Schema.ErrorClass (v4 only)
 	if version == typeparser.EffectMajorV4 {
-		if isFullyQualified || typeparser.IsNodeReferenceToEffectSchemaModuleApi(ch, data.AccessedObject, "ErrorClass") {
+		if isFullyQualified || tp.IsNodeReferenceToEffectSchemaModuleApi(data.AccessedObject, "ErrorClass") {
 			var insertText string
 			if isFullyQualified {
 				insertText = fmt.Sprintf(`%s.ErrorClass<%s>("%s")({${0}}){}`, schemaIdentifier, className, className)
@@ -136,15 +133,15 @@ func runEffectSchemaSelfInClasses(ctx *completion.Context) []*lsproto.Completion
 
 	// Model.Class (v4 only)
 	if version == typeparser.EffectMajorV4 {
-		modelIdentifier := effectutil.FindModuleIdentifierForPackage(ctx.SourceFile, "effect/unstable", "schema")
+		modelIdentifier := typeparser.FindModuleIdentifierForPackage(ctx.SourceFile, "effect/unstable", "schema")
 		if modelIdentifier == "schema" {
 			// Fallback: try effect/unstable barrel
-			modelIdentifier = effectutil.FindModuleIdentifierForPackage(ctx.SourceFile, "effect/unstable", "Model")
+			modelIdentifier = typeparser.FindModuleIdentifierForPackage(ctx.SourceFile, "effect/unstable", "Model")
 		}
 
 		isModelFullyQualified := modelIdentifier == accessedText
 
-		if isModelFullyQualified || typeparser.IsNodeReferenceToEffectModelModuleApi(ch, data.AccessedObject, "Class") {
+		if isModelFullyQualified || tp.IsNodeReferenceToEffectModelModuleApi(data.AccessedObject, "Class") {
 			var insertText string
 			if isModelFullyQualified {
 				insertText = fmt.Sprintf(`%s.Class<%s>("%s")({${0}}){}`, modelIdentifier, className, className)
@@ -169,10 +166,10 @@ func makeCompletionItem(label string, insertText string, sortText string, replac
 	}
 	format := lsproto.InsertTextFormatSnippet
 	return &lsproto.CompletionItem{
-		Label:           label,
-		Kind:            &kind,
+		Label:            label,
+		Kind:             &kind,
 		InsertTextFormat: &format,
-		SortText:        &sortText,
+		SortText:         &sortText,
 		TextEdit: &lsproto.TextEditOrInsertReplaceEdit{
 			TextEdit: &lsproto.TextEdit{
 				NewText: insertText,

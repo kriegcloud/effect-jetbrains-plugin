@@ -1,9 +1,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -18,13 +18,13 @@ var MissingStarInYieldEffectGen = rule.Rule{
 	Description:     "Detects bare yield (without *) inside Effect generator scopes",
 	DefaultSeverity: etscore.SeverityError,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.Inside_this_Effect_generator_effect_missingStarInYieldEffectGen.Code(), tsdiag.When_yielding_Effects_inside_Effect_gen_you_should_use_yield_Asterisk_instead_of_yield_effect_missingStarInYieldEffectGen.Code()},
+	Codes:           []int32{tsdiag.Inside_this_Effect_generator_effect_missingStarInYieldEffectGen.Code(), tsdiag.This_uses_yield_for_an_Effect_value_yield_Asterisk_is_the_Effect_aware_form_in_this_context_effect_missingStarInYieldEffectGen.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		matches := AnalyzeMissingStarInYieldEffectGen(ctx.Checker, ctx.SourceFile)
+		matches := AnalyzeMissingStarInYieldEffectGen(ctx.TypeParser, ctx.Checker, ctx.SourceFile)
 		diags := make([]*ast.Diagnostic, len(matches))
 		for i, m := range matches {
 			relatedInfo := ctx.NewDiagnostic(m.SourceFile, ctx.GetErrorRange(m.GenFnNode), tsdiag.Inside_this_Effect_generator_effect_missingStarInYieldEffectGen, nil)
-			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.When_yielding_Effects_inside_Effect_gen_you_should_use_yield_Asterisk_instead_of_yield_effect_missingStarInYieldEffectGen, []*ast.Diagnostic{relatedInfo})
+			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.This_uses_yield_for_an_Effect_value_yield_Asterisk_is_the_Effect_aware_form_in_this_context_effect_missingStarInYieldEffectGen, []*ast.Diagnostic{relatedInfo})
 		}
 		return diags
 	},
@@ -41,7 +41,7 @@ type MissingStarInYieldEffectGenMatch struct {
 
 // AnalyzeMissingStarInYieldEffectGen finds all yield expressions inside Effect generators
 // that are missing the asterisk (yield instead of yield*).
-func AnalyzeMissingStarInYieldEffectGen(c *checker.Checker, sf *ast.SourceFile) []MissingStarInYieldEffectGenMatch {
+func AnalyzeMissingStarInYieldEffectGen(tp *typeparser.TypeParser, _ *checker.Checker, sf *ast.SourceFile) []MissingStarInYieldEffectGenMatch {
 	var matches []MissingStarInYieldEffectGenMatch
 
 	var walk ast.Visitor
@@ -53,8 +53,8 @@ func AnalyzeMissingStarInYieldEffectGen(c *checker.Checker, sf *ast.SourceFile) 
 		if n.Kind == ast.KindYieldExpression {
 			yield := n.AsYieldExpression()
 			if yield != nil && yield.Expression != nil && yield.AsteriskToken == nil {
-				if typeparser.GetEffectContextFlags(c, n)&typeparser.EffectContextFlagCanYieldEffect != 0 {
-					genFn := typeparser.GetEffectYieldGeneratorFunction(c, n)
+				if tp.GetEffectContextFlags(n)&typeparser.EffectContextFlagCanYieldEffect != 0 {
+					genFn := tp.GetEffectYieldGeneratorFunction(n)
 					if genFn != nil {
 						matches = append(matches, MissingStarInYieldEffectGenMatch{
 							SourceFile: sf,

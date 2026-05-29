@@ -1,13 +1,13 @@
 package refactors
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var PipeableToDatafirst = refactor.Refactor{
@@ -18,11 +18,7 @@ var PipeableToDatafirst = refactor.Refactor{
 }
 
 func runPipeableToDatafirst(ctx *refactor.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	token := astnav.GetTokenAtPosition(ctx.SourceFile, ctx.Span.Pos())
 	if token == nil {
@@ -35,7 +31,7 @@ func runPipeableToDatafirst(ctx *refactor.Context) []ls.CodeAction {
 			continue
 		}
 
-		pipeCall := typeparser.ParsePipeCall(c, node)
+		pipeCall := ctx.TypeParser.ParsePipeCall(node)
 		if pipeCall == nil {
 			continue
 		}
@@ -88,7 +84,7 @@ func tryConvertToDatafirst(c *checker.Checker, pipeCall *typeparser.ParsedPipeCa
 		if arg.Kind == ast.KindCallExpression {
 			argCall := arg.AsCallExpression()
 			if argCall != nil && argCall.Expression != nil {
-				exprType := typeparser.GetTypeAtLocation(c, argCall.Expression)
+				exprType := ctx.TypeParser.GetTypeAtLocation(argCall.Expression)
 				if exprType != nil {
 					callSigs := c.GetSignaturesOfType(exprType, checker.SignatureKindCall)
 					argCount := 0
@@ -118,7 +114,7 @@ func tryConvertToDatafirst(c *checker.Checker, pipeCall *typeparser.ParsedPipeCa
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Rewrite to datafirst",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			// Build the replacement node by accumulating from the subject
 			newNode := tracker.DeepCloneNode(pipeCall.Subject)
 

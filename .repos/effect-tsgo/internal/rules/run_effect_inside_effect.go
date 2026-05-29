@@ -2,9 +2,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -17,31 +17,32 @@ var runEffectApis = []string{"runSync", "runPromise", "runFork", "runCallback"}
 
 // RunEffectInsideEffect detects Effect.runSync, Effect.runPromise, Effect.runFork, and
 // Effect.runCallback call expressions inside Effect generator contexts and suggests alternatives.
-// This rule is V3-only — it is not applicable to V4.
 var RunEffectInsideEffect = rule.Rule{
 	Name:            "runEffectInsideEffect",
 	Group:           "antipattern",
-	Description:     "Suggests using Runtime methods instead of Effect.run* inside Effect contexts",
+	Description:     "Suggests using Runtime or Effect.run*With methods instead of Effect.run* inside Effect contexts",
 	DefaultSeverity: etscore.SeveritySuggestion,
-	SupportedEffect: []string{"v3"},
+	SupportedEffect: []string{"v3", "v4"},
 	Codes: []int32{
-		tsdiag.Using_0_inside_an_Effect_is_not_recommended_Effects_inside_generators_can_usually_just_be_yielded_effect_runEffectInsideEffect.Code(),
-		tsdiag.Using_0_inside_an_Effect_is_not_recommended_The_same_runtime_should_generally_be_used_instead_to_run_child_effects_Consider_extracting_the_Runtime_by_using_for_example_Effect_runtime_and_then_use_Runtime_1_with_the_extracted_runtime_instead_effect_runEffectInsideEffect.Code(),
+		tsdiag.X_0_is_called_inside_an_existing_Effect_context_Here_the_inner_Effect_can_be_used_directly_effect_runEffectInsideEffect.Code(),
+		tsdiag.X_0_is_called_inside_an_Effect_with_a_separate_runtime_invocation_In_this_context_run_child_Effects_with_the_surrounding_runtime_which_can_be_accessed_through_Effect_runtime_and_Runtime_1_effect_runEffectInsideEffect.Code(),
+		tsdiag.X_0_is_called_inside_an_Effect_with_a_separate_services_invocation_In_this_context_child_Effects_run_with_the_surrounding_services_which_can_be_accessed_through_Effect_context_and_Effect_1_With_effect_runEffectInsideEffect.Code(),
 	},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		// V3-only rule: skip for V4
-		if typeparser.SupportedEffectVersion(ctx.Checker) == typeparser.EffectMajorV4 {
-			return nil
-		}
+		supportedEffect := ctx.TypeParser.SupportedEffectVersion()
 
-		matches := AnalyzeRunEffectInsideEffect(ctx.Checker, ctx.SourceFile)
+		matches := AnalyzeRunEffectInsideEffect(ctx.TypeParser, ctx.Checker, ctx.SourceFile)
 		diags := make([]*ast.Diagnostic, 0, len(matches))
 		for _, m := range matches {
 			calleeText := scanner.GetSourceTextOfNodeFromSourceFile(m.SourceFile, m.CalleeNode, false)
 			if m.IsNestedScope {
-				diags = append(diags, ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.Using_0_inside_an_Effect_is_not_recommended_The_same_runtime_should_generally_be_used_instead_to_run_child_effects_Consider_extracting_the_Runtime_by_using_for_example_Effect_runtime_and_then_use_Runtime_1_with_the_extracted_runtime_instead_effect_runEffectInsideEffect, nil, calleeText, m.MethodName))
+				if supportedEffect == typeparser.EffectMajorV4 {
+					diags = append(diags, ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.X_0_is_called_inside_an_Effect_with_a_separate_services_invocation_In_this_context_child_Effects_run_with_the_surrounding_services_which_can_be_accessed_through_Effect_context_and_Effect_1_With_effect_runEffectInsideEffect, nil, calleeText, m.MethodName))
+				} else {
+					diags = append(diags, ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.X_0_is_called_inside_an_Effect_with_a_separate_runtime_invocation_In_this_context_run_child_Effects_with_the_surrounding_runtime_which_can_be_accessed_through_Effect_runtime_and_Runtime_1_effect_runEffectInsideEffect, nil, calleeText, m.MethodName))
+				}
 			} else {
-				diags = append(diags, ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.Using_0_inside_an_Effect_is_not_recommended_Effects_inside_generators_can_usually_just_be_yielded_effect_runEffectInsideEffect, nil, calleeText))
+				diags = append(diags, ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.X_0_is_called_inside_an_existing_Effect_context_Here_the_inner_Effect_can_be_used_directly_effect_runEffectInsideEffect, nil, calleeText))
 			}
 		}
 		return diags
@@ -62,7 +63,7 @@ type RunEffectInsideEffectMatch struct {
 
 // AnalyzeRunEffectInsideEffect finds all Effect.run* calls inside Effect generators,
 // returning matches with structured data for both diagnostics and quick-fixes.
-func AnalyzeRunEffectInsideEffect(c *checker.Checker, sf *ast.SourceFile) []RunEffectInsideEffectMatch {
+func AnalyzeRunEffectInsideEffect(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile) []RunEffectInsideEffectMatch {
 	var matches []RunEffectInsideEffectMatch
 
 	var walk ast.Visitor
@@ -72,7 +73,7 @@ func AnalyzeRunEffectInsideEffect(c *checker.Checker, sf *ast.SourceFile) []RunE
 		}
 
 		if n.Kind == ast.KindCallExpression {
-			if m, ok := analyzeRunEffectInsideEffectNode(c, sf, n); ok {
+			if m, ok := analyzeRunEffectInsideEffectNode(tp, c, sf, n); ok {
 				matches = append(matches, m)
 			}
 		}
@@ -86,7 +87,7 @@ func AnalyzeRunEffectInsideEffect(c *checker.Checker, sf *ast.SourceFile) []RunE
 }
 
 // analyzeRunEffectInsideEffectNode checks a single call expression for Effect.run* inside an Effect generator.
-func analyzeRunEffectInsideEffectNode(c *checker.Checker, sf *ast.SourceFile, node *ast.Node) (RunEffectInsideEffectMatch, bool) {
+func analyzeRunEffectInsideEffectNode(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile, node *ast.Node) (RunEffectInsideEffectMatch, bool) {
 	if node.Kind != ast.KindCallExpression {
 		return RunEffectInsideEffectMatch{}, false
 	}
@@ -100,16 +101,16 @@ func analyzeRunEffectInsideEffectNode(c *checker.Checker, sf *ast.SourceFile, no
 	callee := call.Expression
 
 	// Check if the callee is one of the Effect.run* APIs
-	methodName := matchRunEffectApi(c, callee)
+	methodName := matchRunEffectApi(tp, c, callee)
 	if methodName == "" {
 		return RunEffectInsideEffectMatch{}, false
 	}
 
-	genFn := typeparser.GetEffectYieldGeneratorFunction(c, node)
+	genFn := tp.GetEffectYieldGeneratorFunction(node)
 	if genFn == nil {
 		for current := node.Parent; current != nil; current = current.Parent {
-			if typeparser.GetEffectContextFlags(c, current)&typeparser.EffectContextFlagCanYieldEffect != 0 {
-				genFn = typeparser.GetEffectYieldGeneratorFunction(c, current)
+			if tp.GetEffectContextFlags(current)&typeparser.EffectContextFlagCanYieldEffect != 0 {
+				genFn = tp.GetEffectYieldGeneratorFunction(current)
 				if genFn != nil {
 					break
 				}
@@ -144,9 +145,9 @@ func analyzeRunEffectInsideEffectNode(c *checker.Checker, sf *ast.SourceFile, no
 
 // matchRunEffectApi checks if the node references one of the Effect.run* APIs and returns the method name.
 // Returns empty string if no match.
-func matchRunEffectApi(c *checker.Checker, node *ast.Node) string {
+func matchRunEffectApi(tp *typeparser.TypeParser, _ *checker.Checker, node *ast.Node) string {
 	for _, name := range runEffectApis {
-		if typeparser.IsNodeReferenceToEffectModuleApi(c, node, name) {
+		if tp.IsNodeReferenceToEffectModuleApi(node, name) {
 			return name
 		}
 	}

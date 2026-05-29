@@ -2,9 +2,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -20,12 +20,12 @@ var UnnecessaryPipeChain = rule.Rule{
 	Description:     "Simplifies chained pipe calls into a single pipe call",
 	DefaultSeverity: etscore.SeveritySuggestion,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.Chained_pipe_calls_can_be_simplified_to_a_single_pipe_call_effect_unnecessaryPipeChain.Code()},
+	Codes:           []int32{tsdiag.This_expression_contains_chained_pipe_calls_that_can_be_simplified_to_a_single_pipe_call_effect_unnecessaryPipeChain.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		matches := AnalyzeUnnecessaryPipeChain(ctx.Checker, ctx.SourceFile)
+		matches := AnalyzeUnnecessaryPipeChain(ctx.TypeParser, ctx.Checker, ctx.SourceFile)
 		diags := make([]*ast.Diagnostic, len(matches))
 		for i, m := range matches {
-			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.Chained_pipe_calls_can_be_simplified_to_a_single_pipe_call_effect_unnecessaryPipeChain, nil)
+			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.This_expression_contains_chained_pipe_calls_that_can_be_simplified_to_a_single_pipe_call_effect_unnecessaryPipeChain, nil)
 		}
 		return diags
 	},
@@ -43,7 +43,7 @@ type UnnecessaryPipeChainMatch struct {
 // AnalyzeUnnecessaryPipeChain finds all chained pipe() and .pipe() calls
 // (outer pipe whose subject is also a pipe call), returning matches with
 // the diagnostic and both parsed results.
-func AnalyzeUnnecessaryPipeChain(c *checker.Checker, sf *ast.SourceFile) []UnnecessaryPipeChainMatch {
+func AnalyzeUnnecessaryPipeChain(tp *typeparser.TypeParser, _ *checker.Checker, sf *ast.SourceFile) []UnnecessaryPipeChainMatch {
 	var matches []UnnecessaryPipeChainMatch
 
 	var walk ast.Visitor
@@ -53,8 +53,8 @@ func AnalyzeUnnecessaryPipeChain(c *checker.Checker, sf *ast.SourceFile) []Unnec
 		}
 
 		if n.Kind == ast.KindCallExpression {
-			if result := typeparser.ParsePipeCall(c, n); result != nil {
-				if inner := typeparser.ParsePipeCall(c, result.Subject); inner != nil {
+			if result := tp.ParsePipeCall(n); result != nil {
+				if inner := tp.ParsePipeCall(result.Subject); inner != nil {
 					matches = append(matches, UnnecessaryPipeChainMatch{
 						SourceFile: sf,
 						Location:   scanner.GetErrorRangeForNode(sf, result.Node.AsNode()),

@@ -1,4 +1,4 @@
-==== /.src/layerGraphEffect.ts (3 flows) ====
+==== /.src/layerGraphEffect.ts (4 flows) ====
 
 === Piping Flow ===
 Location: 4:8 - 6:5
@@ -15,11 +15,25 @@ Transformations (1):
       outType: Effect<{ value: "DatabaseContext"; }, never, never>
 
 === Piping Flow ===
-Location: 11:23 - 15:49
-Node: Layer.effectDiscard(Effect.gen(function*() {\n  const databaseContext = yield* DatabaseContext.asEffect()\n\n  return yield* Effect.log(databaseContext.value)\n})).pipe(Layer.provide(DatabaseContext.Default))
+Location: 8:19 - 8:49
+Node: Layer.effect(this, this.make)
 Node Kind: KindCallExpression
 
-Subject: function*() {\n  const databaseContext = yield* DatabaseContext.asEffect()\n\n  return yield* Effect.log(databaseContext.value)\n}
+Subject: this.make
+Subject Type: Effect<{ value: "DatabaseContext"; }, never, never>
+
+Transformations (1):
+  [0] kind: dataLast
+      callee: Layer.effect
+      args: [this]
+      outType: Layer<DatabaseContext, never, never>
+
+=== Piping Flow ===
+Location: 11:23 - 15:49
+Node: Layer.effectDiscard(Effect.gen(function*() {\n  const databaseContext = yield* DatabaseContext\n\n  return yield* Effect.log(databaseContext.value)\n})).pipe(Layer.provide(DatabaseContext.Default))
+Node Kind: KindCallExpression
+
+Subject: function*() {\n  const databaseContext = yield* DatabaseContext\n\n  return yield* Effect.log(databaseContext.value)\n}
 Subject Type: () => Generator<Effect<void, never, never> | Effect<{ value: "DatabaseContext"; }, never, DatabaseContext>, void, any>
 
 Transformations (3):

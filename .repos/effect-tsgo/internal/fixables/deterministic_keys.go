@@ -1,30 +1,24 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var DeterministicKeysFix = fixable.Fixable{
 	Name:        "deterministicKeys",
 	Description: "Replace key with expected deterministic key",
-	ErrorCodes:  []int32{tsdiag.Key_should_be_0_effect_deterministicKeys.Code()},
+	ErrorCodes:  []int32{tsdiag.This_key_does_not_match_the_deterministic_key_for_this_declaration_The_expected_key_is_0_effect_deterministicKeys.Code()},
 	FixIDs:      []string{"deterministicKeys_fix"},
 	Run:         runDeterministicKeysFix,
 }
 
 func runDeterministicKeysFix(ctx *fixable.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
-
-	matches := rules.AnalyzeDeterministicKeys(c, ctx.SourceFile)
+	matches := rules.AnalyzeDeterministicKeys(ctx.TypeParser, ctx.Program, ctx.Checker, ctx.SourceFile, ctx.Options)
 	for _, match := range matches {
 		if !match.Location.Intersects(ctx.Span) && !ctx.Span.ContainedBy(match.Location) {
 			continue
@@ -40,7 +34,7 @@ func runDeterministicKeysFix(ctx *fixable.Context) []ls.CodeAction {
 		sf := ctx.SourceFile
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: description,
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				tracker.ReplaceNode(sf, match.KeyStringLiteral, tracker.NewStringLiteral(match.ExpectedKey, flags), nil)
 			},
 		}); action != nil {

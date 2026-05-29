@@ -1,33 +1,29 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/core"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var CatchAllToMapErrorFix = fixable.Fixable{
 	Name:        "catchAllToMapError",
 	Description: "Replace Effect.catch + Effect.fail with Effect.mapError",
-	ErrorCodes:  []int32{tsdiag.You_can_use_Effect_mapError_instead_of_Effect_catch_Effect_fail_to_transform_the_error_type_effect_catchAllToMapError.Code()},
+	ErrorCodes:  []int32{tsdiag.Effect_mapError_expresses_the_same_error_type_transformation_more_directly_than_Effect_0_followed_by_Effect_fail_effect_catchAllToMapError.Code()},
 	FixIDs:      []string{"catchAllToMapError_fix"},
 	Run:         runCatchAllToMapErrorFix,
 }
 
 func runCatchAllToMapErrorFix(ctx *fixable.Context) []ls.CodeAction {
 
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeCatchAllToMapError(c, sf)
+	matches := rules.AnalyzeCatchAllToMapError(ctx.TypeParser, c, sf)
 	for _, match := range matches {
 		diagRange := match.Location
 		if !diagRange.Intersects(ctx.Span) && !ctx.Span.ContainedBy(diagRange) {
@@ -36,7 +32,7 @@ func runCatchAllToMapErrorFix(ctx *fixable.Context) []ls.CodeAction {
 
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Replace with Effect.mapError",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				// Edit 1: Replace "catch" with "mapError" in the callee
 				if match.CalleeNameNode != nil {
 					tracker.ReplaceNode(sf, match.CalleeNameNode, tracker.NewIdentifier("mapError"), nil)

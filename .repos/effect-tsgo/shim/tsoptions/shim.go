@@ -71,10 +71,10 @@ func GetSupportedExtensions(compilerOptions *core.CompilerOptions, extraFileExte
 func GetSupportedExtensionsWithJsonIfResolveJsonModule(compilerOptions *core.CompilerOptions, supportedExtensions [][]string) [][]string
 //go:linkname GetTsConfigPropArrayElementValue github.com/microsoft/typescript-go/internal/tsoptions.GetTsConfigPropArrayElementValue
 func GetTsConfigPropArrayElementValue(tsConfigSourceFile *ast.SourceFile, propKey string, elementValue string) *ast.StringLiteral
-var InverseJsxOptionMap = tsoptions.InverseJsxOptionMap
 var LibFilesSet = tsoptions.LibFilesSet
 var LibMap = tsoptions.LibMap
 var Libs = tsoptions.Libs
+var MergeCompilerOptionsCallback = tsoptions.MergeCompilerOptionsCallback
 type NameMap = tsoptions.NameMap
 //go:linkname NewParsedCommandLine github.com/microsoft/typescript-go/internal/tsoptions.NewParsedCommandLine
 func NewParsedCommandLine(compilerOptions *core.CompilerOptions, rootFileNames []string, comparePathsOptions tspath.ComparePathsOptions) *tsoptions.ParsedCommandLine
@@ -96,7 +96,7 @@ func ParseCompilerOptions(key string, value any, allOptions *core.CompilerOption
 func ParseConfigFileTextToJson(fileName string, path tspath.Path, jsonText string) (any, []*ast.Diagnostic)
 type ParseConfigHost = tsoptions.ParseConfigHost
 //go:linkname ParseExtendedConfig github.com/microsoft/typescript-go/internal/tsoptions.ParseExtendedConfig
-func ParseExtendedConfig(fileName string, path tspath.Path, resolutionStack []string, host tsoptions.ParseConfigHost, extendedConfigCache tsoptions.ExtendedConfigCache) *tsoptions.ExtendedConfigCacheEntry
+func ParseExtendedConfig(fileName string, path tspath.Path, resolutionStack []tspath.Path, host tsoptions.ParseConfigHost, extendedConfigCache tsoptions.ExtendedConfigCache) *tsoptions.ExtendedConfigCacheEntry
 //go:linkname ParseJsonConfigFileContent github.com/microsoft/typescript-go/internal/tsoptions.ParseJsonConfigFileContent
 func ParseJsonConfigFileContent(json any, host tsoptions.ParseConfigHost, basePath string, existingOptions *core.CompilerOptions, configFileName string, resolutionStack []tspath.Path, extraFileExtensions []tsoptions.FileExtensionInfo, extendedConfigCache tsoptions.ExtendedConfigCache) *tsoptions.ParsedCommandLine
 //go:linkname ParseJsonSourceFileConfigFileContent github.com/microsoft/typescript-go/internal/tsoptions.ParseJsonSourceFileConfigFileContent
@@ -115,6 +115,8 @@ func ParseTypeAcquisition(key string, value any, allOptions *core.TypeAcquisitio
 func ParseWatchOptions(key string, value any, allOptions *core.WatchOptions) []*ast.Diagnostic
 type ParsedBuildCommandLine = tsoptions.ParsedBuildCommandLine
 type ParsedCommandLine = tsoptions.ParsedCommandLine
+//go:linkname RegisterMergeCompilerOptionsCallback github.com/microsoft/typescript-go/internal/tsoptions.RegisterMergeCompilerOptionsCallback
+func RegisterMergeCompilerOptionsCallback(cb func(targetOptions *core.CompilerOptions, sourceOptions *core.CompilerOptions, rawSource any, sourceConfigPath string, basePath string))
 type SourceOutputAndProjectReference = tsoptions.SourceOutputAndProjectReference
 type TSConfig = tsoptions.TSConfig
 //go:linkname TargetToLibMap github.com/microsoft/typescript-go/internal/tsoptions.TargetToLibMap

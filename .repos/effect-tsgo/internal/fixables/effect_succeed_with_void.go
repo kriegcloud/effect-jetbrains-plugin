@@ -1,34 +1,30 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 	"github.com/microsoft/typescript-go/shim/scanner"
 )
 
 var EffectSucceedWithVoidFix = fixable.Fixable{
 	Name:        "effectSucceedWithVoid",
 	Description: "Replace with Effect.void",
-	ErrorCodes:  []int32{tsdiag.Effect_void_can_be_used_instead_of_Effect_succeed_undefined_or_Effect_succeed_void_0_effect_effectSucceedWithVoid.Code()},
+	ErrorCodes:  []int32{tsdiag.Effect_void_represents_the_same_outcome_as_Effect_succeed_undefined_or_Effect_succeed_void_0_effect_effectSucceedWithVoid.Code()},
 	FixIDs:      []string{"effectSucceedWithVoid_fix"},
 	Run:         runEffectSucceedWithVoidFix,
 }
 
 func runEffectSucceedWithVoidFix(ctx *fixable.Context) []ls.CodeAction {
 
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeEffectSucceedWithVoid(c, sf)
+	matches := rules.AnalyzeEffectSucceedWithVoid(ctx.TypeParser, c, sf)
 	for _, match := range matches {
 		diagRange := match.Location
 		if !diagRange.Intersects(ctx.Span) && !ctx.Span.ContainedBy(diagRange) {
@@ -43,7 +39,7 @@ func runEffectSucceedWithVoidFix(ctx *fixable.Context) []ls.CodeAction {
 
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Replace with Effect.void",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				// Build Effect.void as a PropertyAccessExpression
 				effectModuleId := tracker.NewIdentifier(effectModuleName)
 				replacementNode := tracker.NewPropertyAccessExpression(effectModuleId, nil, tracker.NewIdentifier("void"), ast.NodeFlagsNone)

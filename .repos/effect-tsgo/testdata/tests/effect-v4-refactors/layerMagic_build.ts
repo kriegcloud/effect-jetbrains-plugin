@@ -1,24 +1,24 @@
 // refactor: 26:14-26:49, 31:14-31:36, 38:14-38:37, 45:14-45:32, 49:14-49:27, 51:14-51:36
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, Context } from "effect"
 
-class DbConnection extends ServiceMap.Service<DbConnection>()("DbConnection", {
+class DbConnection extends Context.Service<DbConnection>()("DbConnection", {
   make: Effect.succeed({})
 }) {
   static Default = Layer.effect(this, this.make)
 }
-class FileSystem extends ServiceMap.Service<FileSystem>()("FileSystem", {
+class FileSystem extends Context.Service<FileSystem>()("FileSystem", {
   make: Effect.succeed({})
 }) {
   static Default = Layer.effect(this, this.make)
-  static bothInAndOut = Layer.effect(FileSystem, FileSystem.asEffect())
+  static bothInAndOut = Layer.effect(FileSystem, FileSystem)
 }
-class Cache extends ServiceMap.Service<Cache>()("Cache", {
-  make: Effect.as(FileSystem.asEffect(), {})
+class Cache extends Context.Service<Cache>()("Cache", {
+  make: Effect.as(FileSystem, {})
 }) {
   static Default = Layer.effect(this, this.make)
 }
-class UserRepository extends ServiceMap.Service<UserRepository>()("UserRepository", {
-  make: Effect.as(Effect.andThen(DbConnection.asEffect(), Cache.asEffect()), {})
+class UserRepository extends Context.Service<UserRepository>()("UserRepository", {
+  make: Effect.as(Effect.andThen(DbConnection, Cache), {})
 }) {
   static Default = Layer.effect(this, this.make)
 }

@@ -1,34 +1,30 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var UnnecessaryPipeChainFix = fixable.Fixable{
 	Name:        "unnecessaryPipeChain",
 	Description: "Rewrite as single pipe call",
-	ErrorCodes:  []int32{tsdiag.Chained_pipe_calls_can_be_simplified_to_a_single_pipe_call_effect_unnecessaryPipeChain.Code()},
+	ErrorCodes:  []int32{tsdiag.This_expression_contains_chained_pipe_calls_that_can_be_simplified_to_a_single_pipe_call_effect_unnecessaryPipeChain.Code()},
 	FixIDs:      []string{"unnecessaryPipeChain_fix"},
 	Run:         runUnnecessaryPipeChainFix,
 }
 
 func runUnnecessaryPipeChainFix(ctx *fixable.Context) []ls.CodeAction {
 
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeUnnecessaryPipeChain(c, sf)
+	matches := rules.AnalyzeUnnecessaryPipeChain(ctx.TypeParser, c, sf)
 
 	var match *rules.UnnecessaryPipeChainMatch
 	for i := range matches {
@@ -47,7 +43,7 @@ func runUnnecessaryPipeChainFix(ctx *fixable.Context) []ls.CodeAction {
 
 	if action := ctx.NewFixAction(fixable.FixAction{
 		Description: "Rewrite as single pipe call",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			// Collect all arguments: deep-clone inner args then outer args
 			allArgs := make([]*ast.Node, 0, len(inner.Args)+len(outer.Args))
 			for _, arg := range inner.Args {

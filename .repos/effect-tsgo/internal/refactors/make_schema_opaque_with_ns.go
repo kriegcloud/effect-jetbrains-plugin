@@ -1,13 +1,12 @@
 package refactors
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var MakeSchemaOpaqueWithNs = refactor.Refactor{
@@ -18,24 +17,20 @@ var MakeSchemaOpaqueWithNs = refactor.Refactor{
 }
 
 func runMakeSchemaOpaqueWithNs(ctx *refactor.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	info := findSchemaVariableDeclaration(ctx, c)
 	if info == nil {
 		return nil
 	}
 
-	version := typeparser.SupportedEffectVersion(c)
+	version := ctx.TypeParser.SupportedEffectVersion()
 	isV4 := version == typeparser.EffectMajorV4
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Make Schema opaque with namespace",
-		Run: func(tracker *change.Tracker) {
-			schemaId := effectutil.FindModuleIdentifier(ctx.SourceFile, "Schema")
+		Run: func(tracker *rewriter.Tracker) {
+			schemaId := typeparser.FindModuleIdentifier(ctx.SourceFile, "Schema")
 			origName := info.identifier.AsIdentifier().Text
 			newName := origName + "_"
 
@@ -134,8 +129,8 @@ func runMakeSchemaOpaqueWithNs(ctx *refactor.Context) []ls.CodeAction {
 				tracker.NewIdentifier(newName),
 			)
 			constDeclList := tracker.NewVariableDeclarationList(
-				ast.NodeFlagsConst,
 				tracker.NewNodeList([]*ast.Node{constDecl}),
+				ast.NodeFlagsConst,
 			)
 			constStatement := tracker.NewVariableStatement(
 				opaqueExportModifiers(tracker),

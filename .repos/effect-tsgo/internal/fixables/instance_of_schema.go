@@ -1,32 +1,28 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var InstanceOfSchemaFix = fixable.Fixable{
 	Name:        "instanceOfSchema",
 	Description: "Replace with Schema.is",
-	ErrorCodes:  []int32{tsdiag.Consider_using_Schema_is_instead_of_instanceof_for_Effect_Schema_types_effect_instanceOfSchema.Code()},
+	ErrorCodes:  []int32{tsdiag.This_code_uses_instanceof_with_an_Effect_Schema_type_Schema_is_is_the_schema_aware_runtime_check_for_this_case_effect_instanceOfSchema.Code()},
 	FixIDs:      []string{"instanceOfSchema_fix"},
 	Run:         runInstanceOfSchemaFix,
 }
 
 func runInstanceOfSchemaFix(ctx *fixable.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeInstanceOfSchema(c, sf)
+	matches := rules.AnalyzeInstanceOfSchema(ctx.TypeParser, c, sf)
 	for _, match := range matches {
 		if !match.Location.Intersects(ctx.Span) && !ctx.Span.ContainedBy(match.Location) {
 			continue
@@ -34,7 +30,7 @@ func runInstanceOfSchemaFix(ctx *fixable.Context) []ls.CodeAction {
 
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Replace with Schema.is",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				clonedLeft := tracker.DeepCloneNode(match.LeftExpr)
 				clonedRight := tracker.DeepCloneNode(match.RightExpr)
 

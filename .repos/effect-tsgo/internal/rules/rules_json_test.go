@@ -19,11 +19,14 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/effecttest"
-	"github.com/effect-ts/effect-typescript-go/internal/fixables"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/bundledeffect"
+	"github.com/effect-ts/tsgo/internal/effecttest"
+	"github.com/effect-ts/tsgo/internal/fixables"
+	"github.com/effect-ts/tsgo/internal/pluginoptions"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/rules"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/bundled"
 	"github.com/microsoft/typescript-go/shim/compiler"
@@ -35,7 +38,7 @@ import (
 	"github.com/microsoft/typescript-go/shim/vfs/vfstest"
 
 	// Import etscheckerhooks to register Effect diagnostic callbacks
-	_ "github.com/effect-ts/effect-typescript-go/etscheckerhooks"
+	_ "github.com/effect-ts/tsgo/etscheckerhooks"
 )
 
 func TestUpdateReadme(t *testing.T) {
@@ -215,8 +218,8 @@ func trimLeadingDirectives(sourceText string) (trimmed string, removedChars int)
 
 // findPreviewFile locates the preview fixture for a rule, checking v4 first then v3.
 // Returns the version, file path, and source text.
-func findPreviewFile(root string, ruleName string) (effecttest.EffectVersion, string, string, error) {
-	for _, version := range []effecttest.EffectVersion{effecttest.EffectV4, effecttest.EffectV3} {
+func findPreviewFile(root string, ruleName string) (bundledeffect.EffectVersion, string, string, error) {
+	for _, version := range []bundledeffect.EffectVersion{bundledeffect.EffectV4, bundledeffect.EffectV3} {
 		filePath := filepath.Join(root, "testdata", "tests", string(version), ruleName+"_preview.ts")
 		data, err := os.ReadFile(filePath)
 		if err == nil {
@@ -268,7 +271,7 @@ func buildTsConfigWithTestConfig(testConfig map[string]any) string {
 // the specified rule directly to collect diagnostics. We bypass the checker hooks
 // because preview files use "// @effect-diagnostics *:off" which causes the
 // hook to early-return. Instead, we run the rule directly via rule.Run().
-func evaluatePreview(t *testing.T, version effecttest.EffectVersion, sourceText string, r *rule.Rule) *previewPayload {
+func evaluatePreview(t *testing.T, version bundledeffect.EffectVersion, sourceText string, r *rule.Rule) *previewPayload {
 	t.Helper()
 
 	effecttest.AcquireProgram()
@@ -280,7 +283,7 @@ func evaluatePreview(t *testing.T, version effecttest.EffectVersion, sourceText 
 
 	// Create VFS
 	testfs := make(map[string]any)
-	if err := effecttest.MountEffect(version, testfs); err != nil {
+	if err := bundledeffect.MountEffect(version, testfs); err != nil {
 		t.Fatalf("mount effect for preview: %v", err)
 	}
 
@@ -401,7 +404,16 @@ func evaluatePreview(t *testing.T, version effecttest.EffectVersion, sourceText 
 		if sf == nil || sf.IsDeclarationFile {
 			continue
 		}
-		ruleCtx := rule.NewContext(c, sf, r.DefaultSeverity)
+		var options *etscore.ResolvedEffectPluginOptions
+		if parsedEffectConfig := program.Options().Effect; parsedEffectConfig != nil {
+			options = pluginoptions.ResolveEffectPluginOptionsForSourceFile(
+				parsedEffectConfig,
+				sf.FileName(),
+				program.Options().ConfigFilePath,
+				program.UseCaseSensitiveFileNames(),
+			)
+		}
+		ruleCtx := rule.NewContext(context.Background(), program, c, typeparser.NewTypeParser(program, c), sf, options, r.DefaultSeverity)
 		diags := r.Run(ruleCtx)
 		ruleDiags = append(ruleDiags, diags...)
 	}
@@ -732,6 +744,17 @@ func readmeDefaultValue(field reflect.StructField) any {
 		return map[string]any{}
 	case "KeyPatterns":
 		return etscore.DefaultKeyPatterns
+	case "Overrides":
+		return []any{
+			map[string]any{
+				"include": []string{"src/**/*.ts"},
+				"options": map[string]any{
+					"diagnosticSeverity": map[string]any{
+						"floatingEffect": "error",
+					},
+				},
+			},
+		}
 	default:
 		return nil
 	}
@@ -784,10 +807,12 @@ func indentedJSON(value any, prefix string) string {
 	return strings.Join(parts, "\n")
 }
 
-const readmeStartMarker = "<!-- diagnostics-table:start -->"
-const readmeEndMarker = "<!-- diagnostics-table:end -->"
-const readmeExampleStartMarker = "<!-- example-config:start -->"
-const readmeExampleEndMarker = "<!-- example-config:end -->"
+const (
+	readmeStartMarker        = "<!-- diagnostics-table:start -->"
+	readmeEndMarker          = "<!-- diagnostics-table:end -->"
+	readmeExampleStartMarker = "<!-- example-config:start -->"
+	readmeExampleEndMarker   = "<!-- example-config:end -->"
+)
 
 func generateReadme(committedReadme []byte) ([]byte, error) {
 	content := string(committedReadme)

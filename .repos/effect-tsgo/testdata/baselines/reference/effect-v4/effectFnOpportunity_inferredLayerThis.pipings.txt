@@ -2,7 +2,7 @@
 
 === Piping Flow ===
 Location: 3:31 - 5:18
-Node: ServiceMap.Service<MyService, {\n  log: (_what: string) => Effect.Effect<void>\n}>()("MyService")
+Node: Context.Service<MyService, {\n  log: (_what: string) => Effect.Effect<void>\n}>()("MyService")
 Node Kind: KindCallExpression
 
 Subject: "MyService"
@@ -10,23 +10,27 @@ Subject Type: "MyService"
 
 Transformations (1):
   [0] kind: call
-      callee: ServiceMap.Service<MyService, {\n  log: (_what: string) => Effect.Effect<void>\n}>()
+      callee: Context.Service<MyService, {\n  log: (_what: string) => Effect.Effect<void>\n}>()
       args: (constant)
       outType: ServiceClass<MyService, "MyService", { log: (_what: string) => Effect<void, never, never>; }>
 
 === Piping Flow ===
-Location: 6:38 - 9:7
-Node: Effect.gen(function*() {\n        yield* Effect.log("log")\n        return { log: (what: string) => Effect.log(what) }\n    })
+Location: 6:19 - 9:8
+Node: Layer.effect(this, Effect.gen(function*() {\n        yield* Effect.log("log")\n        return { log: (what: string) => Effect.log(what) }\n    }))
 Node Kind: KindCallExpression
 
 Subject: function*() {\n        yield* Effect.log("log")\n        return { log: (what: string) => Effect.log(what) }\n    }
 Subject Type: () => Generator<Effect<void, never, never>, { log: (what: string) => Effect<void, never, never>; }, any>
 
-Transformations (1):
+Transformations (2):
   [0] kind: call
       callee: Effect.gen
       args: (constant)
       outType: Effect<{ log: (what: string) => Effect<void, never, never>; }, never, never>
+  [1] kind: dataLast
+      callee: Layer.effect
+      args: [this]
+      outType: Layer<MyService, never, never>
 
 === Piping Flow ===
 Location: 7:15 - 7:33

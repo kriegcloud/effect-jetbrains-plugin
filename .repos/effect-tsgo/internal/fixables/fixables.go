@@ -2,7 +2,7 @@
 // This mirrors the rules package structure for diagnostics.
 package fixables
 
-import "github.com/effect-ts/effect-typescript-go/internal/fixable"
+import "github.com/effect-ts/tsgo/internal/fixable"
 
 // All is the list of all code fix providers.
 // Add new fixables here explicitly - no init() magic.
@@ -21,6 +21,8 @@ var All = []fixable.Fixable{
 	ReturnEffectInGenFix,
 	EffectSucceedWithVoidFix,
 	UnnecessaryEffectGenFix,
+	UnnecessaryArrowBlockFix,
+	UnnecessaryTypeofTypeFix,
 	EffectMapVoidFix,
 	UnnecessaryFailYieldableErrorFix,
 	ClassSelfMismatchFix,
@@ -30,6 +32,7 @@ var All = []fixable.Fixable{
 	OverriddenSchemaConstructorFix,
 	InstanceOfSchemaFix,
 	LayerMergeAllWithDependenciesFix,
+	UnsafeEffectTypeAssertionFix,
 	MissingEffectErrorCatchFix,
 	MultipleEffectProvideFix,
 	SchemaStructWithTagFix,
@@ -37,6 +40,7 @@ var All = []fixable.Fixable{
 	RunEffectInsideEffectFix,
 	SchemaUnionOfLiteralsFix,
 	MissedPipeableOpportunityFix,
+	NewSchemaClassFix,
 	ServiceNotAsClassFix,
 }
 

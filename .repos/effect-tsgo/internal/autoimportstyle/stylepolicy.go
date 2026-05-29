@@ -3,28 +3,10 @@ package autoimportstyle
 import (
 	"strings"
 
-	"github.com/effect-ts/effect-typescript-go/etscore"
+	"github.com/effect-ts/tsgo/etscore"
 	"github.com/microsoft/typescript-go/shim/ls/autoimport"
 	"github.com/microsoft/typescript-go/shim/lsp/lsproto"
-	"github.com/microsoft/typescript-go/shim/modulespecifiers"
 )
-
-// StylePreferences holds the auto-import style configuration parsed from Effect plugin options.
-type StylePreferences = modulespecifiers.EffectAutoImportStylePreferences
-
-// PreferencesFromPluginOptions converts Effect plugin options into StylePreferences
-// for the auto-import style policy. Returns zero-value preferences if opts is nil.
-func PreferencesFromPluginOptions(opts *etscore.EffectPluginOptions) StylePreferences {
-	if opts == nil {
-		return StylePreferences{}
-	}
-	return StylePreferences{
-		NamespaceImportPackages: opts.GetNamespaceImportPackages(),
-		BarrelImportPackages:    opts.GetBarrelImportPackages(),
-		ImportAliases:           opts.GetImportAliases(),
-		FollowTopLevelReexports: opts.GetTopLevelNamedReexports() == etscore.TopLevelNamedReexportsFollow,
-	}
-}
 
 // stylePolicy applies auto-import style rewrites based on configured preferences.
 type stylePolicy struct {
@@ -34,20 +16,34 @@ type stylePolicy struct {
 	followReexports   bool
 }
 
-// NewFixTransformer creates a FixTransformer from the given style preferences.
+// NewFixTransformer creates a FixTransformer from the given resolved Effect options.
 // Returns nil if the preferences are empty (no packages configured).
-func NewFixTransformer(prefs StylePreferences) autoimport.FixTransformer {
-	sp := newStylePolicy(prefs)
+func NewFixTransformer(resolved *etscore.ResolvedEffectPluginOptions) autoimport.FixTransformer {
+	sp := newStylePolicy(resolved)
 	if sp.isEmpty() {
 		return nil
 	}
 	return func(export *autoimport.Export, fixes []*autoimport.Fix) []*autoimport.Fix {
 		rewritten := make([]*autoimport.Fix, 0, len(fixes))
+		hasUseNamespace := make(map[string]bool)
 		for _, fix := range fixes {
 			adjusted := sp.Apply(export, fix)
 			if adjusted != nil {
+				if adjusted.Kind == lsproto.AutoImportFixKindUseNamespace {
+					hasUseNamespace[namespaceFixKey(adjusted)] = true
+				}
 				rewritten = append(rewritten, adjusted)
 			}
+		}
+		if len(hasUseNamespace) != 0 {
+			filtered := rewritten[:0]
+			for _, fix := range rewritten {
+				if fix.Kind == lsproto.AutoImportFixKindAddNew && fix.ImportKind == lsproto.ImportKindNamespace && hasUseNamespace[namespaceFixKey(fix)] {
+					continue
+				}
+				filtered = append(filtered, fix)
+			}
+			rewritten = filtered
 		}
 		if len(rewritten) == 0 {
 			return nil
@@ -56,22 +52,32 @@ func NewFixTransformer(prefs StylePreferences) autoimport.FixTransformer {
 	}
 }
 
-// newStylePolicy creates a stylePolicy from the given preferences.
-// Package names are lowercased for case-insensitive matching.
-func newStylePolicy(prefs StylePreferences) *stylePolicy {
-	sp := &stylePolicy{
-		namespacePackages: make(map[string]bool, len(prefs.NamespaceImportPackages)),
-		barrelPackages:    make(map[string]bool, len(prefs.BarrelImportPackages)),
-		aliases:           make(map[string]string, len(prefs.ImportAliases)),
-		followReexports:   prefs.FollowTopLevelReexports,
+func namespaceFixKey(fix *autoimport.Fix) string {
+	if fix == nil {
+		return ""
 	}
-	for _, pkg := range prefs.NamespaceImportPackages {
+	return fix.ModuleSpecifier + "\x00" + fix.NamespacePrefix
+}
+
+// newStylePolicy creates a stylePolicy from the given resolved options.
+// Package names are lowercased for case-insensitive matching.
+func newStylePolicy(resolved *etscore.ResolvedEffectPluginOptions) *stylePolicy {
+	if resolved == nil {
+		return &stylePolicy{}
+	}
+	sp := &stylePolicy{
+		namespacePackages: make(map[string]bool, len(resolved.NamespaceImportPackages)),
+		barrelPackages:    make(map[string]bool, len(resolved.BarrelImportPackages)),
+		aliases:           make(map[string]string, len(resolved.ImportAliases)),
+		followReexports:   resolved.TopLevelNamedReexports == etscore.TopLevelNamedReexportsFollow,
+	}
+	for _, pkg := range resolved.NamespaceImportPackages {
 		sp.namespacePackages[strings.ToLower(pkg)] = true
 	}
-	for _, pkg := range prefs.BarrelImportPackages {
+	for _, pkg := range resolved.BarrelImportPackages {
 		sp.barrelPackages[strings.ToLower(pkg)] = true
 	}
-	for pkg, alias := range prefs.ImportAliases {
+	for pkg, alias := range resolved.ImportAliases {
 		sp.aliases[strings.ToLower(pkg)] = alias
 	}
 	return sp
@@ -90,8 +96,8 @@ func (sp *stylePolicy) Apply(export *autoimport.Export, fix *autoimport.Fix) *au
 		return fix
 	}
 
-	// Only rewrite AddNew fixes
-	if fix.Kind != lsproto.AutoImportFixKindAddNew {
+	// Only rewrite new imports or additions to existing imports.
+	if fix.Kind != lsproto.AutoImportFixKindAddNew && fix.Kind != lsproto.AutoImportFixKindAddToExisting {
 		return fix
 	}
 

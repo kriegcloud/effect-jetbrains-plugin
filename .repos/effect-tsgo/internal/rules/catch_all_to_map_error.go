@@ -2,9 +2,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -19,12 +19,12 @@ var CatchAllToMapError = rule.Rule{
 	Description:     "Suggests using Effect.mapError instead of Effect.catch + Effect.fail",
 	DefaultSeverity: etscore.SeveritySuggestion,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.You_can_use_Effect_mapError_instead_of_Effect_catch_Effect_fail_to_transform_the_error_type_effect_catchAllToMapError.Code()},
+	Codes:           []int32{tsdiag.Effect_mapError_expresses_the_same_error_type_transformation_more_directly_than_Effect_0_followed_by_Effect_fail_effect_catchAllToMapError.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		matches := AnalyzeCatchAllToMapError(ctx.Checker, ctx.SourceFile)
+		matches := AnalyzeCatchAllToMapError(ctx.TypeParser, ctx.Checker, ctx.SourceFile)
 		diags := make([]*ast.Diagnostic, len(matches))
 		for i, m := range matches {
-			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.You_can_use_Effect_mapError_instead_of_Effect_catch_Effect_fail_to_transform_the_error_type_effect_catchAllToMapError, nil)
+			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.Effect_mapError_expresses_the_same_error_type_transformation_more_directly_than_Effect_0_followed_by_Effect_fail_effect_catchAllToMapError, nil, m.CatchMethodName)
 		}
 		return diags
 	},
@@ -37,20 +37,21 @@ type CatchAllToMapErrorMatch struct {
 	Location           core.TextRange  // The pre-computed error range for this match
 	Callee             *ast.Node       // The Effect.catch callee node (for diagnostic location)
 	CalleeNameNode     *ast.Node       // The "catch" name node within the PropertyAccessExpression (for text replacement)
+	CatchMethodName    string          // The catch variant name (e.g. "catch" or "catchAll")
 	FailCallExpression *ast.Node       // The Effect.fail(arg) call expression node (for replacement range)
 	FailArgument       *ast.Node       // The first argument to Effect.fail (the replacement text)
 }
 
 // AnalyzeCatchAllToMapError finds all Effect.catch callbacks that simply wrap the
 // error with Effect.fail, which can be simplified to Effect.mapError.
-func AnalyzeCatchAllToMapError(c *checker.Checker, sf *ast.SourceFile) []CatchAllToMapErrorMatch {
+func AnalyzeCatchAllToMapError(tp *typeparser.TypeParser, _ *checker.Checker, sf *ast.SourceFile) []CatchAllToMapErrorMatch {
 	var matches []CatchAllToMapErrorMatch
 
-	flows := typeparser.PipingFlows(c, sf, true)
+	flows := tp.PipingFlows(sf, true)
 	for _, flow := range flows {
 		for _, transformation := range flow.Transformations {
-			if !typeparser.IsNodeReferenceToEffectModuleApi(c, transformation.Callee, "catch") &&
-				!typeparser.IsNodeReferenceToEffectModuleApi(c, transformation.Callee, "catchAll") {
+			if !tp.IsNodeReferenceToEffectModuleApi(transformation.Callee, "catch") &&
+				!tp.IsNodeReferenceToEffectModuleApi(transformation.Callee, "catchAll") {
 				continue
 			}
 
@@ -76,17 +77,19 @@ func AnalyzeCatchAllToMapError(c *checker.Checker, sf *ast.SourceFile) []CatchAl
 				continue
 			}
 
-			if !typeparser.IsNodeReferenceToEffectModuleApi(c, call.Expression, "fail") {
+			if !tp.IsNodeReferenceToEffectModuleApi(call.Expression, "fail") {
 				continue
 			}
 
 			// Extract the "catch" name node from the PropertyAccessExpression callee
 			var calleeNameNode *ast.Node
+			catchMethodName := "catch"
 			callee := transformation.Callee
 			if callee.Kind == ast.KindPropertyAccessExpression {
 				prop := callee.AsPropertyAccessExpression()
 				if prop != nil && prop.Name() != nil {
 					calleeNameNode = prop.Name()
+					catchMethodName = prop.Name().Text()
 				}
 			}
 
@@ -95,6 +98,7 @@ func AnalyzeCatchAllToMapError(c *checker.Checker, sf *ast.SourceFile) []CatchAl
 				Location:           scanner.GetErrorRangeForNode(sf, transformation.Callee),
 				Callee:             transformation.Callee,
 				CalleeNameNode:     calleeNameNode,
+				CatchMethodName:    catchMethodName,
 				FailCallExpression: expr,
 				FailArgument:       call.Arguments.Nodes[0],
 			})

@@ -1,13 +1,13 @@
 package refactors
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
+	"github.com/microsoft/typescript-go/shim/lsp/lsproto"
 )
 
 var WrapWithEffectGen = refactor.Refactor{
@@ -18,12 +18,6 @@ var WrapWithEffectGen = refactor.Refactor{
 }
 
 func runWrapWithEffectGen(ctx *refactor.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
-
 	token := astnav.GetTokenAtPosition(ctx.SourceFile, ctx.Span.Pos())
 	if token == nil {
 		return nil
@@ -47,14 +41,14 @@ func runWrapWithEffectGen(ctx *refactor.Context) []ls.CodeAction {
 			}
 		}
 
-		nodeType := typeparser.GetTypeAtLocation(c, node)
+		nodeType := ctx.TypeParser.GetTypeAtLocation(node)
 		if nodeType == nil {
 			continue
 		}
-		if !typeparser.StrictIsEffectType(c, nodeType, node) {
+		if !ctx.TypeParser.StrictIsEffectType(nodeType, node) {
 			continue
 		}
-		if typeparser.EffectGenCall(c, node) != nil {
+		if ctx.TypeParser.EffectGenCall(node) != nil {
 			continue
 		}
 
@@ -66,54 +60,18 @@ func runWrapWithEffectGen(ctx *refactor.Context) []ls.CodeAction {
 		return nil
 	}
 
-	effectModuleName := effectutil.FindEffectModuleIdentifier(ctx.SourceFile)
+	effectModuleName := typeparser.FindEffectModuleIdentifier(ctx.SourceFile)
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Wrap with Effect.gen",
-		Run: func(tracker *change.Tracker) {
-			// Build: Effect.gen(function*() { return yield* <expr> })
-			clonedExpr := tracker.DeepCloneNode(matchedNode)
-
-			// yield* <expr>
-			yieldExpr := tracker.NewYieldExpression(
-				tracker.NewToken(ast.KindAsteriskToken),
-				clonedExpr,
-			)
-
-			// return yield* <expr>
-			returnStmt := tracker.NewReturnStatement(yieldExpr)
-
-			// { return yield* <expr> }
-			body := tracker.NewBlock(
-				tracker.NewNodeList([]*ast.Node{returnStmt}),
-				false,
-			)
-
-			// function*() { return yield* <expr> }
-			genFn := tracker.NewFunctionExpression(
-				nil,                                     // modifiers
-				tracker.NewToken(ast.KindAsteriskToken), // asterisk (generator)
-				nil,                                     // name
-				nil,                                     // typeParameters
-				tracker.NewNodeList([]*ast.Node{}),      // parameters (empty)
-				nil,                                     // returnType
-				nil,                                     // fullSignature
-				body,
-			)
-
-			// Effect.gen(...)
-			effectId := tracker.NewIdentifier(effectModuleName)
-			genAccess := tracker.NewPropertyAccessExpression(
-				effectId, nil, tracker.NewIdentifier("gen"), ast.NodeFlagsNone,
-			)
-			effectGenCall := tracker.NewCallExpression(
-				genAccess, nil, nil,
-				tracker.NewNodeList([]*ast.Node{genFn}),
-				ast.NodeFlagsNone,
-			)
-
-			ast.SetParentInChildren(effectGenCall)
-			tracker.ReplaceNode(ctx.SourceFile, matchedNode, effectGenCall, nil)
+		Run: func(tracker *rewriter.Tracker) {
+			start := astnav.GetStartOfNode(matchedNode, ctx.SourceFile, false)
+			textRange := ctx.SourceFile.Text()[start:matchedNode.End()]
+			wrapped := effectModuleName + ".gen(function*() { return yield* " + textRange + " })"
+			tracker.ReplaceRangeWithText(ctx.SourceFile, lsproto.Range{
+				Start: ctx.BytePosToLSPPosition(start),
+				End:   ctx.BytePosToLSPPosition(matchedNode.End()),
+			}, wrapped)
 		},
 	})
 	if action == nil {

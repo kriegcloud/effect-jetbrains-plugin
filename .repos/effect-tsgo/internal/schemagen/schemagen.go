@@ -8,10 +8,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 	"github.com/microsoft/typescript-go/shim/scanner"
 )
 
@@ -25,7 +24,7 @@ var (
 
 // SchemaGen holds the context needed to convert AST type nodes into Schema expressions.
 type SchemaGen struct {
-	Tracker          *change.Tracker
+	Tracker          *rewriter.Tracker
 	SourceFile       *ast.SourceFile
 	SchemaIdentifier string
 	Version          typeparser.EffectMajorVersion
@@ -33,11 +32,11 @@ type SchemaGen struct {
 
 // New creates a SchemaGen from the given tracker and source file, resolving the
 // Schema import identifier automatically.
-func New(tracker *change.Tracker, sf *ast.SourceFile, version typeparser.EffectMajorVersion) *SchemaGen {
+func New(tracker *rewriter.Tracker, sf *ast.SourceFile, version typeparser.EffectMajorVersion) *SchemaGen {
 	return &SchemaGen{
 		Tracker:          tracker,
 		SourceFile:       sf,
-		SchemaIdentifier: effectutil.FindModuleIdentifier(sf, "Schema"),
+		SchemaIdentifier: typeparser.FindModuleIdentifier(sf, "Schema"),
 		Version:          version,
 	}
 }
@@ -377,7 +376,7 @@ func (g *SchemaGen) entityNameToDataTypeName(typeName *ast.Node) string {
 		leftName := scanner.GetTextOfNode(qn.Left)
 		// Check if leftName is an imported module identifier for a known module
 		for _, moduleName := range []string{"Option", "Either", "Chunk", "Duration"} {
-			imported := effectutil.FindModuleIdentifier(g.SourceFile, moduleName)
+			imported := typeparser.FindModuleIdentifier(g.SourceFile, moduleName)
 			if leftName == imported && rightName == moduleName {
 				return moduleName
 			}
@@ -618,8 +617,8 @@ func (g *SchemaGen) createExportVariableDeclaration(name string, initializer *as
 		initializer,
 	)
 	varDeclList := g.Tracker.NewVariableDeclarationList(
-		ast.NodeFlagsConst,
 		g.Tracker.NewNodeList([]*ast.Node{varDecl}),
+		ast.NodeFlagsConst,
 	)
 	modifiers := g.Tracker.NewModifierList([]*ast.Node{
 		g.Tracker.NewModifier(ast.KindExportKeyword),

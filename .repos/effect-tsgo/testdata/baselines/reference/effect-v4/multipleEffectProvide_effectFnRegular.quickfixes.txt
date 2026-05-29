@@ -1,16 +1,16 @@
 === Quick Fix Inventory ===
 
-[D1] (24:3-24:37) TS377033: Avoid chaining Effect.provide calls, as this can lead to service lifecycle issues. Instead, merge layers and provide them in a single call. effect(multipleEffectProvide)
+[D1] (24:3-24:37) TS377033: This expression chains multiple `Effect.provide` calls. Providing Layers in multiple calls in a chain can break service lifecycle behavior compared with a single combined provide with merged layers. effect(multipleEffectProvide)
   Fix 0: "Disable multipleEffectProvide for this line"
   Fix 1: "Disable multipleEffectProvide for entire file"
   Fix 2: "Combine into a single provide"
 
-[D2] (30:3-30:37) TS377033: Avoid chaining Effect.provide calls, as this can lead to service lifecycle issues. Instead, merge layers and provide them in a single call. effect(multipleEffectProvide)
+[D2] (30:3-30:37) TS377033: This expression chains multiple `Effect.provide` calls. Providing Layers in multiple calls in a chain can break service lifecycle behavior compared with a single combined provide with merged layers. effect(multipleEffectProvide)
   Fix 0: "Disable multipleEffectProvide for this line"
   Fix 1: "Disable multipleEffectProvide for entire file"
   Fix 2: "Combine into a single provide"
 
-[D3] (36:3-36:37) TS377033: Avoid chaining Effect.provide calls, as this can lead to service lifecycle issues. Instead, merge layers and provide them in a single call. effect(multipleEffectProvide)
+[D3] (36:3-36:37) TS377033: This expression chains multiple `Effect.provide` calls. Providing Layers in multiple calls in a chain can break service lifecycle behavior compared with a single combined provide with merged layers. effect(multipleEffectProvide)
   Fix 0: "Disable multipleEffectProvide for this line"
   Fix 1: "Disable multipleEffectProvide for entire file"
   Fix 2: "Combine into a single provide"
@@ -26,21 +26,21 @@ skipped by default
 === [D1] Fix 2: "Combine into a single provide" ===
 
 --- file:///.src/multipleEffectProvide_effectFnRegular.ts ---
-import { ServiceMap, Effect, Layer } from "effect"
+import { Context, Effect, Layer } from "effect"
 
-class MyService1 extends ServiceMap.Service<MyService1>()("MyService1", {
+class MyService1 extends Context.Service<MyService1>()("MyService1", {
   make: Effect.succeed({ value: 1 })
 }) {
   static Default = Layer.effect(this, this.make)
 }
 
-class MyService2 extends ServiceMap.Service<MyService2>()("MyService2", {
+class MyService2 extends Context.Service<MyService2>()("MyService2", {
   make: Effect.succeed({ value: 2 })
 }) {
   static Default = Layer.effect(this, this.make)
 }
 
-class MyService3 extends ServiceMap.Service<MyService3>()("MyService3", {
+class MyService3 extends Context.Service<MyService3>()("MyService3", {
   make: Effect.succeed({ value: 3 })
 }) {
   static Default = Layer.effect(this, this.make)
@@ -75,21 +75,21 @@ skipped by default
 === [D2] Fix 2: "Combine into a single provide" ===
 
 --- file:///.src/multipleEffectProvide_effectFnRegular.ts ---
-import { ServiceMap, Effect, Layer } from "effect"
+import { Context, Effect, Layer } from "effect"
 
-class MyService1 extends ServiceMap.Service<MyService1>()("MyService1", {
+class MyService1 extends Context.Service<MyService1>()("MyService1", {
   make: Effect.succeed({ value: 1 })
 }) {
   static Default = Layer.effect(this, this.make)
 }
 
-class MyService2 extends ServiceMap.Service<MyService2>()("MyService2", {
+class MyService2 extends Context.Service<MyService2>()("MyService2", {
   make: Effect.succeed({ value: 2 })
 }) {
   static Default = Layer.effect(this, this.make)
 }
 
-class MyService3 extends ServiceMap.Service<MyService3>()("MyService3", {
+class MyService3 extends Context.Service<MyService3>()("MyService3", {
   make: Effect.succeed({ value: 3 })
 }) {
   static Default = Layer.effect(this, this.make)
@@ -124,21 +124,21 @@ skipped by default
 === [D3] Fix 2: "Combine into a single provide" ===
 
 --- file:///.src/multipleEffectProvide_effectFnRegular.ts ---
-import { ServiceMap, Effect, Layer } from "effect"
+import { Context, Effect, Layer } from "effect"
 
-class MyService1 extends ServiceMap.Service<MyService1>()("MyService1", {
+class MyService1 extends Context.Service<MyService1>()("MyService1", {
   make: Effect.succeed({ value: 1 })
 }) {
   static Default = Layer.effect(this, this.make)
 }
 
-class MyService2 extends ServiceMap.Service<MyService2>()("MyService2", {
+class MyService2 extends Context.Service<MyService2>()("MyService2", {
   make: Effect.succeed({ value: 2 })
 }) {
   static Default = Layer.effect(this, this.make)
 }
 
-class MyService3 extends ServiceMap.Service<MyService3>()("MyService3", {
+class MyService3 extends Context.Service<MyService3>()("MyService3", {
   make: Effect.succeed({ value: 3 })
 }) {
   static Default = Layer.effect(this, this.make)

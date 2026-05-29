@@ -1,32 +1,28 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var ServiceNotAsClassFix = fixable.Fixable{
 	Name:        "serviceNotAsClass",
 	Description: "Convert to class declaration",
-	ErrorCodes:  []int32{tsdiag.ServiceMap_Service_should_be_used_in_a_class_declaration_instead_of_as_a_variable_Use_Colon_0_effect_serviceNotAsClass.Code()},
+	ErrorCodes:  []int32{tsdiag.Context_Service_is_assigned_to_a_variable_here_but_this_API_is_intended_for_a_class_declaration_shape_such_as_0_effect_serviceNotAsClass.Code()},
 	FixIDs:      []string{"serviceNotAsClass_fix"},
 	Run:         runServiceNotAsClassFix,
 }
 
 func runServiceNotAsClassFix(ctx *fixable.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeServiceNotAsClass(c, sf)
+	matches := rules.AnalyzeServiceNotAsClass(ctx.TypeParser, c, sf)
 	for _, match := range matches {
 		if !match.Location.Intersects(ctx.Span) && !ctx.Span.ContainedBy(match.Location) {
 			continue
@@ -34,12 +30,12 @@ func runServiceNotAsClassFix(ctx *fixable.Context) []ls.CodeAction {
 
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Convert to class declaration",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				callExpr := match.CallExprNode.AsCallExpression()
 
-				// Build ServiceMap.Service property access
+				// Build the original service namespace property access.
 				serviceMapService := tracker.NewPropertyAccessExpression(
-					tracker.NewIdentifier("ServiceMap"),
+					tracker.NewIdentifier(match.ServiceModule),
 					nil,
 					tracker.NewIdentifier("Service"),
 					ast.NodeFlagsNone,
@@ -54,7 +50,7 @@ func runServiceNotAsClassFix(ctx *fixable.Context) []ls.CodeAction {
 					}
 				}
 
-				// Build inner call: ServiceMap.Service<Self, ...TypeArgs>()
+				// Build inner call: <ServiceModule>.Service<Self, ...TypeArgs>()
 				innerCall := tracker.NewCallExpression(
 					serviceMapService,
 					nil,

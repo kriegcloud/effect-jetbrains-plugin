@@ -1,33 +1,29 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 	"github.com/microsoft/typescript-go/shim/scanner"
 )
 
 var SchemaStructWithTagFix = fixable.Fixable{
 	Name:        "schemaStructWithTag",
 	Description: "Rewrite as Schema.TaggedStruct",
-	ErrorCodes:  []int32{tsdiag.Schema_Struct_with_a_tag_field_can_be_simplified_to_Schema_TaggedStruct_to_make_the_tag_optional_in_the_constructor_effect_schemaStructWithTag.Code()},
+	ErrorCodes:  []int32{tsdiag.This_Schema_Struct_includes_a_tag_field_Schema_TaggedStruct_is_the_tagged_struct_form_for_this_pattern_and_makes_the_tag_optional_in_the_constructor_effect_schemaStructWithTag.Code()},
 	FixIDs:      []string{"schemaStructWithTag_fix"},
 	Run:         runSchemaStructWithTagFix,
 }
 
 func runSchemaStructWithTagFix(ctx *fixable.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeSchemaStructWithTag(c, sf)
+	matches := rules.AnalyzeSchemaStructWithTag(ctx.TypeParser, c, sf)
 	for _, match := range matches {
 		if !match.Location.Intersects(ctx.Span) && !ctx.Span.ContainedBy(match.Location) {
 			continue
@@ -46,7 +42,7 @@ func runSchemaStructWithTagFix(ctx *fixable.Context) []ls.CodeAction {
 
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Rewrite as Schema.TaggedStruct",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				// Build Schema.TaggedStruct property access
 				schemaId := tracker.NewIdentifier(schemaModuleName)
 				taggedStructAccess := tracker.NewPropertyAccessExpression(

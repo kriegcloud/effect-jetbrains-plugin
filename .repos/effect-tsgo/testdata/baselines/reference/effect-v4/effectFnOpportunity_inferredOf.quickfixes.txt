@@ -6,7 +6,7 @@
 [D2] (8:7-8:21) TS6133: '_shouldTrigger' is declared but its value is never read.
   (no quick fixes)
 
-[D3] (9:3-9:10) TS377047: Can be rewritten as a reusable function: Effect.fn("UserService.getUser")(function*(id) { ... }). effect(effectFnOpportunity)
+[D3] (9:3-9:10) TS377047: This expression can be rewritten in the reusable function form `Effect.fn("UserService.getUser")(function*(id) { ... })`. effect(effectFnOpportunity)
   Fix 0: "Disable effectFnOpportunity for this line"
   Fix 1: "Disable effectFnOpportunity for entire file"
   Fix 2: "Convert to Effect.fn(\"UserService.getUser\")"
@@ -27,17 +27,17 @@ skipped by default
 === [D3] Fix 2: "Convert to Effect.fn(\"UserService.getUser\")" ===
 
 --- file:///.src/effectFnOpportunity_inferredOf.ts ---
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, Context } from "effect"
 
-class UserService extends ServiceMap.Service<UserService, {
+class UserService extends Context.Service<UserService, {
     getUser(id: string): Effect.Effect<void>
   }>()("UserService") {}
 
 
 const _shouldTrigger = UserService.of({ // UserService is an Effect Tag
-  getUser: Effect.fn("UserService.getUser")(function*(id: string) {
-      yield* Effect.log(`Looking up user ${id}`)
-  })
+  getUser: Effect.fn("UserService.getUser")(function* (id: string) {
+    yield* Effect.log(`Looking up user ${id}`);
+})
 })
 
 
@@ -50,9 +50,9 @@ skipped by default
 === [D4] Fix 2: "Remove the Effect.gen, and keep the body" ===
 
 --- file:///.src/effectFnOpportunity_inferredOf.ts ---
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, Context } from "effect"
 
-class UserService extends ServiceMap.Service<UserService, {
+class UserService extends Context.Service<UserService, {
     getUser(id: string): Effect.Effect<void>
   }>()("UserService") {}
 
