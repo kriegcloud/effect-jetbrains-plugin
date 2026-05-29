@@ -3,8 +3,8 @@ package layergraph
 import (
 	"slices"
 
-	"github.com/effect-ts/effect-typescript-go/internal/graph"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/graph"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 )
@@ -13,14 +13,14 @@ import (
 // then computes an ordered list of layer nodes annotated with merges/provides flags
 // that determine which Layer.* combinator to use (provide, provideMerge, or merge).
 func ConvertOutlineGraphToLayerMagic(
-	_ *checker.Checker,
+	tp *typeparser.TypeParser,
 	outlineGraph *graph.Graph[LayerOutlineGraphNodeInfo, struct{}],
 	targetOutputTypes []*checker.Type,
 ) *LayerMagicResult {
 	// Step 1: Unroll target output types into individual types
 	var outputTypes []*checker.Type
 	for _, t := range targetOutputTypes {
-		outputTypes = append(outputTypes, typeparser.UnrollUnionMembers(t)...)
+		outputTypes = append(outputTypes, tp.UnrollUnionMembers(t)...)
 	}
 
 	// Build a set of missing output types for fast lookup

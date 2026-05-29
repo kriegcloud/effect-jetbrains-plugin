@@ -1,9 +1,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -61,15 +61,15 @@ var NodeBuiltinImport = rule.Rule{
 	Description:     "Warns when importing Node.js built-in modules that have Effect-native counterparts",
 	DefaultSeverity: etscore.SeverityOff,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.Prefer_using_0_from_1_instead_of_the_Node_js_2_module_effect_nodeBuiltinImport.Code()},
+	Codes:           []int32{tsdiag.This_module_reference_uses_the_2_module_the_corresponding_Effect_API_is_0_from_1_effect_nodeBuiltinImport.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		matches := AnalyzeNodeBuiltinImport(ctx.Checker, ctx.SourceFile)
+		matches := AnalyzeNodeBuiltinImport(ctx.TypeParser, ctx.Checker, ctx.SourceFile)
 		diags := make([]*ast.Diagnostic, len(matches))
 		for i, m := range matches {
 			diags[i] = ctx.NewDiagnostic(
 				m.SourceFile,
 				m.Location,
-				tsdiag.Prefer_using_0_from_1_instead_of_the_Node_js_2_module_effect_nodeBuiltinImport,
+				tsdiag.This_module_reference_uses_the_2_module_the_corresponding_Effect_API_is_0_from_1_effect_nodeBuiltinImport,
 				nil,
 				m.Alternative,
 				m.Package,
@@ -88,9 +88,9 @@ type NodeBuiltinImportMatch struct {
 	Module      string
 }
 
-func AnalyzeNodeBuiltinImport(c *checker.Checker, sf *ast.SourceFile) []NodeBuiltinImportMatch {
+func AnalyzeNodeBuiltinImport(tp *typeparser.TypeParser, _ *checker.Checker, sf *ast.SourceFile) []NodeBuiltinImportMatch {
 	alternatives := moduleAlternativesV4
-	if typeparser.SupportedEffectVersion(c) == typeparser.EffectMajorV3 {
+	if tp.SupportedEffectVersion() == typeparser.EffectMajorV3 {
 		alternatives = moduleAlternativesV3
 	}
 

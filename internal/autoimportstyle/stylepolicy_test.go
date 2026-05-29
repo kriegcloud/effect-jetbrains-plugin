@@ -1,6 +1,7 @@
 package autoimportstyle
 
 import (
+	"github.com/effect-ts/tsgo/etscore"
 	"testing"
 
 	"github.com/microsoft/typescript-go/shim/ls/autoimport"
@@ -9,7 +10,7 @@ import (
 
 func TestNewStylePolicy(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect", "Effect"},
 		BarrelImportPackages:    []string{"@effect/platform"},
 		ImportAliases:           map[string]string{"effect": "Fx"},
@@ -36,12 +37,12 @@ func TestStylePolicyIsEmpty(t *testing.T) {
 		t.Error("nil policy should be empty")
 	}
 
-	empty := newStylePolicy(StylePreferences{})
+	empty := newStylePolicy(&etscore.ResolvedEffectPluginOptions{})
 	if !empty.isEmpty() {
 		t.Error("empty preferences should produce empty policy")
 	}
 
-	nonEmpty := newStylePolicy(StylePreferences{
+	nonEmpty := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect"},
 	})
 	if nonEmpty.isEmpty() {
@@ -77,7 +78,7 @@ func makeAddNewFix(importKind lsproto.ImportKind, moduleSpecifier string, name s
 
 func TestApplyNamespaceRewrite(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect"},
 	})
 
@@ -103,9 +104,37 @@ func TestApplyNamespaceRewrite(t *testing.T) {
 	}
 }
 
+func TestApplyNamespaceRewriteFromAddToExisting(t *testing.T) {
+	t.Parallel()
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
+		NamespaceImportPackages: []string{"effect"},
+	})
+
+	export := makeExport("effect", "effect/testing/TestClock", "")
+	fix := makeAddNewFix(lsproto.ImportKindNamed, "effect/testing/TestClock", "testClockWith")
+	fix.Kind = lsproto.AutoImportFixKindAddToExisting
+
+	result := sp.Apply(export, fix)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Kind != lsproto.AutoImportFixKindAddNew {
+		t.Errorf("expected rewrite to AddNew, got %v", result.Kind)
+	}
+	if result.ImportKind != lsproto.ImportKindNamespace {
+		t.Errorf("expected ImportKindNamespace, got %v", result.ImportKind)
+	}
+	if result.ModuleSpecifier != "effect/testing/TestClock" {
+		t.Errorf("expected module specifier 'effect/testing/TestClock', got %q", result.ModuleSpecifier)
+	}
+	if result.NamespacePrefix != "TestClock" {
+		t.Errorf("expected namespace prefix 'TestClock', got %q", result.NamespacePrefix)
+	}
+}
+
 func TestApplyNamespaceRewriteWithAlias(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect"},
 		ImportAliases:           map[string]string{"effect": "Fx"},
 	})
@@ -131,7 +160,7 @@ func TestApplyNamespaceRewriteWithAlias(t *testing.T) {
 
 func TestApplyBarrelRewrite(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		BarrelImportPackages: []string{"@effect/platform"},
 	})
 
@@ -159,7 +188,7 @@ func TestApplyBarrelRewrite(t *testing.T) {
 
 func TestApplyBarrelRewriteWithAlias(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		BarrelImportPackages: []string{"@effect/platform"},
 		ImportAliases:        map[string]string{"@effect/platform": "Platform"},
 	})
@@ -182,7 +211,7 @@ func TestApplyBarrelRewriteWithAlias(t *testing.T) {
 
 func TestApplyNamespaceRewriteWithoutUsagePositionFallsBack(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect"},
 	})
 
@@ -198,7 +227,7 @@ func TestApplyNamespaceRewriteWithoutUsagePositionFallsBack(t *testing.T) {
 
 func TestApplyBarrelRewriteWithoutUsagePositionFallsBack(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		BarrelImportPackages: []string{"@effect/platform"},
 	})
 
@@ -214,9 +243,9 @@ func TestApplyBarrelRewriteWithoutUsagePositionFallsBack(t *testing.T) {
 
 func TestApplyTopLevelReexportIgnore(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect"},
-		FollowTopLevelReexports: false, // "ignore"
+		TopLevelNamedReexports:  etscore.TopLevelNamedReexportsIgnore, // "ignore"
 	})
 
 	// Export is a reexport (target module differs from module)
@@ -239,9 +268,9 @@ func TestApplyTopLevelReexportIgnore(t *testing.T) {
 
 func TestApplyTopLevelReexportFollow(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect"},
-		FollowTopLevelReexports: true, // "follow"
+		TopLevelNamedReexports:  etscore.TopLevelNamedReexportsFollow, // "follow"
 	})
 
 	// Export is a reexport (target module differs from module)
@@ -258,7 +287,7 @@ func TestApplyTopLevelReexportFollow(t *testing.T) {
 
 func TestApplyNoMatchPassthrough(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect"},
 	})
 
@@ -273,7 +302,7 @@ func TestApplyNoMatchPassthrough(t *testing.T) {
 
 func TestApplyNonAddNewPassthrough(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect"},
 	})
 
@@ -295,7 +324,7 @@ func TestApplyNonAddNewPassthrough(t *testing.T) {
 
 func TestApplyCaseInsensitiveMatching(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"Effect"},
 	})
 
@@ -313,7 +342,7 @@ func TestApplyCaseInsensitiveMatching(t *testing.T) {
 
 func TestApplyNilInputs(t *testing.T) {
 	t.Parallel()
-	sp := newStylePolicy(StylePreferences{
+	sp := newStylePolicy(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect"},
 	})
 
@@ -376,7 +405,7 @@ func TestInferNamespaceName(t *testing.T) {
 
 func TestNewFixTransformerNilForEmptyPrefs(t *testing.T) {
 	t.Parallel()
-	transformer := NewFixTransformer(StylePreferences{})
+	transformer := NewFixTransformer(&etscore.ResolvedEffectPluginOptions{})
 	if transformer != nil {
 		t.Error("expected nil transformer for empty preferences")
 	}
@@ -384,7 +413,7 @@ func TestNewFixTransformerNilForEmptyPrefs(t *testing.T) {
 
 func TestNewFixTransformerAppliesPolicy(t *testing.T) {
 	t.Parallel()
-	transformer := NewFixTransformer(StylePreferences{
+	transformer := NewFixTransformer(&etscore.ResolvedEffectPluginOptions{
 		NamespaceImportPackages: []string{"effect"},
 	})
 	if transformer == nil {
@@ -400,5 +429,34 @@ func TestNewFixTransformerAppliesPolicy(t *testing.T) {
 	}
 	if result[0].ImportKind != lsproto.ImportKindNamespace {
 		t.Errorf("expected ImportKindNamespace, got %v", result[0].ImportKind)
+	}
+}
+
+func TestNewFixTransformerPrefersExistingNamespaceUse(t *testing.T) {
+	t.Parallel()
+	transformer := NewFixTransformer(&etscore.ResolvedEffectPluginOptions{
+		NamespaceImportPackages: []string{"effect"},
+	})
+	if transformer == nil {
+		t.Fatal("expected non-nil transformer")
+	}
+
+	export := makeExport("effect", "effect/testing/TestClock", "")
+	useNamespace := &autoimport.Fix{AutoImportFix: &lsproto.AutoImportFix{
+		Kind:            lsproto.AutoImportFixKindUseNamespace,
+		ImportKind:      lsproto.ImportKindNamespace,
+		ModuleSpecifier: "effect/testing/TestClock",
+		Name:            "testClockWith",
+		NamespacePrefix: "TestClock",
+	}}
+	addToExisting := makeAddNewFix(lsproto.ImportKindNamed, "effect/testing/TestClock", "testClockWith")
+	addToExisting.Kind = lsproto.AutoImportFixKindAddToExisting
+
+	result := transformer(export, []*autoimport.Fix{useNamespace, addToExisting})
+	if len(result) != 1 {
+		t.Fatalf("expected 1 fix, got %d", len(result))
+	}
+	if result[0].Kind != lsproto.AutoImportFixKindUseNamespace {
+		t.Fatalf("expected UseNamespace fix, got %v", result[0].Kind)
 	}
 }

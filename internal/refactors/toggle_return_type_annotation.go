@@ -1,14 +1,14 @@
 package refactors
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var ToggleReturnTypeAnnotation = refactor.Refactor{
@@ -63,7 +63,7 @@ func runToggleReturnTypeAnnotation(ctx *refactor.Context) []ls.CodeAction {
 		// Remove existing return type annotation: delete from endNode.End() to type.End()
 		action := ctx.NewRefactorAction(refactor.RefactorAction{
 			Description: "Toggle return type annotation",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				tracker.DeleteRange(ctx.SourceFile, core.NewTextRange(endNode.End(), typeNode.End()))
 			},
 		})
@@ -81,25 +81,21 @@ func runToggleReturnTypeAnnotation(ctx *refactor.Context) []ls.CodeAction {
 		return nil
 	}
 
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
-	returnType := getInferredReturnTypeFromChecker(c, matchedNode)
+	returnType := getInferredReturnTypeFromChecker(ctx.TypeParser, c, matchedNode)
 	if returnType == nil {
 		return nil
 	}
 
-	typeStr := c.TypeToStringEx(returnType, matchedNode, checker.TypeFormatFlagsNoTruncation)
+	typeStr := c.TypeToStringEx(returnType, matchedNode, checker.TypeFormatFlagsNoTruncation, nil)
 	if typeStr == "" {
 		return nil
 	}
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Toggle return type annotation",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			tracker.InsertText(ctx.SourceFile, ctx.BytePosToLSPPosition(endNode.End()), ": "+typeStr)
 		},
 	})
@@ -127,11 +123,11 @@ func getFunctionLikeType(node *ast.Node) *ast.Node {
 
 // getInferredReturnTypeFromChecker extracts the return type from a function-like declaration
 // using the type checker. It handles overloaded functions and regular signatures.
-func getInferredReturnTypeFromChecker(c *checker.Checker, declaration *ast.Node) *checker.Type {
+func getInferredReturnTypeFromChecker(tp *typeparser.TypeParser, c *checker.Checker, declaration *ast.Node) *checker.Type {
 	var returnType *checker.Type
 
 	// Try overloaded function handling
-	declType := typeparser.GetTypeAtLocation(c, declaration)
+	declType := tp.GetTypeAtLocation(declaration)
 	if declType != nil {
 		signatures := c.GetSignaturesOfType(declType, checker.SignatureKindCall)
 		if len(signatures) > 1 {

@@ -1,9 +1,8 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 )
@@ -15,7 +14,7 @@ var EffectGenUsesAdapter = rule.Rule{
 	Description:     "Warns when using the deprecated adapter parameter in Effect.gen",
 	DefaultSeverity: etscore.SeverityWarning,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:       []int32{tsdiag.The_adapter_of_Effect_gen_is_not_required_anymore_it_is_now_just_an_alias_of_pipe_effect_effectGenUsesAdapter.Code()},
+	Codes:           []int32{tsdiag.The_adapter_of_Effect_gen_is_not_required_anymore_it_is_now_just_an_alias_of_pipe_effect_effectGenUsesAdapter.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
 		var diags []*ast.Diagnostic
 
@@ -42,7 +41,7 @@ var EffectGenUsesAdapter = rule.Rule{
 }
 
 func checkEffectGenUsesAdapter(ctx *rule.Context, n *ast.Node) *ast.Diagnostic {
-	genResult := typeparser.EffectGenCall(ctx.Checker, n)
+	genResult := ctx.TypeParser.EffectGenCall(n)
 	if genResult == nil {
 		return nil
 	}

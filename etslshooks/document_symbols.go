@@ -2,9 +2,11 @@ package etslshooks
 
 import (
 	"context"
+	"slices"
+	"strconv"
 	"strings"
 
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/compiler"
@@ -15,22 +17,28 @@ import (
 )
 
 func afterDocumentSymbols(ctx context.Context, sf *ast.SourceFile, symbols []*lsproto.DocumentSymbol, program *compiler.Program, langService *ls.LanguageService) []*lsproto.DocumentSymbol {
-	if program.Options().Effect == nil {
+	effectConfig := program.Options().Effect
+	if effectConfig == nil {
 		return symbols
 	}
 
 	c, done := program.GetTypeCheckerForFile(ctx, sf)
 	defer done()
+	tp := typeparser.NewTypeParser(program, c)
 
-	layerChildren := collectLayerDocumentSymbols(c, sf, langService)
-	serviceChildren := collectServiceDocumentSymbols(c, sf, langService)
-	errorChildren := collectErrorDocumentSymbols(c, sf, langService)
-	schemaChildren := collectSchemaDocumentSymbols(c, sf, langService)
-	if len(layerChildren) == 0 && len(serviceChildren) == 0 && len(errorChildren) == 0 && len(schemaChildren) == 0 {
+	layerChildren := collectLayerDocumentSymbols(tp, c, sf, langService)
+	serviceChildren := collectServiceDocumentSymbols(tp, c, sf, langService)
+	errorChildren := collectErrorDocumentSymbols(tp, c, sf, langService)
+	schemaChildren := collectSchemaDocumentSymbols(tp, c, sf, langService)
+	var flowChildren []*lsproto.DocumentSymbol
+	if effectConfig.GetDebugEnabled() {
+		flowChildren = collectFlowDocumentSymbols(tp, c, sf, langService)
+	}
+	if len(layerChildren) == 0 && len(serviceChildren) == 0 && len(errorChildren) == 0 && len(schemaChildren) == 0 && len(flowChildren) == 0 {
 		return symbols
 	}
 
-	effectChildren := make([]*lsproto.DocumentSymbol, 0, 4)
+	effectChildren := make([]*lsproto.DocumentSymbol, 0, 5)
 	if len(layerChildren) > 0 {
 		layers := newSyntheticNamespaceSymbol("Layers")
 		layers.Children = &layerChildren
@@ -51,13 +59,18 @@ func afterDocumentSymbols(ctx context.Context, sf *ast.SourceFile, symbols []*ls
 		schemas.Children = &schemaChildren
 		effectChildren = append(effectChildren, schemas)
 	}
+	if len(flowChildren) > 0 {
+		flows := newSyntheticNamespaceSymbol("Flows")
+		flows.Children = &flowChildren
+		effectChildren = append(effectChildren, flows)
+	}
 	effect := newSyntheticNamespaceSymbol("Effect")
 	effect.Children = &effectChildren
 
 	return append([]*lsproto.DocumentSymbol{effect}, symbols...)
 }
 
-func collectLayerDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langService *ls.LanguageService) []*lsproto.DocumentSymbol {
+func collectLayerDocumentSymbols(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile, langService *ls.LanguageService) []*lsproto.DocumentSymbol {
 	var symbols []*lsproto.DocumentSymbol
 	seen := map[*ast.Node]struct{}{}
 	var walk ast.Visitor
@@ -66,11 +79,11 @@ func collectLayerDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langSer
 			return false
 		}
 		if isEffectSymbolDeclaration(current) {
-			if isLayerDeclaration(c, current) {
+			if isLayerDeclaration(tp, c, current) {
 				displayNode := resolveLayerDisplayNode(current)
 				if _, ok := seen[displayNode]; !ok {
 					seen[displayNode] = struct{}{}
-					symbols = append(symbols, newEffectDocumentSymbol(c, sf, langService, current, displayNode, layerSymbolDetail))
+					symbols = append(symbols, newEffectDocumentSymbol(tp, c, sf, langService, current, displayNode, layerSymbolDetail))
 				}
 				return false
 			}
@@ -82,7 +95,7 @@ func collectLayerDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langSer
 	return symbols
 }
 
-func collectServiceDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langService *ls.LanguageService) []*lsproto.DocumentSymbol {
+func collectServiceDocumentSymbols(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile, langService *ls.LanguageService) []*lsproto.DocumentSymbol {
 	var symbols []*lsproto.DocumentSymbol
 	seen := map[*ast.Node]struct{}{}
 	var walk ast.Visitor
@@ -91,16 +104,16 @@ func collectServiceDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langS
 			return false
 		}
 		if isEffectSymbolDeclaration(current) {
-			if isServiceDeclaration(c, current) {
+			if isServiceDeclaration(tp, c, current) {
 				displayNode := resolveServiceDisplayNode(current)
 				if _, ok := seen[displayNode]; !ok {
 					seen[displayNode] = struct{}{}
-					symbols = append(symbols, newEffectDocumentSymbol(c, sf, langService, current, displayNode, nil))
+					symbols = append(symbols, newEffectDocumentSymbol(tp, c, sf, langService, current, displayNode, nil))
 				}
 				return false
 			}
-			t := typeparser.GetTypeAtLocation(c, current)
-			if typeparser.IsLayerType(c, t, current) {
+			t := tp.GetTypeAtLocation(current)
+			if tp.IsLayerType(t, current) {
 				return false
 			}
 		}
@@ -111,7 +124,7 @@ func collectServiceDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langS
 	return symbols
 }
 
-func collectErrorDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langService *ls.LanguageService) []*lsproto.DocumentSymbol {
+func collectErrorDocumentSymbols(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile, langService *ls.LanguageService) []*lsproto.DocumentSymbol {
 	var symbols []*lsproto.DocumentSymbol
 	seen := map[*ast.Node]struct{}{}
 	var walk ast.Visitor
@@ -120,11 +133,11 @@ func collectErrorDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langSer
 			return false
 		}
 		if isEffectSymbolDeclaration(current) {
-			if isErrorDeclaration(c, current) {
+			if isErrorDeclaration(tp, c, current) {
 				displayNode := resolveErrorDisplayNode(current)
 				if _, ok := seen[displayNode]; !ok {
 					seen[displayNode] = struct{}{}
-					symbols = append(symbols, newEffectDocumentSymbol(c, sf, langService, current, displayNode, nil))
+					symbols = append(symbols, newEffectDocumentSymbol(tp, c, sf, langService, current, displayNode, nil))
 				}
 				return false
 			}
@@ -136,7 +149,7 @@ func collectErrorDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langSer
 	return symbols
 }
 
-func collectSchemaDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langService *ls.LanguageService) []*lsproto.DocumentSymbol {
+func collectSchemaDocumentSymbols(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile, langService *ls.LanguageService) []*lsproto.DocumentSymbol {
 	var symbols []*lsproto.DocumentSymbol
 	seen := map[*ast.Node]struct{}{}
 	var walk ast.Visitor
@@ -145,11 +158,11 @@ func collectSchemaDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langSe
 			return false
 		}
 		if isEffectSymbolDeclaration(current) {
-			if isSchemaDeclaration(c, current) {
+			if isSchemaDeclaration(tp, c, current) {
 				displayNode := resolveSchemaDisplayNode(current)
 				if _, ok := seen[displayNode]; !ok {
 					seen[displayNode] = struct{}{}
-					symbols = append(symbols, newEffectDocumentSymbol(c, sf, langService, current, displayNode, nil))
+					symbols = append(symbols, newEffectDocumentSymbol(tp, c, sf, langService, current, displayNode, nil))
 				}
 				return false
 			}
@@ -158,6 +171,58 @@ func collectSchemaDocumentSymbols(c *checker.Checker, sf *ast.SourceFile, langSe
 		return false
 	}
 	sf.AsNode().ForEachChild(walk)
+	return symbols
+}
+
+func collectFlowDocumentSymbols(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile, langService *ls.LanguageService) []*lsproto.DocumentSymbol {
+	flows := tp.PipingFlows(sf, true)
+	if len(flows) == 0 {
+		return nil
+	}
+
+	symbols := make([]*lsproto.DocumentSymbol, 0, len(flows))
+	for i, flow := range flows {
+		if flow == nil || flow.Node == nil {
+			continue
+		}
+
+		children := make([]*lsproto.DocumentSymbol, 0, len(flow.Transformations)+1)
+		if flow.Subject.Node != nil {
+			children = append(children, newNamedDocumentSymbol(
+				sf,
+				langService,
+				flow.Subject.Node,
+				debugFlowNodeText(sf, flow.Subject.Node),
+				typeToDetail(c, flow.Subject.OutType, flow.Subject.Node),
+				layerSymbolKind(flow.Subject.Node),
+			))
+		}
+		for j, transformation := range flow.Transformations {
+			if transformation.Node == nil {
+				continue
+			}
+			children = append(children, newNamedDocumentSymbol(
+				sf,
+				langService,
+				transformation.Node,
+				strconv.Itoa(j)+": "+debugFlowTransformationText(sf, &transformation),
+				typeToDetail(c, transformation.OutType, transformation.Node),
+				lsproto.SymbolKindFunction,
+			))
+		}
+
+		flowSymbol := newNamedDocumentSymbol(
+			sf,
+			langService,
+			flow.Node,
+			"Flow "+strconv.Itoa(i),
+			nil,
+			lsproto.SymbolKindVariable,
+		)
+		flowSymbol.Children = &children
+		symbols = append(symbols, flowSymbol)
+	}
+
 	return symbols
 }
 
@@ -179,29 +244,37 @@ func newSyntheticNamespaceSymbol(name string) *lsproto.DocumentSymbol {
 	}
 }
 
-func newEffectDocumentSymbol(
-	c *checker.Checker,
+func newNamedDocumentSymbol(
 	sf *ast.SourceFile,
 	langService *ls.LanguageService,
 	node *ast.Node,
-	displayNode *ast.Node,
-	detail func(*checker.Checker, *ast.Node) *string,
+	name string,
+	detail *string,
+	kind lsproto.SymbolKind,
 ) *lsproto.DocumentSymbol {
+	children := []*lsproto.DocumentSymbol{}
+	if node == nil {
+		zero := lsproto.Position{}
+		return &lsproto.DocumentSymbol{
+			Name:           name,
+			Detail:         detail,
+			Kind:           kind,
+			Range:          lsproto.Range{Start: zero, End: zero},
+			SelectionRange: lsproto.Range{Start: zero, End: zero},
+			Children:       &children,
+		}
+	}
+
 	converters := ls.LanguageService_converters(langService)
 	startPos := scanner.SkipTrivia(sf.Text(), node.Pos())
 	endPos := max(startPos, node.End())
 	start := converters.PositionToLineAndCharacter(sf, core.TextPos(startPos))
 	end := converters.PositionToLineAndCharacter(sf, core.TextPos(endPos))
-	children := []*lsproto.DocumentSymbol{}
-	var symbolDetail *string
-	if detail != nil {
-		symbolDetail = detail(c, node)
-	}
 
 	return &lsproto.DocumentSymbol{
-		Name:   layerSymbolName(sf, displayNode),
-		Detail: symbolDetail,
-		Kind:   layerSymbolKind(displayNode),
+		Name:   name,
+		Detail: detail,
+		Kind:   kind,
 		Range: lsproto.Range{
 			Start: start,
 			End:   end,
@@ -214,16 +287,68 @@ func newEffectDocumentSymbol(
 	}
 }
 
-func layerSymbolDetail(c *checker.Checker, node *ast.Node) *string {
-	typeCheckNode, types := classificationTypes(c, node)
+func newEffectDocumentSymbol(
+	tp *typeparser.TypeParser,
+	c *checker.Checker,
+	sf *ast.SourceFile,
+	langService *ls.LanguageService,
+	node *ast.Node,
+	displayNode *ast.Node,
+	detail func(*typeparser.TypeParser, *checker.Checker, *ast.Node) *string,
+) *lsproto.DocumentSymbol {
+	children := []*lsproto.DocumentSymbol{}
+	var symbolDetail *string
+	if detail != nil {
+		symbolDetail = detail(tp, c, node)
+	}
+
+	symbol := newNamedDocumentSymbol(sf, langService, node, layerSymbolName(sf, displayNode), symbolDetail, layerSymbolKind(displayNode))
+	symbol.Children = &children
+	return symbol
+}
+
+func typeToDetail(c *checker.Checker, t *checker.Type, node *ast.Node) *string {
+	if c == nil || t == nil || node == nil {
+		return nil
+	}
+	detail := c.TypeToStringEx(t, node, checker.TypeFormatFlagsNoTruncation, nil)
+	return &detail
+}
+
+func debugFlowNodeText(sf *ast.SourceFile, node *ast.Node) string {
+	if node == nil {
+		return "<unknown>"
+	}
+	text := strings.Join(strings.Fields(scanner.GetSourceTextOfNodeFromSourceFile(sf, node, false)), " ")
+	if text == "" {
+		return "<unknown>"
+	}
+	if len(text) > 80 {
+		return text[:77] + "..."
+	}
+	return text
+}
+
+func debugFlowTransformationText(sf *ast.SourceFile, transformation *typeparser.PipingFlowTransformation) string {
+	if transformation == nil {
+		return "<unknown>"
+	}
+	if transformation.Callee != nil {
+		return debugFlowNodeText(sf, transformation.Callee)
+	}
+	return debugFlowNodeText(sf, transformation.Node)
+}
+
+func layerSymbolDetail(tp *typeparser.TypeParser, c *checker.Checker, node *ast.Node) *string {
+	typeCheckNode, types := classificationTypes(tp, c, node)
 	for _, t := range types {
-		layer := typeparser.LayerType(c, t, typeCheckNode)
+		layer := tp.LayerType(t, typeCheckNode)
 		if layer == nil {
 			continue
 		}
-		rOut := c.TypeToStringEx(layer.ROut, typeCheckNode, checker.TypeFormatFlagsNoTruncation)
-		e := c.TypeToStringEx(layer.E, typeCheckNode, checker.TypeFormatFlagsNoTruncation)
-		rIn := c.TypeToStringEx(layer.RIn, typeCheckNode, checker.TypeFormatFlagsNoTruncation)
+		rOut := c.TypeToStringEx(layer.ROut, typeCheckNode, checker.TypeFormatFlagsNoTruncation, nil)
+		e := c.TypeToStringEx(layer.E, typeCheckNode, checker.TypeFormatFlagsNoTruncation, nil)
+		rIn := c.TypeToStringEx(layer.RIn, typeCheckNode, checker.TypeFormatFlagsNoTruncation, nil)
 		detail := "<" + rOut + ", " + e + ", " + rIn + ">"
 		return &detail
 	}
@@ -259,11 +384,11 @@ func resolveServiceDisplayNode(node *ast.Node) *ast.Node {
 	return node
 }
 
-func classificationTypes(c *checker.Checker, node *ast.Node) (*ast.Node, []*checker.Type) {
+func classificationTypes(tp *typeparser.TypeParser, c *checker.Checker, node *ast.Node) (*ast.Node, []*checker.Type) {
 	if node == nil {
 		return nil, nil
 	}
-	t := typeparser.GetTypeAtLocation(c, node)
+	t := tp.GetTypeAtLocation(node)
 	if t == nil {
 		return node, nil
 	}
@@ -290,30 +415,30 @@ func classificationTypes(c *checker.Checker, node *ast.Node) (*ast.Node, []*chec
 	return node, types
 }
 
-func isLayerDeclaration(c *checker.Checker, node *ast.Node) bool {
-	typeCheckNode, types := classificationTypes(c, node)
+func isLayerDeclaration(tp *typeparser.TypeParser, c *checker.Checker, node *ast.Node) bool {
+	typeCheckNode, types := classificationTypes(tp, c, node)
 	for _, t := range types {
-		if typeparser.IsLayerType(c, t, typeCheckNode) {
+		if tp.IsLayerType(t, typeCheckNode) {
 			return true
 		}
 	}
 	return false
 }
 
-func isServiceDeclaration(c *checker.Checker, node *ast.Node) bool {
+func isServiceDeclaration(tp *typeparser.TypeParser, c *checker.Checker, node *ast.Node) bool {
 	if node == nil {
 		return false
 	}
-	typeCheckNode, types := classificationTypes(c, node)
+	typeCheckNode, types := classificationTypes(tp, c, node)
 	for _, t := range types {
-		if typeparser.IsServiceType(c, t, typeCheckNode) || typeparser.IsContextTag(c, t, typeCheckNode) {
+		if tp.IsServiceType(t, typeCheckNode) || tp.IsContextTag(t, typeCheckNode) {
 			return true
 		}
 	}
 	return false
 }
 
-func isErrorDeclaration(c *checker.Checker, node *ast.Node) bool {
+func isErrorDeclaration(tp *typeparser.TypeParser, c *checker.Checker, node *ast.Node) bool {
 	if node == nil {
 		return false
 	}
@@ -322,16 +447,11 @@ func isErrorDeclaration(c *checker.Checker, node *ast.Node) bool {
 	default:
 		return false
 	}
-	_, types := classificationTypes(c, node)
-	for _, t := range types {
-		if typeparser.IsYieldableErrorType(c, t) {
-			return true
-		}
-	}
-	return false
+	_, types := classificationTypes(tp, c, node)
+	return slices.ContainsFunc(types, tp.IsYieldableErrorType)
 }
 
-func isSchemaDeclaration(c *checker.Checker, node *ast.Node) bool {
+func isSchemaDeclaration(tp *typeparser.TypeParser, c *checker.Checker, node *ast.Node) bool {
 	if node == nil {
 		return false
 	}
@@ -340,9 +460,9 @@ func isSchemaDeclaration(c *checker.Checker, node *ast.Node) bool {
 	default:
 		return false
 	}
-	typeCheckNode, types := classificationTypes(c, node)
+	typeCheckNode, types := classificationTypes(tp, c, node)
 	for _, t := range types {
-		if typeparser.IsSchemaType(c, t, typeCheckNode) {
+		if tp.IsSchemaType(t, typeCheckNode) {
 			return true
 		}
 	}

@@ -1,18 +1,5 @@
 package typeparser
 
-import (
-	"sync"
-
-	"github.com/microsoft/typescript-go/shim/checker"
-)
-
-// discoverPackagesCache caches the result of DiscoverPackages for the current
-// program check cycle. Only the most recent program's result is kept, preventing
-// memory leaks when many programs are created (e.g., in tests).
-var discoverPackagesCacheMu sync.Mutex
-var discoverPackagesCacheProg checker.Program
-var discoverPackagesCacheResult []DiscoveredPackage
-
 // DiscoveredPackage represents a package found in the program's source files.
 type DiscoveredPackage struct {
 	Name             string
@@ -52,23 +39,22 @@ func (v EffectMajorVersion) String() string {
 // DetectEffectVersion detects the major version of the Effect library from the program's
 // source files. Returns EffectMajorUnknown if no Effect dependency is found or if
 // conflicting versions are detected. The result is cached per checker lifetime.
-func DetectEffectVersion(c *checker.Checker) EffectMajorVersion {
-	if c == nil {
+func (tp *TypeParser) DetectEffectVersion() EffectMajorVersion {
+	if tp == nil || tp.checker == nil {
 		return EffectMajorUnknown
 	}
-	links := GetEffectLinks(c)
-	if links.detectEffectVersionComputed {
-		return links.detectEffectVersionValue
+	if tp.links.detectEffectVersionComputed {
+		return tp.links.detectEffectVersionValue
 	}
-	result := detectEffectVersionUncached(c)
-	links.detectEffectVersionValue = result
-	links.detectEffectVersionComputed = true
+	result := tp.detectEffectVersionUncached()
+	tp.links.detectEffectVersionValue = result
+	tp.links.detectEffectVersionComputed = true
 	return result
 }
 
 // detectEffectVersionUncached performs the actual version detection logic.
-func detectEffectVersionUncached(c *checker.Checker) EffectMajorVersion {
-	packages := DiscoverPackages(c)
+func (tp *TypeParser) detectEffectVersionUncached() EffectMajorVersion {
+	packages := tp.DiscoverPackages()
 
 	var detected EffectMajorVersion
 	found := false
@@ -113,30 +99,24 @@ func detectEffectVersionUncached(c *checker.Checker) EffectMajorVersion {
 // It returns EffectMajorV4 when v4 is detected, and EffectMajorV3 for all other
 // outcomes (including unknown). This is the central extension point for future
 // compiler-option-based version forcing. The result is cached per checker lifetime.
-func SupportedEffectVersion(c *checker.Checker) EffectMajorVersion {
-	if c == nil {
+func (tp TypeParser) SupportedEffectVersion() EffectMajorVersion {
+	if tp.checker == nil {
 		return EffectMajorV3
 	}
-	links := GetEffectLinks(c)
-	if links.supportedEffectVersionComputed {
-		return links.supportedEffectVersionValue
+	if tp.DetectEffectVersion() == EffectMajorV4 {
+		return EffectMajorV4
 	}
-	var result EffectMajorVersion
-	if DetectEffectVersion(c) == EffectMajorV4 {
-		result = EffectMajorV4
-	} else {
-		result = EffectMajorV3
-	}
-	links.supportedEffectVersionValue = result
-	links.supportedEffectVersionComputed = true
-	return result
+	return EffectMajorV3
 }
 
 // DetectEffectVersionString returns the exact version string of the Effect library.
 // Returns "unknown" if no Effect dependency is found, if the version is nil, or if
 // conflicting versions are detected.
-func DetectEffectVersionString(c *checker.Checker) string {
-	packages := DiscoverPackages(c)
+func (tp *TypeParser) DetectEffectVersionString() string {
+	if tp == nil || tp.checker == nil {
+		return "unknown"
+	}
+	packages := tp.DiscoverPackages()
 
 	var detected string
 	found := false
@@ -162,58 +142,41 @@ func DetectEffectVersionString(c *checker.Checker) string {
 
 // DiscoverPackages iterates all source files in the program, resolves each one's
 // nearest package.json, and returns a deduplicated list of discovered packages.
-// Results are cached per program so repeated calls within the same check cycle
+// Results are cached per checker so repeated calls within the same check cycle
 // (from DetectEffectVersion, DetectEffectVersionString, duplicatePackage rule, etc.)
 // do not re-scan all source files.
-func DiscoverPackages(c *checker.Checker) []DiscoveredPackage {
-	if c == nil {
+func (tp *TypeParser) DiscoverPackages() []DiscoveredPackage {
+	if tp == nil || tp.checker == nil {
 		return nil
 	}
 
-	prog := c.Program()
-
-	discoverPackagesCacheMu.Lock()
-	defer discoverPackagesCacheMu.Unlock()
-
-	if discoverPackagesCacheProg == prog && discoverPackagesCacheResult != nil {
-		return discoverPackagesCacheResult
+	if tp.links.discoverPackagesComputed {
+		return tp.links.discoverPackagesValue
 	}
 
-	result := discoverPackagesUncached(c)
-	discoverPackagesCacheProg = prog
-	discoverPackagesCacheResult = result
+	result := tp.discoverPackagesUncached()
+	tp.links.discoverPackagesValue = result
+	tp.links.discoverPackagesComputed = true
 	return result
 }
 
-// ClearDiscoverPackagesCache removes the cached DiscoverPackages result,
-// allowing the associated program to be garbage collected. Call this after
-// diagnostics collection is complete (e.g., from ReleaseProgram).
-func ClearDiscoverPackagesCache() {
-	discoverPackagesCacheMu.Lock()
-	defer discoverPackagesCacheMu.Unlock()
-	discoverPackagesCacheProg = nil
-	discoverPackagesCacheResult = nil
-}
-
 // discoverPackagesUncached performs the actual source file scan.
-// Must be called with discoverPackagesCacheMu held.
-func discoverPackagesUncached(c *checker.Checker) []DiscoveredPackage {
-	prog, ok := c.Program().(sourceFileProgram)
+func (tp *TypeParser) discoverPackagesUncached() []DiscoveredPackage {
+	prog, ok := tp.program.(sourceFileProgram)
 	if !ok || prog == nil {
 		return nil
 	}
 
-	pjProg, hasPjProg := c.Program().(packageJsonProgram)
+	pjProg, hasPjProg := tp.program.(packageJsonProgram)
 
 	seen := make(map[packageKey]struct{})
 	var result []DiscoveredPackage
-
 	for _, sf := range prog.SourceFiles() {
 		if sf == nil {
 			continue
 		}
 
-		pkg := PackageJsonForSourceFile(c, sf)
+		pkg := tp.PackageJsonForSourceFile(sf)
 		if pkg == nil {
 			continue
 		}

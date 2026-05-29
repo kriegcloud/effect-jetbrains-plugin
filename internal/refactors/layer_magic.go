@@ -4,15 +4,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/layergraph"
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/layergraph"
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var LayerMagic = refactor.Refactor{
@@ -28,13 +27,10 @@ func runLayerMagic(ctx *refactor.Context) []ls.CodeAction {
 		return nil
 	}
 
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
+	tp := ctx.TypeParser
 
-	layerIdentifier := effectutil.FindModuleIdentifier(ctx.SourceFile, "Layer")
+	layerIdentifier := typeparser.FindModuleIdentifier(ctx.SourceFile, "Layer")
 
 	// Collect ancestor nodes from the token up to the source file.
 	var ancestors []*ast.Node
@@ -44,13 +40,13 @@ func runLayerMagic(ctx *refactor.Context) []ls.CodeAction {
 
 	// Try build first on all ancestors, then prepare as fallback.
 	for _, node := range ancestors {
-		action := tryBuildRefactor(ctx, c, node, layerIdentifier)
+		action := tryBuildRefactor(ctx, tp, c, node, layerIdentifier)
 		if action != nil {
 			return action
 		}
 	}
 	for _, node := range ancestors {
-		action := tryPrepareRefactor(ctx, c, node, layerIdentifier)
+		action := tryPrepareRefactor(ctx, tp, c, node, layerIdentifier)
 		if action != nil {
 			return action
 		}
@@ -81,7 +77,7 @@ func adjustedNode(node *ast.Node) *ast.Node {
 
 // tryBuildRefactor tries to produce the "build" refactor action for the given node.
 // It detects the `(expr as any) as Layer.Layer<ROut>` pattern.
-func tryBuildRefactor(ctx *refactor.Context, c *checker.Checker, node *ast.Node, layerIdentifier string) []ls.CodeAction {
+func tryBuildRefactor(ctx *refactor.Context, tp *typeparser.TypeParser, c *checker.Checker, node *ast.Node, layerIdentifier string) []ls.CodeAction {
 	atLocation := adjustedNode(node)
 
 	// Must be an AsExpression: `... as Layer.Layer<ROut>`
@@ -104,11 +100,11 @@ func tryBuildRefactor(ctx *refactor.Context, c *checker.Checker, node *ast.Node,
 	}
 
 	// Parse the outer type as a Layer type to get ROut
-	outerType := typeparser.GetTypeAtLocation(c, outerAs.Type)
+	outerType := tp.GetTypeAtLocation(outerAs.Type)
 	if outerType == nil {
 		return nil
 	}
-	layer := typeparser.LayerType(c, outerType, outerAs.Type)
+	layer := tp.LayerType(outerType, outerAs.Type)
 	if layer == nil {
 		return nil
 	}
@@ -117,7 +113,7 @@ func tryBuildRefactor(ctx *refactor.Context, c *checker.Checker, node *ast.Node,
 	castedStructure := innerAs.Expression
 
 	// Extract layer graph from the casted structure
-	layerGraph := layergraph.ExtractLayerGraph(c, castedStructure, ctx.SourceFile, layergraph.ExtractLayerGraphOptions{
+	layerGraph := layergraph.ExtractLayerGraph(ctx.TypeParser, c, castedStructure, ctx.SourceFile, layergraph.ExtractLayerGraphOptions{
 		ArrayLiteralAsMerge:   true,
 		ExplodeOnlyLayerCalls: true,
 		FollowSymbolsDepth:    0,
@@ -133,17 +129,17 @@ func tryBuildRefactor(ctx *refactor.Context, c *checker.Checker, node *ast.Node,
 	}
 
 	// Get target output types from the Layer ROut
-	targetOutputTypes := typeparser.UnrollUnionMembers(layer.ROut)
+	targetOutputTypes := ctx.TypeParser.UnrollUnionMembers(layer.ROut)
 
 	// Convert to magic result
-	magicResult := layergraph.ConvertOutlineGraphToLayerMagic(c, outlineGraph, targetOutputTypes)
+	magicResult := layergraph.ConvertOutlineGraphToLayerMagic(ctx.TypeParser, outlineGraph, targetOutputTypes)
 	if magicResult == nil || len(magicResult.Nodes) == 0 {
 		return nil
 	}
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Compose layers automatically with target output services",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			buildLayerMagicBuild(tracker, ctx, c, atLocation, magicResult, layerIdentifier)
 		},
 	})
@@ -155,7 +151,7 @@ func tryBuildRefactor(ctx *refactor.Context, c *checker.Checker, node *ast.Node,
 }
 
 // buildLayerMagicBuild generates: firstLayer.pipe(Layer.provideMerge(...), Layer.provide(...), ...)
-func buildLayerMagicBuild(tracker *change.Tracker, ctx *refactor.Context, c *checker.Checker, oldNode *ast.Node, magicResult *layergraph.LayerMagicResult, layerIdentifier string) {
+func buildLayerMagicBuild(tracker *rewriter.Tracker, ctx *refactor.Context, c *checker.Checker, oldNode *ast.Node, magicResult *layergraph.LayerMagicResult, layerIdentifier string) {
 	nodes := magicResult.Nodes
 	if len(nodes) == 0 {
 		return
@@ -206,7 +202,7 @@ func buildLayerMagicBuild(tracker *change.Tracker, ctx *refactor.Context, c *che
 	if len(magicResult.MissingOutputTypes) > 0 {
 		var typeNames []string
 		for _, t := range magicResult.MissingOutputTypes {
-			typeNames = append(typeNames, c.TypeToStringEx(t, nil, checker.TypeFormatFlagsNoTruncation))
+			typeNames = append(typeNames, c.TypeToStringEx(t, nil, checker.TypeFormatFlagsNoTruncation, nil))
 		}
 		comment := " Unable to find " + strings.Join(typeNames, ", ") + " in the provided layers. "
 		newDeclaration = tracker.AddSyntheticTrailingComment(newDeclaration, ast.KindMultiLineCommentTrivia, comment, false)
@@ -224,7 +220,7 @@ func buildLayerMagicBuild(tracker *change.Tracker, ctx *refactor.Context, c *che
 
 // tryPrepareRefactor tries to produce the "prepare" refactor action for the given node.
 // It flattens a layer expression into `[...] as any as Layer.Layer<T>`.
-func tryPrepareRefactor(ctx *refactor.Context, c *checker.Checker, node *ast.Node, layerIdentifier string) []ls.CodeAction {
+func tryPrepareRefactor(ctx *refactor.Context, tp *typeparser.TypeParser, c *checker.Checker, node *ast.Node, layerIdentifier string) []ls.CodeAction {
 	atLocation := adjustedNode(node)
 
 	// Skip if already in `as any as Layer.Layer<T>` form
@@ -238,7 +234,7 @@ func tryPrepareRefactor(ctx *refactor.Context, c *checker.Checker, node *ast.Nod
 	}
 
 	// Extract layer graph
-	layerGraph := layergraph.ExtractLayerGraph(c, atLocation, ctx.SourceFile, layergraph.ExtractLayerGraphOptions{
+	layerGraph := layergraph.ExtractLayerGraph(ctx.TypeParser, c, atLocation, ctx.SourceFile, layergraph.ExtractLayerGraphOptions{
 		ArrayLiteralAsMerge:   true,
 		ExplodeOnlyLayerCalls: true,
 		FollowSymbolsDepth:    0,
@@ -278,10 +274,10 @@ func tryPrepareRefactor(ctx *refactor.Context, c *checker.Checker, node *ast.Nod
 	}
 
 	// Parse the expression's current type as a Layer to find "previously provided" types
-	exprType := typeparser.GetTypeAtLocation(c, atLocation)
+	exprType := tp.GetTypeAtLocation(atLocation)
 	var previouslyProvided *checker.Type
 	if exprType != nil {
-		parsedLayer := typeparser.LayerType(c, exprType, atLocation)
+		parsedLayer := tp.LayerType(exprType, atLocation)
 		if parsedLayer != nil {
 			previouslyProvided = parsedLayer.ROut
 		}
@@ -301,7 +297,7 @@ func tryPrepareRefactor(ctx *refactor.Context, c *checker.Checker, node *ast.Nod
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Prepare layers for automatic composition",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			buildLayerMagicPrepare(tracker, ctx, c, atLocation, layerNodes, newlyIntroduced, existingBefore, layerIdentifier)
 		},
 	})
@@ -314,7 +310,7 @@ func tryPrepareRefactor(ctx *refactor.Context, c *checker.Checker, node *ast.Nod
 
 // buildLayerMagicPrepare generates: [leaf1, leaf2, ...] as any as Layer.Layer<NewTypes /* ExistingTypes */>
 func buildLayerMagicPrepare(
-	tracker *change.Tracker,
+	tracker *rewriter.Tracker,
 	ctx *refactor.Context,
 	c *checker.Checker,
 	oldNode *ast.Node,
@@ -343,7 +339,7 @@ func buildLayerMagicPrepare(
 	} else {
 		var typeNodes []*ast.Node
 		for _, t := range newlyIntroduced {
-			typeStr := c.TypeToStringEx(t, nil, checker.TypeFormatFlagsNoTruncation)
+			typeStr := c.TypeToStringEx(t, nil, checker.TypeFormatFlagsNoTruncation, nil)
 			typeNodes = append(typeNodes, tracker.NewTypeReferenceNode(tracker.NewIdentifier(typeStr), nil))
 		}
 		if len(typeNodes) == 1 {
@@ -357,7 +353,7 @@ func buildLayerMagicPrepare(
 	if len(existingBefore) > 0 {
 		var typeStrings []string
 		for _, t := range existingBefore {
-			typeStrings = append(typeStrings, c.TypeToStringEx(t, nil, checker.TypeFormatFlagsNoTruncation))
+			typeStrings = append(typeStrings, c.TypeToStringEx(t, nil, checker.TypeFormatFlagsNoTruncation, nil))
 		}
 		comment := " " + strings.Join(typeStrings, " | ") + " "
 		providesType = tracker.AddSyntheticTrailingComment(providesType, ast.KindMultiLineCommentTrivia, comment, false)
@@ -404,8 +400,8 @@ func sortedTypeSlice(c *checker.Checker, types map[*checker.Type]bool) []*checke
 		result = append(result, t)
 	}
 	sort.Slice(result, func(i, j int) bool {
-		return c.TypeToStringEx(result[i], nil, checker.TypeFormatFlagsNoTruncation) <
-			c.TypeToStringEx(result[j], nil, checker.TypeFormatFlagsNoTruncation)
+		return c.TypeToStringEx(result[i], nil, checker.TypeFormatFlagsNoTruncation, nil) <
+			c.TypeToStringEx(result[j], nil, checker.TypeFormatFlagsNoTruncation, nil)
 	})
 	return result
 }

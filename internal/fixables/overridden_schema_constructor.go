@@ -1,18 +1,18 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var OverriddenSchemaConstructorFix = fixable.Fixable{
 	Name:        "overriddenSchemaConstructorFix",
 	Description: "Remove or rewrite constructor in Schema class",
-	ErrorCodes:  []int32{tsdiag.Classes_extending_Schema_must_not_override_the_constructor_this_is_because_it_silently_breaks_the_schema_decoding_behaviour_If_that_s_needed_we_recommend_instead_to_use_a_static_new_method_that_constructs_the_instance_effect_overriddenSchemaConstructor.Code()},
+	ErrorCodes:  []int32{tsdiag.This_Schema_subclass_defines_its_own_constructor_For_Schema_classes_constructor_overrides_break_decoding_behavior_for_the_class_shape_Custom_construction_can_be_expressed_through_a_static_new_method_instead_effect_overriddenSchemaConstructor.Code()},
 	FixIDs: []string{
 		"overriddenSchemaConstructor_fix",
 		"overriddenSchemaConstructor_static",
@@ -21,15 +21,11 @@ var OverriddenSchemaConstructorFix = fixable.Fixable{
 }
 
 func runOverriddenSchemaConstructorFix(ctx *fixable.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeOverriddenSchemaConstructor(c, sf)
+	matches := rules.AnalyzeOverriddenSchemaConstructor(ctx.TypeParser, c, sf)
 	for _, match := range matches {
 		if !match.Location.Intersects(ctx.Span) && !ctx.Span.ContainedBy(match.Location) {
 			continue
@@ -41,7 +37,7 @@ func runOverriddenSchemaConstructorFix(ctx *fixable.Context) []ls.CodeAction {
 		if match.HasBody && constructorSupportsStaticRewrite(match.ConstructorNode) {
 			if action := ctx.NewFixAction(fixable.FixAction{
 				Description: "Rewrite using the static 'new' pattern",
-				Run: func(tracker *change.Tracker) {
+				Run: func(tracker *rewriter.Tracker) {
 					ctor := match.ConstructorNode.AsConstructorDeclaration()
 
 					// Build a visitor that transforms super(...) calls and this keywords
@@ -61,7 +57,6 @@ func runOverriddenSchemaConstructorFix(ctx *fixable.Context) []ls.CodeAction {
 									return tracker.NewVariableStatement(
 										nil,
 										tracker.NewVariableDeclarationList(
-											ast.NodeFlagsConst,
 											tracker.NewNodeList([]*ast.Node{
 												tracker.NewVariableDeclaration(
 													tracker.NewIdentifier("_this"),
@@ -70,6 +65,7 @@ func runOverriddenSchemaConstructorFix(ctx *fixable.Context) []ls.CodeAction {
 													constructThis,
 												),
 											}),
+											ast.NodeFlagsConst,
 										),
 									)
 								}
@@ -122,7 +118,7 @@ func runOverriddenSchemaConstructorFix(ctx *fixable.Context) []ls.CodeAction {
 		// _fix action: Remove the constructor override (always available)
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Remove the constructor override",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				tracker.Delete(sf, match.ConstructorNode)
 			},
 		}); action != nil {

@@ -2,9 +2,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
@@ -22,7 +22,7 @@ var UnknownInEffectCatch = rule.Rule{
 	Description:     "Warns when catch callbacks return unknown instead of typed errors",
 	DefaultSeverity: etscore.SeverityWarning,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.The_catch_callback_in_0_returns_unknown_The_catch_callback_should_be_used_to_provide_typed_errors_Consider_wrapping_unknown_errors_into_Effect_s_Data_TaggedError_for_example_or_narrow_down_the_type_to_the_specific_error_raised_effect_unknownInEffectCatch.Code()},
+	Codes:           []int32{tsdiag.The_catch_callback_in_0_returns_unknown_so_the_Effect_error_type_stays_untyped_A_specific_typed_error_preserves_error_channel_information_for_example_by_narrowing_the_value_or_wrapping_it_in_Data_TaggedError_effect_unknownInEffectCatch.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
 		var diags []*ast.Diagnostic
 
@@ -56,7 +56,7 @@ func checkUnknownInEffectCatch(ctx *rule.Context, node *ast.Node) *ast.Diagnosti
 	call := node.AsCallExpression()
 
 	callee := call.Expression
-	if !isUnknownCatchCallee(ctx.Checker, callee) {
+	if !isUnknownCatchCallee(ctx.TypeParser, ctx.Checker, callee) {
 		return nil
 	}
 
@@ -75,7 +75,7 @@ func checkUnknownInEffectCatch(ctx *rule.Context, node *ast.Node) *ast.Diagnosti
 		return nil
 	}
 
-	for _, objectType := range typeparser.UnrollUnionMembers(paramType) {
+	for _, objectType := range ctx.TypeParser.UnrollUnionMembers(paramType) {
 		catchSymbol := ctx.Checker.GetPropertyOfType(objectType, "catch")
 		if catchSymbol == nil {
 			continue
@@ -98,7 +98,7 @@ func checkUnknownInEffectCatch(ctx *rule.Context, node *ast.Node) *ast.Diagnosti
 
 		if returnType.Flags()&(checker.TypeFlagsUnknown|checker.TypeFlagsAny) != 0 {
 			calleeText := scanner.GetSourceTextOfNodeFromSourceFile(ctx.SourceFile, callee, false)
-			return ctx.NewDiagnostic(ctx.SourceFile, ctx.GetErrorRange(callee), tsdiag.The_catch_callback_in_0_returns_unknown_The_catch_callback_should_be_used_to_provide_typed_errors_Consider_wrapping_unknown_errors_into_Effect_s_Data_TaggedError_for_example_or_narrow_down_the_type_to_the_specific_error_raised_effect_unknownInEffectCatch, nil, calleeText)
+			return ctx.NewDiagnostic(ctx.SourceFile, ctx.GetErrorRange(callee), tsdiag.The_catch_callback_in_0_returns_unknown_so_the_Effect_error_type_stays_untyped_A_specific_typed_error_preserves_error_channel_information_for_example_by_narrowing_the_value_or_wrapping_it_in_Data_TaggedError_effect_unknownInEffectCatch, nil, calleeText)
 		}
 	}
 
@@ -106,9 +106,9 @@ func checkUnknownInEffectCatch(ctx *rule.Context, node *ast.Node) *ast.Diagnosti
 }
 
 // isUnknownCatchCallee checks if a node references one of the Effect module catch APIs.
-func isUnknownCatchCallee(c *checker.Checker, node *ast.Node) bool {
+func isUnknownCatchCallee(tp *typeparser.TypeParser, _ *checker.Checker, node *ast.Node) bool {
 	for _, name := range unknownCatchApis {
-		if typeparser.IsNodeReferenceToEffectModuleApi(c, node, name) {
+		if tp.IsNodeReferenceToEffectModuleApi(node, name) {
 			return true
 		}
 	}

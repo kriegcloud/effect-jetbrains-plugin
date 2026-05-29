@@ -1,12 +1,12 @@
 package refactors
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var FunctionToArrow = refactor.Refactor{
@@ -68,7 +68,7 @@ func runFunctionToArrow(ctx *refactor.Context) []ls.CodeAction {
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Convert to arrow",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			newNode := buildFunctionToArrowReplacement(tracker, matchedNode)
 			if newNode == nil {
 				return
@@ -86,7 +86,7 @@ func runFunctionToArrow(ctx *refactor.Context) []ls.CodeAction {
 
 // buildFunctionToArrowReplacement builds the replacement node for converting a
 // FunctionDeclaration or MethodDeclaration to an arrow function.
-func buildFunctionToArrowReplacement(tracker *change.Tracker, node *ast.Node) *ast.Node {
+func buildFunctionToArrowReplacement(tracker *rewriter.Tracker, node *ast.Node) *ast.Node {
 	body := typeparser.GetFunctionLikeBody(node)
 	if body == nil {
 		return nil
@@ -158,7 +158,7 @@ func buildFunctionToArrowReplacement(tracker *change.Tracker, node *ast.Node) *a
 
 // wrapArrowInVariableStatement wraps an arrow function in a const variable statement,
 // preserving export/default modifiers on the variable statement.
-func wrapArrowInVariableStatement(tracker *change.Tracker, node *ast.Node, arrowFn *ast.Node) *ast.Node {
+func wrapArrowInVariableStatement(tracker *rewriter.Tracker, node *ast.Node, arrowFn *ast.Node) *ast.Node {
 	fd := node.AsFunctionDeclaration()
 	if fd.Name() == nil {
 		return arrowFn
@@ -183,15 +183,15 @@ func wrapArrowInVariableStatement(tracker *change.Tracker, node *ast.Node, arrow
 		arrowFn,
 	)
 	varDeclList := tracker.NewVariableDeclarationList(
-		ast.NodeFlagsConst,
 		tracker.NewNodeList([]*ast.Node{varDecl}),
+		ast.NodeFlagsConst,
 	)
 	return tracker.NewVariableStatement(mods, varDeclList)
 }
 
 // wrapArrowInPropertyDeclaration wraps an arrow function in a property declaration,
 // preserving modifiers from the method.
-func wrapArrowInPropertyDeclaration(tracker *change.Tracker, node *ast.Node, arrowFn *ast.Node) *ast.Node {
+func wrapArrowInPropertyDeclaration(tracker *rewriter.Tracker, node *ast.Node, arrowFn *ast.Node) *ast.Node {
 	md := node.AsMethodDeclaration()
 
 	var mods *ast.ModifierList

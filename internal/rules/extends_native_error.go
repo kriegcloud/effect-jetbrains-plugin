@@ -1,9 +1,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -17,12 +17,12 @@ var ExtendsNativeError = rule.Rule{
 	Description:     "Warns when a class directly extends the native Error class",
 	DefaultSeverity: etscore.SeverityOff,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.Avoid_extending_the_native_Error_class_directly_Consider_using_a_tagged_error_e_g_Data_TaggedError_to_maintain_type_safety_in_the_Effect_failure_channel_effect_extendsNativeError.Code()},
+	Codes:           []int32{tsdiag.This_class_extends_the_native_Error_type_directly_Untagged_native_errors_lose_distinction_in_the_Effect_failure_channel_effect_extendsNativeError.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		matches := AnalyzeExtendsNativeError(ctx.Checker, ctx.SourceFile)
+		matches := AnalyzeExtendsNativeError(ctx.TypeParser, ctx.Checker, ctx.SourceFile)
 		diags := make([]*ast.Diagnostic, len(matches))
 		for i, m := range matches {
-			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.Avoid_extending_the_native_Error_class_directly_Consider_using_a_tagged_error_e_g_Data_TaggedError_to_maintain_type_safety_in_the_Effect_failure_channel_effect_extendsNativeError, nil)
+			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.This_class_extends_the_native_Error_type_directly_Untagged_native_errors_lose_distinction_in_the_Effect_failure_channel_effect_extendsNativeError, nil)
 		}
 		return diags
 	},
@@ -33,7 +33,7 @@ type ExtendsNativeErrorMatch struct {
 	Location   core.TextRange
 }
 
-func AnalyzeExtendsNativeError(c *checker.Checker, sf *ast.SourceFile) []ExtendsNativeErrorMatch {
+func AnalyzeExtendsNativeError(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile) []ExtendsNativeErrorMatch {
 	errorSymbol := c.ResolveName("Error", nil, ast.SymbolFlagsType, false)
 	if errorSymbol == nil {
 		return nil
@@ -53,7 +53,7 @@ func AnalyzeExtendsNativeError(c *checker.Checker, sf *ast.SourceFile) []Extends
 		nodeToVisit = nodeToVisit[:len(nodeToVisit)-1]
 
 		if node.Kind == ast.KindClassDeclaration {
-			if m := checkExtendsNativeError(c, sf, node, errorSymbol); m != nil {
+			if m := checkExtendsNativeError(tp, c, sf, node, errorSymbol); m != nil {
 				matches = append(matches, *m)
 			}
 		}
@@ -64,7 +64,7 @@ func AnalyzeExtendsNativeError(c *checker.Checker, sf *ast.SourceFile) []Extends
 	return matches
 }
 
-func checkExtendsNativeError(c *checker.Checker, sf *ast.SourceFile, node *ast.Node, errorSymbol *ast.Symbol) *ExtendsNativeErrorMatch {
+func checkExtendsNativeError(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile, node *ast.Node, errorSymbol *ast.Symbol) *ExtendsNativeErrorMatch {
 	extendsElements := ast.GetExtendsHeritageClauseElements(node)
 	if len(extendsElements) == 0 {
 		return nil
@@ -84,7 +84,7 @@ func checkExtendsNativeError(c *checker.Checker, sf *ast.SourceFile, node *ast.N
 
 		isNativeError := resolvedSymbol == errorSymbol
 		if !isNativeError && resolvedSymbol != nil && resolvedSymbol != errorSymbol {
-			exprType := typeparser.GetTypeAtLocation(c, expr)
+			exprType := tp.GetTypeAtLocation(expr)
 			if exprType != nil {
 				constructSignatures := c.GetSignaturesOfType(exprType, checker.SignatureKindConstruct)
 				if len(constructSignatures) > 0 {

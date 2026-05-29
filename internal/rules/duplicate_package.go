@@ -1,31 +1,24 @@
 package rules
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 )
 
-// duplicatePackageCache caches duplicate-package diagnostics for the current
-// program check cycle so the package scan is not repeated for every source file.
-// Only the most recent program's result is kept, preventing memory leaks when
-// many programs are created (e.g., in tests).
-var duplicatePackageCacheMu sync.Mutex
-var duplicatePackageCacheProg checker.Program
-var duplicatePackageCacheResult []duplicatePackageDiag
-
 // duplicatePackageDiag holds pre-computed diagnostic info for a single duplicated package name.
 type duplicatePackageDiag struct {
 	packageName string
 	details     string // e.g. "1.0.0 @ /path/a, 2.0.0 @ /path/b"
+	configValue string
 }
 
 // DuplicatePackage warns when multiple versions of the same Effect-related package
@@ -36,10 +29,9 @@ var DuplicatePackage = rule.Rule{
 	Description:     "Warns when multiple versions of an Effect-related package are detected in the program",
 	DefaultSeverity: etscore.SeverityWarning,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.Multiple_versions_of_package_0_detected_Colon_1_Consider_cleaning_up_your_lockfile_or_add_0_to_allowedDuplicatedPackages_to_suppress_this_warning_effect_duplicatePackage.Code()},
+	Codes:           []int32{tsdiag.Multiple_versions_of_package_0_were_detected_Colon_1_Package_duplication_can_change_runtime_identity_and_type_equality_across_Effect_modules_If_this_is_intentional_set_the_LSP_config_allowedDuplicatedPackages_to_2_effect_duplicatePackage.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		prog := ctx.Checker.Program()
-		entries := getDuplicatePackageDiags(ctx.Checker, prog)
+		entries := computeDuplicatePackageDiags(ctx.TypeParser, ctx.Checker, ctx.Options)
 		if len(entries) == 0 {
 			return nil
 		}
@@ -59,45 +51,20 @@ var DuplicatePackage = rule.Rule{
 			diags[i] = ctx.NewDiagnostic(
 				ctx.SourceFile,
 				loc,
-				tsdiag.Multiple_versions_of_package_0_detected_Colon_1_Consider_cleaning_up_your_lockfile_or_add_0_to_allowedDuplicatedPackages_to_suppress_this_warning_effect_duplicatePackage,
+				tsdiag.Multiple_versions_of_package_0_were_detected_Colon_1_Package_duplication_can_change_runtime_identity_and_type_equality_across_Effect_modules_If_this_is_intentional_set_the_LSP_config_allowedDuplicatedPackages_to_2_effect_duplicatePackage,
 				nil,
 				e.packageName,
 				e.details,
+				e.configValue,
 			)
 		}
 		return diags
 	},
 }
 
-// ClearDuplicatePackageCache removes the cached duplicate-package diagnostics,
-// allowing the associated program to be garbage collected. Call this after
-// diagnostics collection is complete (e.g., from ReleaseProgram).
-func ClearDuplicatePackageCache() {
-	duplicatePackageCacheMu.Lock()
-	defer duplicatePackageCacheMu.Unlock()
-	duplicatePackageCacheProg = nil
-	duplicatePackageCacheResult = nil
-}
-
-// getDuplicatePackageDiags returns cached duplicate-package diagnostics for the given program.
-// The cache holds at most one entry (the current program), so old programs are released for GC.
-func getDuplicatePackageDiags(c *checker.Checker, prog checker.Program) []duplicatePackageDiag {
-	duplicatePackageCacheMu.Lock()
-	defer duplicatePackageCacheMu.Unlock()
-
-	if duplicatePackageCacheProg == prog {
-		return duplicatePackageCacheResult
-	}
-
-	result := computeDuplicatePackageDiags(c, prog)
-	duplicatePackageCacheProg = prog
-	duplicatePackageCacheResult = result
-	return result
-}
-
 // computeDuplicatePackageDiags scans all packages and finds names with multiple distinct versions.
-func computeDuplicatePackageDiags(c *checker.Checker, prog checker.Program) []duplicatePackageDiag {
-	packages := typeparser.DiscoverPackages(c)
+func computeDuplicatePackageDiags(tp *typeparser.TypeParser, _ *checker.Checker, effectConfig *etscore.ResolvedEffectPluginOptions) []duplicatePackageDiag {
+	packages := tp.DiscoverPackages()
 
 	// Filter to Effect-related packages.
 	type versionEntry struct {
@@ -116,8 +83,6 @@ func computeDuplicatePackageDiags(c *checker.Checker, prog checker.Program) []du
 		byName[pkg.Name] = append(byName[pkg.Name], versionEntry{version: ver, dir: pkg.PackageDirectory})
 	}
 
-	// Read allowed list from config.
-	effectConfig := getEffectConfig(prog)
 	var allowed []string
 	if effectConfig != nil {
 		allowed = effectConfig.GetAllowedDuplicatedPackages()
@@ -150,9 +115,15 @@ func computeDuplicatePackageDiags(c *checker.Checker, prog checker.Program) []du
 				parts[i] = "(unknown) @ " + e.dir
 			}
 		}
+		configValueBytes, err := json.Marshal(append(slices.Clone(allowed), name))
+		configValue := "[]"
+		if err == nil {
+			configValue = string(configValueBytes)
+		}
 		diags = append(diags, duplicatePackageDiag{
 			packageName: name,
 			details:     strings.Join(parts, ", "),
+			configValue: configValue,
 		})
 	}
 

@@ -2,7 +2,6 @@ package typeparser
 
 import (
 	"github.com/microsoft/typescript-go/shim/ast"
-	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
 )
 
@@ -11,22 +10,32 @@ type EffectContextFlags uint8
 const (
 	EffectContextFlagNone           EffectContextFlags = 0
 	EffectContextFlagCanYieldEffect EffectContextFlags = 1 << iota
+	EffectContextFlagInEffectConstructorThunk
+	EffectContextFlagPendingNextFunctionIsEffectThunk
+	EffectContextFlagPendingNextObjectTryPropertyIsEffectThunk
+	EffectContextFlagInEffect = EffectContextFlagCanYieldEffect | EffectContextFlagInEffectConstructorThunk
 )
 
-func GetEffectContextFlags(c *checker.Checker, node *ast.Node) EffectContextFlags {
-	links := ensureEffectContextAnalyzed(c, node)
+func (tp *TypeParser) GetEffectContextFlags(node *ast.Node) EffectContextFlags {
+	if tp == nil {
+		return EffectContextFlagNone
+	}
+	links := tp.ensureEffectContextAnalyzed(node)
 	if links == nil {
 		return EffectContextFlagNone
 	}
 
 	if closest, ok := getClosestNodeWithLinks(&links.EffectContextFlags, node); ok {
-		return *links.EffectContextFlags.TryGet(closest)
+		return *links.EffectContextFlags.TryGet(closest) & EffectContextFlagInEffect
 	}
 	return EffectContextFlagNone
 }
 
-func GetEffectYieldGeneratorFunction(c *checker.Checker, node *ast.Node) *ast.FunctionExpression {
-	links := ensureEffectContextAnalyzed(c, node)
+func (tp *TypeParser) GetEffectYieldGeneratorFunction(node *ast.Node) *ast.FunctionExpression {
+	if tp == nil {
+		return nil
+	}
+	links := tp.ensureEffectContextAnalyzed(node)
 	if links == nil {
 		return nil
 	}
@@ -51,12 +60,11 @@ func getClosestNodeWithLinks[T any](store *core.LinkStore[*ast.Node, T], node *a
 	return nil, false
 }
 
-func ensureEffectContextAnalyzed(c *checker.Checker, node *ast.Node) *EffectLinks {
-	if c == nil || node == nil {
+func (tp *TypeParser) ensureEffectContextAnalyzed(node *ast.Node) *EffectLinks {
+	if tp == nil || tp.checker == nil || node == nil {
 		return nil
 	}
-
-	links := GetEffectLinks(c)
+	links := tp.links
 
 	if links.EffectContextFlags.Has(node) {
 		return links
@@ -68,25 +76,57 @@ func ensureEffectContextAnalyzed(c *checker.Checker, node *ast.Node) *EffectLink
 	}
 
 	Cached(&links.EffectContextAnalyzed, sf, func() bool {
-		analyzeEffectContextForSourceFile(c, sf)
+		tp.analyzeEffectContextForSourceFile(sf)
 		return true
 	})
 	return links
 }
 
-func analyzeEffectContextForSourceFile(c *checker.Checker, sf *ast.SourceFile) {
-	if c == nil || sf == nil {
+func (tp *TypeParser) analyzeEffectContextForSourceFile(sf *ast.SourceFile) {
+	if tp == nil || tp.checker == nil || sf == nil {
 		return
 	}
-
-	links := GetEffectLinks(c)
+	links := tp.links
 
 	var walk ast.Visitor
 	var pendingEnableFlags core.LinkStore[*ast.Node, EffectContextFlags]
 	var pendingDisableFlags core.LinkStore[*ast.Node, EffectContextFlags]
+	pendingFlagsMask := EffectContextFlagPendingNextFunctionIsEffectThunk | EffectContextFlagPendingNextObjectTryPropertyIsEffectThunk
+	functionScopeResetFlags := EffectContextFlagCanYieldEffect | EffectContextFlagInEffectConstructorThunk | pendingFlagsMask
 
-	resetChildCanYieldEffect := func(node *ast.Node) bool {
-		*pendingDisableFlags.Get(node) |= EffectContextFlagCanYieldEffect
+	setPendingEnableFlags := func(node *ast.Node, flags EffectContextFlags) {
+		if node == nil || flags == EffectContextFlagNone {
+			return
+		}
+		*pendingEnableFlags.Get(node) |= flags
+	}
+
+	setPendingDisableFlags := func(node *ast.Node, flags EffectContextFlags) {
+		if node == nil || flags == EffectContextFlagNone {
+			return
+		}
+		*pendingDisableFlags.Get(node) |= flags
+	}
+
+	transparentPendingExpression := func(node *ast.Node) *ast.Node {
+		if node == nil {
+			return nil
+		}
+		switch node.Kind {
+		case ast.KindParenthesizedExpression, ast.KindSatisfiesExpression, ast.KindAsExpression, ast.KindNonNullExpression, ast.KindTypeAssertionExpression:
+			return node.Expression()
+		default:
+			return nil
+		}
+	}
+
+	resetChildFunctionScopeFlags := func(node *ast.Node) bool {
+		setPendingDisableFlags(node, functionScopeResetFlags)
+		return false
+	}
+
+	resetPendingFlags := func(child *ast.Node) bool {
+		setPendingDisableFlags(child, pendingFlagsMask)
 		return false
 	}
 
@@ -116,30 +156,73 @@ func analyzeEffectContextForSourceFile(c *checker.Checker, sf *ast.SourceFile) {
 			*links.EffectContextFlags.Get(node) |= *pendingEnableFlags.TryGet(node)
 		}
 
+		if *links.EffectContextFlags.Get(node)&EffectContextFlagPendingNextFunctionIsEffectThunk != 0 && (node.Kind == ast.KindArrowFunction || node.Kind == ast.KindFunctionExpression) {
+			if body := node.Body(); body != nil {
+				setPendingEnableFlags(body.AsNode(), EffectContextFlagInEffectConstructorThunk)
+				setPendingDisableFlags(body.AsNode(), pendingFlagsMask)
+			}
+		} else if *links.EffectContextFlags.Get(node)&EffectContextFlagPendingNextObjectTryPropertyIsEffectThunk != 0 && node.Kind == ast.KindObjectLiteralExpression {
+			node.ForEachChild(resetPendingFlags)
+
+			obj := node.AsObjectLiteralExpression()
+			if obj != nil && obj.Properties != nil {
+				for _, prop := range obj.Properties.Nodes {
+					if prop == nil || prop.Kind != ast.KindPropertyAssignment {
+						continue
+					}
+					assignment := prop.AsPropertyAssignment()
+					if assignment == nil || assignment.Name() == nil || assignment.Initializer == nil {
+						continue
+					}
+					if assignment.Name().Text() != "try" {
+						continue
+					}
+					setPendingEnableFlags(assignment.Initializer, EffectContextFlagPendingNextFunctionIsEffectThunk)
+				}
+			}
+		} else if expr := transparentPendingExpression(node); expr != nil {
+			setPendingEnableFlags(expr, *links.EffectContextFlags.Get(node)&pendingFlagsMask)
+		} else if *links.EffectContextFlags.Get(node)&pendingFlagsMask != 0 {
+			node.ForEachChild(resetPendingFlags)
+		}
+
 		// logic for this node
-		if effectGen := EffectGenCall(c, node); effectGen != nil {
+		if effectGen := tp.EffectGenCall(node); effectGen != nil {
 			bodyNode := effectGen.Body.AsNode()
-			*pendingEnableFlags.Get(bodyNode) |= EffectContextFlagCanYieldEffect
+			setPendingEnableFlags(bodyNode, EffectContextFlagCanYieldEffect)
 			*links.EffectYieldGeneratorFunction.Get(bodyNode) = effectGen.GeneratorFunction
-		} else if effectFn := EffectFnGenCall(c, node); effectFn != nil {
-			bodyNode := effectFn.Body.AsNode()
-			*pendingEnableFlags.Get(bodyNode) |= EffectContextFlagCanYieldEffect
-			*links.EffectYieldGeneratorFunction.Get(bodyNode) = effectFn.GeneratorFunction
-		} else if effectFn := EffectFnUntracedGenCall(c, node); effectFn != nil {
-			bodyNode := effectFn.Body.AsNode()
-			*pendingEnableFlags.Get(bodyNode) |= EffectContextFlagCanYieldEffect
-			*links.EffectYieldGeneratorFunction.Get(bodyNode) = effectFn.GeneratorFunction
-		} else if effectFn := EffectFnUntracedEagerGenCall(c, node); effectFn != nil {
-			bodyNode := effectFn.Body.AsNode()
-			*pendingEnableFlags.Get(bodyNode) |= EffectContextFlagCanYieldEffect
-			*links.EffectYieldGeneratorFunction.Get(bodyNode) = effectFn.GeneratorFunction
+		} else if effectFn := tp.EffectFnCall(node); effectFn != nil && effectFn.IsGenerator() {
+			body := effectFn.Body()
+			genFn := effectFn.GeneratorFunction()
+			if body != nil && genFn != nil {
+				bodyNode := body.AsNode()
+				setPendingEnableFlags(bodyNode, EffectContextFlagCanYieldEffect)
+				*links.EffectYieldGeneratorFunction.Get(bodyNode) = genFn
+			}
+		}
+
+		if node.Kind == ast.KindCallExpression {
+			call := node.AsCallExpression()
+			if call != nil && call.Arguments != nil && len(call.Arguments.Nodes) > 0 {
+				effectThunkArg := call.Arguments.Nodes[0]
+				switch {
+				case tp.IsNodeReferenceToEffectModuleApi(call.Expression, "sync"),
+					tp.IsNodeReferenceToEffectModuleApi(call.Expression, "promise"),
+					tp.IsNodeReferenceToEffectModuleApi(call.Expression, "callback"),
+					tp.IsNodeReferenceToEffectModuleApi(call.Expression, "suspend"):
+					setPendingEnableFlags(effectThunkArg, EffectContextFlagPendingNextFunctionIsEffectThunk)
+				case tp.IsNodeReferenceToEffectModuleApi(call.Expression, "try"),
+					tp.IsNodeReferenceToEffectModuleApi(call.Expression, "tryPromise"):
+					setPendingEnableFlags(effectThunkArg, EffectContextFlagPendingNextFunctionIsEffectThunk|EffectContextFlagPendingNextObjectTryPropertyIsEffectThunk)
+				}
+			}
 		}
 
 		// Function-like nodes create a new scope, so they should not directly inherit
 		// yieldability from an outer Effect scope. Matching Effect helpers re-enable the
 		// flag on the specific body node below.
 		if ast.IsFunctionLike(node) {
-			node.ForEachChild(resetChildCanYieldEffect)
+			node.ForEachChild(resetChildFunctionScopeFlags)
 		}
 
 		// reset stores correlated to a flag set here.

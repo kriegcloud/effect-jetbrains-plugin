@@ -1,9 +1,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
@@ -20,11 +20,11 @@ var NonObjectEffectServiceType = rule.Rule{
 	DefaultSeverity: etscore.SeverityError,
 	SupportedEffect: []string{"v3"},
 	Codes: []int32{
-		tsdiag.Effect_Service_requires_the_service_type_to_be_an_object_and_not_a_primitive_type_Consider_wrapping_the_value_in_an_object_or_manually_using_Context_Tag_or_Effect_Tag_if_you_want_to_use_a_primitive_instead_effect_nonObjectEffectServiceType.Code(),
+		tsdiag.Effect_Service_is_declared_with_a_primitive_service_type_Effect_Service_models_object_shaped_services_primitive_values_use_Context_Tag_or_Effect_Tag_directly_effect_nonObjectEffectServiceType.Code(),
 	},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
 		// V3-only rule
-		if typeparser.SupportedEffectVersion(ctx.Checker) != typeparser.EffectMajorV3 {
+		if ctx.TypeParser.SupportedEffectVersion() != typeparser.EffectMajorV3 {
 			return nil
 		}
 
@@ -60,7 +60,7 @@ var NonObjectEffectServiceType = rule.Rule{
 // checkServicePropertyTypes checks if a class extending Effect.Service has option
 // properties that resolve to primitive types.
 func checkServicePropertyTypes(ctx *rule.Context, node *ast.Node) []*ast.Diagnostic {
-	serviceResult := typeparser.ExtendsEffectService(ctx.Checker, node)
+	serviceResult := ctx.TypeParser.ExtendsEffectV3Service(node)
 	if serviceResult == nil {
 		return nil
 	}
@@ -94,29 +94,29 @@ func checkServicePropertyTypes(ctx *rule.Context, node *ast.Node) []*ast.Diagnos
 
 		switch propertyName {
 		case "succeed":
-			valueType := typeparser.GetTypeAtLocation(ctx.Checker, initializer)
-			if valueType != nil && isPrimitiveType(valueType) {
+			valueType := ctx.TypeParser.GetTypeAtLocation(initializer)
+			if valueType != nil && isPrimitiveType(ctx.TypeParser, valueType) {
 				diags = append(diags, ctx.NewDiagnostic(
 					ctx.SourceFile,
 					ctx.GetErrorRange(pa.Name()),
-					tsdiag.Effect_Service_requires_the_service_type_to_be_an_object_and_not_a_primitive_type_Consider_wrapping_the_value_in_an_object_or_manually_using_Context_Tag_or_Effect_Tag_if_you_want_to_use_a_primitive_instead_effect_nonObjectEffectServiceType,
+					tsdiag.Effect_Service_is_declared_with_a_primitive_service_type_Effect_Service_models_object_shaped_services_primitive_values_use_Context_Tag_or_Effect_Tag_directly_effect_nonObjectEffectServiceType,
 					nil,
 				))
 			}
 
 		case "sync":
-			valueType := typeparser.GetTypeAtLocation(ctx.Checker, initializer)
+			valueType := ctx.TypeParser.GetTypeAtLocation(initializer)
 			if valueType == nil {
 				continue
 			}
 			signatures := ctx.Checker.GetSignaturesOfType(valueType, checker.SignatureKindCall)
 			for _, sig := range signatures {
 				returnType := ctx.Checker.GetReturnTypeOfSignature(sig)
-				if returnType != nil && isPrimitiveType(returnType) {
+				if returnType != nil && isPrimitiveType(ctx.TypeParser, returnType) {
 					diags = append(diags, ctx.NewDiagnostic(
 						ctx.SourceFile,
 						ctx.GetErrorRange(pa.Name()),
-						tsdiag.Effect_Service_requires_the_service_type_to_be_an_object_and_not_a_primitive_type_Consider_wrapping_the_value_in_an_object_or_manually_using_Context_Tag_or_Effect_Tag_if_you_want_to_use_a_primitive_instead_effect_nonObjectEffectServiceType,
+						tsdiag.Effect_Service_is_declared_with_a_primitive_service_type_Effect_Service_models_object_shaped_services_primitive_values_use_Context_Tag_or_Effect_Tag_directly_effect_nonObjectEffectServiceType,
 						nil,
 					))
 					break
@@ -124,19 +124,19 @@ func checkServicePropertyTypes(ctx *rule.Context, node *ast.Node) []*ast.Diagnos
 			}
 
 		case "effect", "scoped":
-			valueType := typeparser.GetTypeAtLocation(ctx.Checker, initializer)
+			valueType := ctx.TypeParser.GetTypeAtLocation(initializer)
 			if valueType == nil {
 				continue
 			}
 
 			// Try direct EffectType parse first
-			effectResult := typeparser.EffectType(ctx.Checker, valueType, initializer)
+			effectResult := ctx.TypeParser.EffectType(valueType, initializer)
 			if effectResult != nil {
-				if isPrimitiveType(effectResult.A) {
+				if isPrimitiveType(ctx.TypeParser, effectResult.A) {
 					diags = append(diags, ctx.NewDiagnostic(
 						ctx.SourceFile,
 						ctx.GetErrorRange(pa.Name()),
-						tsdiag.Effect_Service_requires_the_service_type_to_be_an_object_and_not_a_primitive_type_Consider_wrapping_the_value_in_an_object_or_manually_using_Context_Tag_or_Effect_Tag_if_you_want_to_use_a_primitive_instead_effect_nonObjectEffectServiceType,
+						tsdiag.Effect_Service_is_declared_with_a_primitive_service_type_Effect_Service_models_object_shaped_services_primitive_values_use_Context_Tag_or_Effect_Tag_directly_effect_nonObjectEffectServiceType,
 						nil,
 					))
 				}
@@ -150,12 +150,12 @@ func checkServicePropertyTypes(ctx *rule.Context, node *ast.Node) []*ast.Diagnos
 				if returnType == nil {
 					continue
 				}
-				effectReturnResult := typeparser.EffectType(ctx.Checker, returnType, initializer)
-				if effectReturnResult != nil && isPrimitiveType(effectReturnResult.A) {
+				effectReturnResult := ctx.TypeParser.EffectType(returnType, initializer)
+				if effectReturnResult != nil && isPrimitiveType(ctx.TypeParser, effectReturnResult.A) {
 					diags = append(diags, ctx.NewDiagnostic(
 						ctx.SourceFile,
 						ctx.GetErrorRange(pa.Name()),
-						tsdiag.Effect_Service_requires_the_service_type_to_be_an_object_and_not_a_primitive_type_Consider_wrapping_the_value_in_an_object_or_manually_using_Context_Tag_or_Effect_Tag_if_you_want_to_use_a_primitive_instead_effect_nonObjectEffectServiceType,
+						tsdiag.Effect_Service_is_declared_with_a_primitive_service_type_Effect_Service_models_object_shaped_services_primitive_values_use_Context_Tag_or_Effect_Tag_directly_effect_nonObjectEffectServiceType,
 						nil,
 					))
 					break
@@ -168,7 +168,7 @@ func checkServicePropertyTypes(ctx *rule.Context, node *ast.Node) []*ast.Diagnos
 }
 
 // isPrimitiveType checks if a type (or any member of a union type) is a primitive type.
-func isPrimitiveType(t *checker.Type) bool {
+func isPrimitiveType(tp *typeparser.TypeParser, t *checker.Type) bool {
 	const primitiveFlags = checker.TypeFlagsString |
 		checker.TypeFlagsNumber |
 		checker.TypeFlagsBoolean |
@@ -178,7 +178,7 @@ func isPrimitiveType(t *checker.Type) bool {
 		checker.TypeFlagsUndefined |
 		checker.TypeFlagsNull
 
-	for _, member := range typeparser.UnrollUnionMembers(t) {
+	for _, member := range tp.UnrollUnionMembers(t) {
 		if member.Flags()&primitiveFlags != 0 {
 			return true
 		}

@@ -2,32 +2,32 @@
 Effect version: 4.0.0
 
 /.src/missingEffectContext_sugg.ts(42,5): error TS2345: Argument of type '<A, E>(effect: Effect<A, E, never>, options?: RunOptions | undefined) => Promise<A>' is not assignable to parameter of type '(_: Effect<{}, never, DbConnection | FileSystem>) => Promise<{}>'.
-/.src/missingEffectContext_sugg.ts(42,5): error TS377004: Missing context DbConnection | FileSystem in the expected Effect type. effect(missingEffectContext)
+/.src/missingEffectContext_sugg.ts(42,5): error TS377004: This Effect requires a service that is missing from the expected Effect context: `DbConnection | FileSystem`. effect(missingEffectContext)
 
 
 ==== /.src/missingEffectContext_sugg.ts (2 errors) ====
-    import { Effect, Layer, ServiceMap, Data } from "effect"
+    import { Effect, Layer, Context, Data } from "effect"
     
-    export class DbConnection extends ServiceMap.Service<DbConnection>()("DbConnection", {
+    export class DbConnection extends Context.Service<DbConnection>()("DbConnection", {
       make: Effect.succeed({})
     }) {
       static Default = Layer.effect(this, this.make)
     }
     
-    export class FileSystem extends ServiceMap.Service<FileSystem>()("FileSystem", {
+    export class FileSystem extends Context.Service<FileSystem>()("FileSystem", {
       make: Effect.succeed({})
     }) {
       static Default = Layer.effect(this, this.make)
     }
     
-    export class Cache extends ServiceMap.Service<Cache>()("Cache", {
-      make: Effect.as(FileSystem.asEffect(), {})
+    export class Cache extends Context.Service<Cache>()("Cache", {
+      make: Effect.as(FileSystem, {})
     }) {
       static Default = Layer.effect(this, this.make)
     }
     
-    export class UserRepository extends ServiceMap.Service<UserRepository>()("UserRepository", {
-      make: Effect.as(Effect.andThen(DbConnection.asEffect(), Cache.asEffect()), {})
+    export class UserRepository extends Context.Service<UserRepository>()("UserRepository", {
+      make: Effect.as(Effect.andThen(DbConnection, Cache), {})
     }) {
       static Default = Layer.effect(this, this.make)
     }
@@ -51,7 +51,8 @@ Effect version: 4.0.0
         ~~~~~~~~~~~~~~~~~
 !!! error TS2345: Argument of type '<A, E>(effect: Effect<A, E, never>, options?: RunOptions | undefined) => Promise<A>' is not assignable to parameter of type '(_: Effect<{}, never, DbConnection | FileSystem>) => Promise<{}>'.
         ~~~~~~~~~~~~~~~~~
-!!! error TS377004: Missing context DbConnection | FileSystem in the expected Effect type. effect(missingEffectContext)
+!!! error TS377004: This Effect requires a service that is missing from the expected Effect context: `DbConnection | FileSystem`. effect(missingEffectContext)
 !!! related TS377059 /.src/missingEffectContext_sugg.ts(40,5): Adjusting this layer composition could provide the missing service. effect(missingEffectContext)
 !!! related TS377060 /.src/missingEffectContext_sugg.ts(12,10): This layer provides the missing service FileSystem. effect(missingEffectContext)
     )
+    

@@ -3,9 +3,8 @@ package completions
 import (
 	"fmt"
 
-	"github.com/effect-ts/effect-typescript-go/internal/completion"
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/completion"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/lsp/lsproto"
 	"github.com/microsoft/typescript-go/shim/scanner"
@@ -30,16 +29,14 @@ func runSchemaBrand(ctx *completion.Context) []*lsproto.CompletionItem {
 	}
 
 	// V3 only
-	ch, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	defer done()
-
-	version := typeparser.SupportedEffectVersion(ch)
+	tp := ctx.TypeParser
+	version := tp.SupportedEffectVersion()
 	if version != typeparser.EffectMajorV3 {
 		return nil
 	}
 
 	// Resolve the Schema module identifier and compare
-	schemaIdentifier := effectutil.FindModuleIdentifier(ctx.SourceFile, "Schema")
+	schemaIdentifier := typeparser.FindModuleIdentifier(ctx.SourceFile, "Schema")
 	accessedText := scanner.GetTextOfNode(result.AccessedObject)
 	if accessedText != schemaIdentifier {
 		return nil

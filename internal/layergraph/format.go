@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effect-ts/effect-typescript-go/internal/graph"
+	"github.com/effect-ts/tsgo/internal/graph"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/scanner"
@@ -106,7 +106,7 @@ func formatLocation(node *ast.Node, fromSourceFile *ast.SourceFile) string {
 
 // getTypeDisplayName returns the string representation of a type with no truncation.
 func getTypeDisplayName(c *checker.Checker, t *checker.Type) string {
-	return c.TypeToStringEx(t, nil, checker.TypeFormatFlagsNoTruncation)
+	return c.TypeToStringEx(t, nil, checker.TypeFormatFlagsNoTruncation, nil)
 }
 
 // mermaidEscapeOutputLabel applies standard Mermaid escaping for backslash, brackets, and pipe

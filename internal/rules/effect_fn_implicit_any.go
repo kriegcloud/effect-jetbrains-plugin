@@ -1,9 +1,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
@@ -19,9 +19,10 @@ var EffectFnImplicitAny = rule.Rule{
 	Description:     "Mirrors noImplicitAny for unannotated Effect.fn, Effect.fnUntraced, and Effect.fnUntracedEager callback parameters when no outer contextual function type exists. Requires TS's noImplicitAny: true",
 	DefaultSeverity: etscore.SeverityError,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.Parameter_0_implicitly_has_an_any_type_in_Effect_fn_SlashEffect_fnUntraced_SlashEffect_fnUntracedEager_Add_an_explicit_type_annotation_or_provide_a_contextual_function_type_effect_effectFnImplicitAny.Code()},
+	Codes:           []int32{tsdiag.Parameter_0_implicitly_has_type_any_in_Effect_fn_Effect_fnUntraced_or_Effect_fnUntracedEager_No_parameter_type_is_available_from_an_explicit_annotation_or_contextual_function_type_effect_effectFnImplicitAny.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		if !ctx.Checker.Program().Options().GetStrictOptionValue(ctx.Checker.Program().Options().NoImplicitAny) {
+		tp := ctx.TypeParser
+		if !ctx.Program.Options().GetStrictOptionValue(ctx.Program.Options().NoImplicitAny) {
 			return nil
 		}
 
@@ -33,14 +34,12 @@ var EffectFnImplicitAny = rule.Rule{
 				return false
 			}
 
-			if result := typeparser.EffectFnCall(ctx.Checker, n); result != nil {
-				diags = append(diags, checkEffectFnImplicitAnyBody(ctx, result.Call.AsNode(), result.BodyFunction)...)
-			} else if result := typeparser.EffectFnGenCall(ctx.Checker, n); result != nil {
-				diags = append(diags, checkEffectFnImplicitAny(ctx, result)...)
-			} else if result := typeparser.EffectFnUntracedGenCall(ctx.Checker, n); result != nil {
-				diags = append(diags, checkEffectFnImplicitAny(ctx, result)...)
-			} else if result := typeparser.EffectFnUntracedEagerGenCall(ctx.Checker, n); result != nil {
-				diags = append(diags, checkEffectFnImplicitAny(ctx, result)...)
+			if result := tp.EffectFnCall(n); result != nil {
+				if result.IsGenerator() {
+					diags = append(diags, checkEffectFnImplicitAny(ctx, result)...)
+				} else {
+					diags = append(diags, checkEffectFnImplicitAnyBody(ctx, result.Call.AsNode(), result.FunctionNode)...)
+				}
 			}
 
 			n.ForEachChild(walk)
@@ -53,11 +52,12 @@ var EffectFnImplicitAny = rule.Rule{
 	},
 }
 
-func checkEffectFnImplicitAny(ctx *rule.Context, result *typeparser.EffectGenCallResult) []*ast.Diagnostic {
-	if result == nil || result.GeneratorFunction == nil || result.GeneratorFunction.Parameters == nil {
+func checkEffectFnImplicitAny(ctx *rule.Context, result *typeparser.EffectFnCallResult) []*ast.Diagnostic {
+	genFn := result.GeneratorFunction()
+	if result == nil || genFn == nil || genFn.Parameters == nil {
 		return nil
 	}
-	return checkEffectFnImplicitAnyParameters(ctx, result.Call.AsNode(), result.GeneratorFunction.Parameters.Nodes)
+	return checkEffectFnImplicitAnyParameters(ctx, result.Call.AsNode(), genFn.Parameters.Nodes)
 }
 
 func checkEffectFnImplicitAnyBody(ctx *rule.Context, callNode *ast.Node, fnNode *ast.Node) []*ast.Diagnostic {
@@ -84,7 +84,7 @@ func checkEffectFnImplicitAnyBody(ctx *rule.Context, callNode *ast.Node, fnNode 
 }
 
 func checkEffectFnImplicitAnyParameters(ctx *rule.Context, callNode *ast.Node, params []*ast.Node) []*ast.Diagnostic {
-	if hasOuterContextualFunctionType(ctx.Checker, callNode) {
+	if hasOuterContextualFunctionType(ctx.TypeParser, ctx.Checker, callNode) {
 		return nil
 	}
 
@@ -102,7 +102,7 @@ func checkEffectFnImplicitAnyParameters(ctx *rule.Context, callNode *ast.Node, p
 		diags = append(diags, ctx.NewDiagnostic(
 			ctx.SourceFile,
 			ctx.GetErrorRange(param.Name()),
-			tsdiag.Parameter_0_implicitly_has_an_any_type_in_Effect_fn_SlashEffect_fnUntraced_SlashEffect_fnUntracedEager_Add_an_explicit_type_annotation_or_provide_a_contextual_function_type_effect_effectFnImplicitAny,
+			tsdiag.Parameter_0_implicitly_has_type_any_in_Effect_fn_Effect_fnUntraced_or_Effect_fnUntracedEager_No_parameter_type_is_available_from_an_explicit_annotation_or_contextual_function_type_effect_effectFnImplicitAny,
 			nil,
 			name,
 		))
@@ -111,7 +111,7 @@ func checkEffectFnImplicitAnyParameters(ctx *rule.Context, callNode *ast.Node, p
 	return diags
 }
 
-func hasOuterContextualFunctionType(c *checker.Checker, node *ast.Node) bool {
+func hasOuterContextualFunctionType(tp *typeparser.TypeParser, c *checker.Checker, node *ast.Node) bool {
 	if c == nil || node == nil || !ast.IsExpression(node) {
 		return false
 	}
@@ -121,5 +121,11 @@ func hasOuterContextualFunctionType(c *checker.Checker, node *ast.Node) bool {
 		return false
 	}
 
-	return len(c.GetSignaturesOfType(contextualType, checker.SignatureKindCall)) > 0
+	for _, member := range tp.UnrollUnionMembers(contextualType) {
+		if len(c.GetSignaturesOfType(member, checker.SignatureKindCall)) > 0 {
+			return true
+		}
+	}
+
+	return false
 }

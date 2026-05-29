@@ -1,14 +1,13 @@
 package refactors
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/refactor"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var ToggleTypeAnnotation = refactor.Refactor{
@@ -85,7 +84,7 @@ func runToggleTypeAnnotation(ctx *refactor.Context) []ls.CodeAction {
 		// Remove existing type annotation: delete from name.End() to type.End()
 		action := ctx.NewRefactorAction(refactor.RefactorAction{
 			Description: "Toggle type annotation",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				tracker.DeleteRange(ctx.SourceFile, core.NewTextRange(name.End(), typeNode.End()))
 			},
 		})
@@ -97,25 +96,21 @@ func runToggleTypeAnnotation(ctx *refactor.Context) []ls.CodeAction {
 	}
 
 	// Add type annotation: infer type from initializer and insert after name
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
-	initializerType := typeparser.GetTypeAtLocation(c, initializer)
+	initializerType := ctx.TypeParser.GetTypeAtLocation(initializer)
 	if initializerType == nil {
 		return nil
 	}
 
-	typeStr := c.TypeToStringEx(initializerType, matchedNode, checker.TypeFormatFlagsNoTruncation)
+	typeStr := c.TypeToStringEx(initializerType, matchedNode, checker.TypeFormatFlagsNoTruncation, nil)
 	if typeStr == "" {
 		return nil
 	}
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Toggle type annotation",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			tracker.InsertText(ctx.SourceFile, ctx.BytePosToLSPPosition(name.End()), ": "+typeStr)
 		},
 	})

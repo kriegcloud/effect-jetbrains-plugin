@@ -1,32 +1,28 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var SchemaUnionOfLiteralsFix = fixable.Fixable{
 	Name:        "schemaUnionOfLiterals",
 	Description: "Replace with a single Schema.Literal call",
-	ErrorCodes:  []int32{tsdiag.A_Schema_Union_of_multiple_Schema_Literal_calls_can_be_simplified_to_a_single_Schema_Literal_call_effect_schemaUnionOfLiterals.Code()},
+	ErrorCodes:  []int32{tsdiag.This_Schema_Union_contains_multiple_Schema_Literal_members_and_can_be_simplified_to_a_single_Schema_Literal_call_effect_schemaUnionOfLiterals.Code()},
 	FixIDs:      []string{"schemaUnionOfLiterals_fix"},
 	Run:         runSchemaUnionOfLiteralsFix,
 }
 
 func runSchemaUnionOfLiteralsFix(ctx *fixable.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeSchemaUnionOfLiterals(c, sf)
+	matches := rules.AnalyzeSchemaUnionOfLiterals(ctx.TypeParser, c, sf)
 	for _, match := range matches {
 		if !match.Location.Intersects(ctx.Span) && !ctx.Span.ContainedBy(match.Location) {
 			continue
@@ -39,7 +35,7 @@ func runSchemaUnionOfLiteralsFix(ctx *fixable.Context) []ls.CodeAction {
 
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Replace with a single Schema.Literal call",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				clonedExpression := tracker.DeepCloneNode(firstLiteralExpression)
 				clonedArgs := make([]*ast.Node, len(allLiteralArgs))
 				for i, arg := range allLiteralArgs {

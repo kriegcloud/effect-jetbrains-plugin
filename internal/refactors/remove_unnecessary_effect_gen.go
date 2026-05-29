@@ -1,13 +1,13 @@
 package refactors
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/core"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var RemoveUnnecessaryEffectGen = refactor.Refactor{
@@ -18,13 +18,9 @@ var RemoveUnnecessaryEffectGen = refactor.Refactor{
 }
 
 func runRemoveUnnecessaryEffectGen(ctx *refactor.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
-	matches := rules.AnalyzeUnnecessaryEffectGen(c, ctx.SourceFile)
+	matches := rules.AnalyzeUnnecessaryEffectGen(ctx.TypeParser, c, ctx.SourceFile)
 	if len(matches) == 0 {
 		return nil
 	}
@@ -52,7 +48,7 @@ func runRemoveUnnecessaryEffectGen(ctx *refactor.Context) []ls.CodeAction {
 				// Simple unwrap: delete the prefix and suffix around the yielded expression
 				action := ctx.NewRefactorAction(refactor.RefactorAction{
 					Description: "Remove unnecessary Effect.gen",
-					Run: func(tracker *change.Tracker) {
+					Run: func(tracker *rewriter.Tracker) {
 						tracker.DeleteRange(sf, core.NewTextRange(match.CallNode.Pos(), match.YieldedExpression.Pos()))
 						tracker.DeleteRange(sf, core.NewTextRange(match.YieldedExpression.End(), match.CallNode.End()))
 					},
@@ -67,7 +63,7 @@ func runRemoveUnnecessaryEffectGen(ctx *refactor.Context) []ls.CodeAction {
 			// No return + non-void success: wrap with Effect.asVoid(expr)
 			action := ctx.NewRefactorAction(refactor.RefactorAction{
 				Description: "Remove unnecessary Effect.gen",
-				Run: func(tracker *change.Tracker) {
+				Run: func(tracker *rewriter.Tracker) {
 					var effectModuleId *ast.Node
 					if match.EffectModuleNode != nil && match.EffectModuleNode.Kind == ast.KindIdentifier {
 						effectModuleId = tracker.DeepCloneNode(match.EffectModuleNode)

@@ -1,12 +1,16 @@
 package refactors
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"strings"
+
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
+	"github.com/microsoft/typescript-go/shim/lsp/lsproto"
+	"github.com/microsoft/typescript-go/shim/scanner"
 )
 
 var TogglePipeStyle = refactor.Refactor{
@@ -17,12 +21,6 @@ var TogglePipeStyle = refactor.Refactor{
 }
 
 func runTogglePipeStyle(ctx *refactor.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
-
 	token := astnav.GetTokenAtPosition(ctx.SourceFile, ctx.Span.Pos())
 	if token == nil {
 		return nil
@@ -34,7 +32,7 @@ func runTogglePipeStyle(ctx *refactor.Context) []ls.CodeAction {
 			continue
 		}
 
-		pipeCall := typeparser.ParsePipeCall(c, node)
+		pipeCall := ctx.TypeParser.ParsePipeCall(node)
 		if pipeCall == nil {
 			continue
 		}
@@ -43,25 +41,20 @@ func runTogglePipeStyle(ctx *refactor.Context) []ls.CodeAction {
 		case typeparser.TransformationKindPipe:
 			// pipe(subject, f1, f2) -> subject.pipe(f1, f2)
 			// Check that the subject's type is pipeable
-			subjectType := typeparser.GetTypeAtLocation(c, pipeCall.Subject)
-			if !typeparser.IsPipeableType(c, subjectType, pipeCall.Subject) {
+			subjectType := ctx.TypeParser.GetTypeAtLocation(pipeCall.Subject)
+			if !ctx.TypeParser.IsPipeableType(subjectType, pipeCall.Subject) {
 				continue
 			}
 
 			action := ctx.NewRefactorAction(refactor.RefactorAction{
 				Description: "Rewrite as X.pipe(Y, Z, ...)",
-				Run: func(tracker *change.Tracker) {
-					clonedSubject := tracker.DeepCloneNode(pipeCall.Subject)
-					pipeAccess := tracker.NewPropertyAccessExpression(clonedSubject, nil, tracker.NewIdentifier("pipe"), ast.NodeFlagsNone)
-
-					var clonedArgs []*ast.Node
-					for _, arg := range pipeCall.Args {
-						clonedArgs = append(clonedArgs, tracker.DeepCloneNode(arg))
-					}
-
-					callExpr := tracker.NewCallExpression(pipeAccess, nil, nil, tracker.NewNodeList(clonedArgs), ast.NodeFlagsNone)
-					ast.SetParentInChildren(callExpr)
-					tracker.ReplaceNode(ctx.SourceFile, node, callExpr, nil)
+				Run: func(tracker *rewriter.Tracker) {
+					start := astnav.GetStartOfNode(node, ctx.SourceFile, false)
+					rewritten := togglePipeToMethodText(ctx.SourceFile, pipeCall.Subject, pipeCall.Args)
+					tracker.ReplaceRangeWithText(ctx.SourceFile, lsproto.Range{
+						Start: ctx.BytePosToLSPPosition(start),
+						End:   ctx.BytePosToLSPPosition(node.End()),
+					}, rewritten)
 				},
 			})
 			if action == nil {
@@ -74,19 +67,13 @@ func runTogglePipeStyle(ctx *refactor.Context) []ls.CodeAction {
 			// subject.pipe(f1, f2) -> pipe(subject, f1, f2)
 			action := ctx.NewRefactorAction(refactor.RefactorAction{
 				Description: "Rewrite as pipe(X, Y, Z, ...)",
-				Run: func(tracker *change.Tracker) {
-					clonedSubject := tracker.DeepCloneNode(pipeCall.Subject)
-
-					allArgs := make([]*ast.Node, 0, 1+len(pipeCall.Args))
-					allArgs = append(allArgs, clonedSubject)
-					for _, arg := range pipeCall.Args {
-						allArgs = append(allArgs, tracker.DeepCloneNode(arg))
-					}
-
-					pipeId := tracker.NewIdentifier("pipe")
-					callExpr := tracker.NewCallExpression(pipeId, nil, nil, tracker.NewNodeList(allArgs), ast.NodeFlagsNone)
-					ast.SetParentInChildren(callExpr)
-					tracker.ReplaceNode(ctx.SourceFile, node, callExpr, nil)
+				Run: func(tracker *rewriter.Tracker) {
+					start := astnav.GetStartOfNode(node, ctx.SourceFile, false)
+					rewritten := togglePipeToFunctionText(ctx.SourceFile, pipeCall.Subject, pipeCall.Args)
+					tracker.ReplaceRangeWithText(ctx.SourceFile, lsproto.Range{
+						Start: ctx.BytePosToLSPPosition(start),
+						End:   ctx.BytePosToLSPPosition(node.End()),
+					}, rewritten)
 				},
 			})
 			if action == nil {
@@ -98,4 +85,21 @@ func runTogglePipeStyle(ctx *refactor.Context) []ls.CodeAction {
 	}
 
 	return nil
+}
+
+func togglePipeToMethodText(sf *ast.SourceFile, subject *ast.Node, args []*ast.Node) string {
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		parts = append(parts, scanner.GetSourceTextOfNodeFromSourceFile(sf, arg, false))
+	}
+	return scanner.GetSourceTextOfNodeFromSourceFile(sf, subject, false) + ".pipe(" + strings.Join(parts, ", ") + ")"
+}
+
+func togglePipeToFunctionText(sf *ast.SourceFile, subject *ast.Node, args []*ast.Node) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, scanner.GetSourceTextOfNodeFromSourceFile(sf, subject, false))
+	for _, arg := range args {
+		parts = append(parts, scanner.GetSourceTextOfNodeFromSourceFile(sf, arg, false))
+	}
+	return "pipe(" + strings.Join(parts, ", ") + ")"
 }

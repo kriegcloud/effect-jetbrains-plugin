@@ -1,21 +1,21 @@
 === Metadata ===
 Effect version: 4.0.0
 
-/.src/multipleEffectProvide_preview.ts(11,41): warning TS377033: Avoid chaining Effect.provide calls, as this can lead to service lifecycle issues. Instead, merge layers and provide them in a single call. effect(multipleEffectProvide)
+/.src/multipleEffectProvide_preview.ts(11,41): warning TS377033: This expression chains multiple `Effect.provide` calls. Providing Layers in multiple calls in a chain can break service lifecycle behavior compared with a single combined provide with merged layers. effect(multipleEffectProvide)
 
 
 ==== /.src/multipleEffectProvide_preview.ts (1 errors) ====
     // @effect-diagnostics *:off
     // @effect-diagnostics multipleEffectProvide:warning
-    import { Effect, Layer, ServiceMap } from "effect"
+    import { Effect, Layer, Context } from "effect"
     
-    class A extends ServiceMap.Service<A>()("A", { make: Effect.succeed({}) }) {
+    class A extends Context.Service<A>()("A", { make: Effect.succeed({}) }) {
       static Default = Layer.effect(this, this.make)
     }
-    class B extends ServiceMap.Service<B>()("B", { make: Effect.succeed({}) }) {
+    class B extends Context.Service<B>()("B", { make: Effect.succeed({}) }) {
       static Default = Layer.effect(this, this.make)
     }
     export const preview = Effect.void.pipe(Effect.provide(A.Default), Effect.provide(B.Default))
                                             ~~~~~~~~~~~~~~~~~~~~~~~~~
-!!! warning TS377033: Avoid chaining Effect.provide calls, as this can lead to service lifecycle issues. Instead, merge layers and provide them in a single call. effect(multipleEffectProvide)
+!!! warning TS377033: This expression chains multiple `Effect.provide` calls. Providing Layers in multiple calls in a chain can break service lifecycle behavior compared with a single combined provide with merged layers. effect(multipleEffectProvide)
     

@@ -4,6 +4,7 @@
 package change
 
 import "context"
+import "github.com/microsoft/typescript-go/internal/ast"
 import "github.com/microsoft/typescript-go/internal/core"
 import "github.com/microsoft/typescript-go/internal/ls/change"
 import "github.com/microsoft/typescript-go/internal/ls/lsconv"
@@ -17,9 +18,11 @@ const LeadingTriviaOptionJSDoc = change.LeadingTriviaOptionJSDoc
 const LeadingTriviaOptionNone = change.LeadingTriviaOptionNone
 const LeadingTriviaOptionStartLine = change.LeadingTriviaOptionStartLine
 //go:linkname NewTracker github.com/microsoft/typescript-go/internal/ls/change.NewTracker
-func NewTracker(ctx context.Context, compilerOptions *core.CompilerOptions, formatOptions *lsutil.FormatCodeSettings, converters *lsconv.Converters) *change.Tracker
+func NewTracker(ctx context.Context, compilerOptions *core.CompilerOptions, formatOptions lsutil.FormatCodeSettings, converters *lsconv.Converters) *change.Tracker
 type NodeOptions = change.NodeOptions
 type Tracker = change.Tracker
+//go:linkname Tracker_getNonformattedText github.com/microsoft/typescript-go/internal/ls/change.(*Tracker).getNonformattedText
+func Tracker_getNonformattedText(recv *change.Tracker, node *ast.Node, sourceFile *ast.SourceFile) (string, *ast.Node)
 type TrailingTriviaOption = change.TrailingTriviaOption
 const TrailingTriviaOptionExclude = change.TrailingTriviaOptionExclude
 const TrailingTriviaOptionExcludeWhitespace = change.TrailingTriviaOptionExcludeWhitespace

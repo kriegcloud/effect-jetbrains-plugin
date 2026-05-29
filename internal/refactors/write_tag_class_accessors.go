@@ -3,15 +3,14 @@ package refactors
 import (
 	"strings"
 
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 	"github.com/microsoft/typescript-go/shim/scanner"
 )
 
@@ -34,14 +33,10 @@ func runWriteTagClassAccessors(ctx *refactor.Context) []ls.CodeAction {
 		return nil
 	}
 
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	// V3-only refactor
-	if typeparser.SupportedEffectVersion(c) == typeparser.EffectMajorV4 {
+	if ctx.TypeParser.SupportedEffectVersion() == typeparser.EffectMajorV4 {
 		return nil
 	}
 
@@ -59,14 +54,14 @@ func runWriteTagClassAccessors(ctx *refactor.Context) []ls.CodeAction {
 
 	// Check ExtendsEffectService (with accessors: true) or ExtendsEffectTag
 	var className *ast.Node
-	serviceResult := typeparser.ExtendsEffectService(c, classNode)
+	serviceResult := ctx.TypeParser.ExtendsEffectV3Service(classNode)
 	if serviceResult != nil {
 		if !hasAccessorsTrue(serviceResult.Options) {
 			return nil
 		}
 		className = serviceResult.ClassName
 	} else {
-		tagResult := typeparser.ExtendsEffectTag(c, classNode)
+		tagResult := ctx.TypeParser.ExtendsEffectTag(classNode)
 		if tagResult != nil {
 			// Effect.Tag always has accessors
 			className = tagResult.ClassName
@@ -89,13 +84,13 @@ func runWriteTagClassAccessors(ctx *refactor.Context) []ls.CodeAction {
 		return nil
 	}
 
-	contextTag := typeparser.ContextTag(c, classType, classNode)
+	contextTag := ctx.TypeParser.ContextTag(classType, classNode)
 	if contextTag == nil || contextTag.Shape == nil {
 		return nil
 	}
 
 	// Unroll union and filter out primitives
-	nonPrimitiveServices := filterNonPrimitiveTypes(typeparser.UnrollUnionMembers(contextTag.Shape))
+	nonPrimitiveServices := filterNonPrimitiveTypes(ctx.TypeParser.UnrollUnionMembers(contextTag.Shape))
 	if len(nonPrimitiveServices) == 0 {
 		return nil
 	}
@@ -132,12 +127,12 @@ func runWriteTagClassAccessors(ctx *refactor.Context) []ls.CodeAction {
 		return nil
 	}
 
-	effectIdentifier := effectutil.FindEffectModuleIdentifier(ctx.SourceFile)
+	effectIdentifier := typeparser.FindEffectModuleIdentifier(ctx.SourceFile)
 	classNameText := scanner.GetTextOfNode(className)
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Implement Service accessors",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			generateAccessors(tracker, ctx, c, classNode, classNameText, effectIdentifier, members)
 		},
 	})
@@ -191,7 +186,7 @@ func filterNonPrimitiveTypes(types []*checker.Type) []*checker.Type {
 
 // generateAccessors generates accessor text directly via InsertText.
 func generateAccessors(
-	tracker *change.Tracker,
+	tracker *rewriter.Tracker,
 	ctx *refactor.Context,
 	c *checker.Checker,
 	classNode *ast.Node,
@@ -224,7 +219,7 @@ func generateAccessors(
 		// Build signature type strings
 		var sigTypeStrs []string
 		for _, sig := range callSignatures {
-			sigStr := buildProxySignatureText(c, sig, classNode, classNameText, effectIdentifier)
+			sigStr := buildProxySignatureText(ctx.TypeParser, c, sig, classNode, classNameText, effectIdentifier)
 			if sigStr != "" {
 				sigTypeStrs = append(sigTypeStrs, sigStr)
 			}
@@ -277,6 +272,7 @@ func generateAccessors(
 
 // buildProxySignatureText builds the text representation of a proxy function type for a call signature.
 func buildProxySignatureText(
+	tp *typeparser.TypeParser,
 	c *checker.Checker,
 	sig *checker.Signature,
 	classNode *ast.Node,
@@ -296,7 +292,7 @@ func buildProxySignatureText(
 			constraintType := c.GetConstraintOfTypeParameter(tp)
 			if constraintType != nil {
 				sb.WriteString(" extends ")
-				sb.WriteString(c.TypeToStringEx(constraintType, classNode, checker.TypeFormatFlagsNoTruncation))
+				sb.WriteString(c.TypeToStringEx(constraintType, classNode, checker.TypeFormatFlagsNoTruncation, nil))
 			}
 		}
 		sb.WriteString(">")
@@ -315,14 +311,14 @@ func buildProxySignatureText(
 		sb.WriteString(param.Name)
 		sb.WriteString(": ")
 		paramType := c.GetTypeOfSymbolAtLocation(param, classNode)
-		sb.WriteString(c.TypeToStringEx(paramType, classNode, checker.TypeFormatFlagsNoTruncation))
+		sb.WriteString(c.TypeToStringEx(paramType, classNode, checker.TypeFormatFlagsNoTruncation, nil))
 	}
 	sb.WriteString(")")
 
 	// Return type
 	sb.WriteString(" => ")
 	returnType := c.GetReturnTypeOfSignature(sig)
-	wrappedReturn := buildWrappedReturnTypeText(c, returnType, classNode, classNameText, effectIdentifier)
+	wrappedReturn := buildWrappedReturnTypeText(tp, c, returnType, classNode, classNameText, effectIdentifier)
 	sb.WriteString(wrappedReturn)
 
 	return sb.String()
@@ -330,6 +326,7 @@ func buildProxySignatureText(
 
 // buildWrappedReturnTypeText builds the text representation of the wrapped return type.
 func buildWrappedReturnTypeText(
+	tp *typeparser.TypeParser,
 	c *checker.Checker,
 	returnType *checker.Type,
 	classNode *ast.Node,
@@ -337,29 +334,29 @@ func buildWrappedReturnTypeText(
 	effectIdentifier string,
 ) string {
 	// Try to parse as Effect type
-	effect := typeparser.EffectType(c, returnType, classNode)
+	effect := tp.EffectType(returnType, classNode)
 	if effect != nil {
-		aStr := c.TypeToStringEx(effect.A, classNode, checker.TypeFormatFlagsNoTruncation)
-		eStr := c.TypeToStringEx(effect.E, classNode, checker.TypeFormatFlagsNoTruncation)
+		aStr := c.TypeToStringEx(effect.A, classNode, checker.TypeFormatFlagsNoTruncation, nil)
+		eStr := c.TypeToStringEx(effect.E, classNode, checker.TypeFormatFlagsNoTruncation, nil)
 
 		var rStr string
 		if effect.R != nil && effect.R.Flags()&checker.TypeFlagsNever != 0 {
 			rStr = classNameText
 		} else {
-			rStr = classNameText + " | " + c.TypeToStringEx(effect.R, classNode, checker.TypeFormatFlagsNoTruncation)
+			rStr = classNameText + " | " + c.TypeToStringEx(effect.R, classNode, checker.TypeFormatFlagsNoTruncation, nil)
 		}
 
 		return effectIdentifier + ".Effect<" + aStr + ", " + eStr + ", " + rStr + ">"
 	}
 
 	// Try to detect Promise<T>
-	returnTypeStr := c.TypeToStringEx(returnType, classNode, checker.TypeFormatFlagsNoTruncation)
+	returnTypeStr := c.TypeToStringEx(returnType, classNode, checker.TypeFormatFlagsNoTruncation, nil)
 	if innerTypeStr, ok := isPromiseTypeString(returnTypeStr); ok {
 		return effectIdentifier + ".Effect<" + innerTypeStr + ", Cause.UnknownException, " + classNameText + ">"
 	}
 
 	// Fallback: Effect<A, never, ClassName>
-	aStr := c.TypeToStringEx(returnType, classNode, checker.TypeFormatFlagsNoTruncation)
+	aStr := c.TypeToStringEx(returnType, classNode, checker.TypeFormatFlagsNoTruncation, nil)
 	return effectIdentifier + ".Effect<" + aStr + ", never, " + classNameText + ">"
 }
 

@@ -1,37 +1,33 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/core"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 	"github.com/microsoft/typescript-go/shim/scanner"
 )
 
 var MultipleEffectProvideFix = fixable.Fixable{
 	Name:        "multipleEffectProvide",
 	Description: "Combine into a single provide",
-	ErrorCodes:  []int32{tsdiag.Avoid_chaining_Effect_provide_calls_as_this_can_lead_to_service_lifecycle_issues_Instead_merge_layers_and_provide_them_in_a_single_call_effect_multipleEffectProvide.Code()},
+	ErrorCodes:  []int32{tsdiag.This_expression_chains_multiple_Effect_provide_calls_Providing_Layers_in_multiple_calls_in_a_chain_can_break_service_lifecycle_behavior_compared_with_a_single_combined_provide_with_merged_layers_effect_multipleEffectProvide.Code()},
 	FixIDs:      []string{"multipleEffectProvide_fix"},
 	Run:         runMultipleEffectProvideFix,
 }
 
 func runMultipleEffectProvideFix(ctx *fixable.Context) []ls.CodeAction {
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
 	var actions []ls.CodeAction
 
-	matches := rules.AnalyzeMultipleEffectProvide(c, sf)
+	matches := rules.AnalyzeMultipleEffectProvide(ctx.TypeParser, c, sf)
 	for _, match := range matches {
 		if !match.Location.Intersects(ctx.Span) && !ctx.Span.ContainedBy(match.Location) {
 			continue
@@ -44,7 +40,7 @@ func runMultipleEffectProvideFix(ctx *fixable.Context) []ls.CodeAction {
 		}
 
 		// Resolve the Layer module name from the source file imports
-		layerModuleName := effectutil.FindModuleIdentifier(sf, "Layer")
+		layerModuleName := typeparser.FindModuleIdentifier(sf, "Layer")
 
 		// Capture loop variables for the closure
 		chunk := match.Chunk
@@ -52,7 +48,7 @@ func runMultipleEffectProvideFix(ctx *fixable.Context) []ls.CodeAction {
 
 		if action := ctx.NewFixAction(fixable.FixAction{
 			Description: "Combine into a single provide",
-			Run: func(tracker *change.Tracker) {
+			Run: func(tracker *rewriter.Tracker) {
 				// Step 1: Delete the range spanning all consecutive provide call expressions
 				tokenPos := scanner.GetTokenPosOfNode(chunk[0], sf, false)
 				endPos := chunk[len(chunk)-1].End()
@@ -90,7 +86,7 @@ func runMultipleEffectProvideFix(ctx *fixable.Context) []ls.CodeAction {
 				ast.SetParentInChildren(provideCall)
 
 				// Step 3: Insert the new node at the position of the first deleted call
-				tracker.InsertNodeAt(sf, core.TextPos(tokenPos), provideCall, change.NodeOptions{})
+				tracker.InsertNodeAt(sf, core.TextPos(tokenPos), provideCall, rewriter.NodeOptions{})
 			},
 		}); action != nil {
 			actions = append(actions, *action)

@@ -1,9 +1,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -19,12 +19,12 @@ var InstanceOfSchema = rule.Rule{
 	Description:     "Suggests using Schema.is instead of instanceof for Effect Schema types",
 	DefaultSeverity: etscore.SeverityOff,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.Consider_using_Schema_is_instead_of_instanceof_for_Effect_Schema_types_effect_instanceOfSchema.Code()},
+	Codes:           []int32{tsdiag.This_code_uses_instanceof_with_an_Effect_Schema_type_Schema_is_is_the_schema_aware_runtime_check_for_this_case_effect_instanceOfSchema.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		matches := AnalyzeInstanceOfSchema(ctx.Checker, ctx.SourceFile)
+		matches := AnalyzeInstanceOfSchema(ctx.TypeParser, ctx.Checker, ctx.SourceFile)
 		diags := make([]*ast.Diagnostic, len(matches))
 		for i, m := range matches {
-			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.Consider_using_Schema_is_instead_of_instanceof_for_Effect_Schema_types_effect_instanceOfSchema, nil)
+			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.This_code_uses_instanceof_with_an_Effect_Schema_type_Schema_is_is_the_schema_aware_runtime_check_for_this_case_effect_instanceOfSchema, nil)
 		}
 		return diags
 	},
@@ -42,7 +42,7 @@ type InstanceOfSchemaMatch struct {
 
 // AnalyzeInstanceOfSchema finds all `value instanceof SchemaClass` expressions
 // where the right-hand side is an Effect Schema type.
-func AnalyzeInstanceOfSchema(c *checker.Checker, sf *ast.SourceFile) []InstanceOfSchemaMatch {
+func AnalyzeInstanceOfSchema(tp *typeparser.TypeParser, _ *checker.Checker, sf *ast.SourceFile) []InstanceOfSchemaMatch {
 	var matches []InstanceOfSchemaMatch
 
 	// Stack-based traversal
@@ -60,8 +60,8 @@ func AnalyzeInstanceOfSchema(c *checker.Checker, sf *ast.SourceFile) []InstanceO
 		if ast.IsInstanceOfExpression(node) {
 			binExpr := node.AsBinaryExpression()
 			rightExpr := binExpr.Right
-			rightType := typeparser.GetTypeAtLocation(c, rightExpr)
-			if rightType != nil && typeparser.IsSchemaType(c, rightType, rightExpr) {
+			rightType := tp.GetTypeAtLocation(rightExpr)
+			if rightType != nil && tp.IsSchemaType(rightType, rightExpr) {
 				matches = append(matches, InstanceOfSchemaMatch{
 					SourceFile:     sf,
 					Location:       scanner.GetErrorRangeForNode(sf, node),

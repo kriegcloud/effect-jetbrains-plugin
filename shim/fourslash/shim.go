@@ -46,11 +46,14 @@ type RangeMarker = fourslash.RangeMarker
 type RefactorActionInfo = fourslash.RefactorActionInfo
 //go:linkname RegisterPrepareTestFSCallback github.com/microsoft/typescript-go/internal/fourslash.RegisterPrepareTestFSCallback
 func RegisterPrepareTestFSCallback(cb func(testfs map[string]any))
+type SemanticToken = fourslash.SemanticToken
 type SignatureHelpCase = fourslash.SignatureHelpCase
 //go:linkname SkipIfFailing github.com/microsoft/typescript-go/internal/fourslash.SkipIfFailing
 func SkipIfFailing(t *testing.T)
 type TestData = fourslash.TestData
 type TestFileInfo = fourslash.TestFileInfo
+type VerifyCodeFixAllOptions = fourslash.VerifyCodeFixAllOptions
+type VerifyCodeFixOptions = fourslash.VerifyCodeFixOptions
 type VerifyCompletionsResult = fourslash.VerifyCompletionsResult
 type VerifySignatureHelpOptions = fourslash.VerifySignatureHelpOptions
 type VerifyWorkspaceSymbolCase = fourslash.VerifyWorkspaceSymbolCase

@@ -4,9 +4,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
@@ -25,7 +25,7 @@ var LeakingRequirements = rule.Rule{
 	DefaultSeverity: etscore.SeveritySuggestion,
 	SupportedEffect: []string{"v3", "v4"},
 	Codes: []int32{
-		tsdiag.Methods_of_this_Service_require_0_from_every_caller_This_leaks_implementation_details_resolve_these_dependencies_at_Layer_creation_time_effect_leakingRequirements.Code(),
+		tsdiag.Methods_of_this_Service_require_0_from_every_caller_The_requirement_becomes_part_of_the_public_service_surface_instead_of_remaining_internal_to_Layer_implementation_Resolve_these_dependencies_at_Layer_creation_and_provide_them_to_each_method_so_the_service_s_type_reflects_its_purpose_not_its_implementation_To_suppress_this_diagnostic_for_specific_dependency_types_that_are_intentionally_passed_through_e_g_HttpServerRequest_add_effect_leakable_service_JSDoc_to_their_interface_declarations_or_to_this_service_by_adding_a_effect_expect_leaking_0_JSDoc_More_info_and_examples_at_https_Colon_Slash_Slasheffect_website_Slashdocs_Slashrequirements_management_Slashlayers_Slash_avoiding_requirement_leakage_effect_leakingRequirements.Code(),
 	},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
 		var diags []*ast.Diagnostic
@@ -57,7 +57,7 @@ var LeakingRequirements = rule.Rule{
 					if propAccess.Name() != nil && propAccess.Name().Kind == ast.KindIdentifier {
 						name := scanner.GetTextOfNode(propAccess.Name())
 						if name == "GenericTag" || name == "Service" {
-							nodeType := typeparser.GetTypeAtLocation(ctx.Checker, node)
+							nodeType := ctx.TypeParser.GetTypeAtLocation(node)
 							if nodeType != nil {
 								typesToCheck = append(typesToCheck, typeToCheck{t: nodeType, reportNode: node})
 							}
@@ -86,15 +86,15 @@ var LeakingRequirements = rule.Rule{
 			matched := false
 			for _, ttc := range typesToCheck {
 				// Try ContextTag first, fall back to ServiceType
-				service := typeparser.ContextTag(ctx.Checker, ttc.t, node)
+				service := ctx.TypeParser.ContextTag(ttc.t, node)
 				if service == nil {
-					service = typeparser.ServiceType(ctx.Checker, ttc.t, node)
+					service = ctx.TypeParser.ServiceType(ttc.t, node)
 				}
 				if service == nil {
 					continue
 				}
 
-				leaked := parseLeakedRequirements(ctx.Checker, service.Shape, node)
+				leaked := parseLeakedRequirements(ctx.TypeParser, ctx.Checker, service.Shape, node)
 				if len(leaked) > 0 {
 					leaked = filterExpectedLeakingRequirements(ctx.Checker, ttc.reportNode, leaked)
 				}
@@ -113,7 +113,7 @@ var LeakingRequirements = rule.Rule{
 					}
 					formatted := strings.Join(typeNames, " | ")
 
-					diags = append(diags, ctx.NewDiagnostic(ctx.SourceFile, ctx.GetErrorRange(ttc.reportNode), tsdiag.Methods_of_this_Service_require_0_from_every_caller_This_leaks_implementation_details_resolve_these_dependencies_at_Layer_creation_time_effect_leakingRequirements, nil, formatted))
+					diags = append(diags, ctx.NewDiagnostic(ctx.SourceFile, ctx.GetErrorRange(ttc.reportNode), tsdiag.Methods_of_this_Service_require_0_from_every_caller_The_requirement_becomes_part_of_the_public_service_surface_instead_of_remaining_internal_to_Layer_implementation_Resolve_these_dependencies_at_Layer_creation_and_provide_them_to_each_method_so_the_service_s_type_reflects_its_purpose_not_its_implementation_To_suppress_this_diagnostic_for_specific_dependency_types_that_are_intentionally_passed_through_e_g_HttpServerRequest_add_effect_leakable_service_JSDoc_to_their_interface_declarations_or_to_this_service_by_adding_a_effect_expect_leaking_0_JSDoc_More_info_and_examples_at_https_Colon_Slash_Slasheffect_website_Slashdocs_Slashrequirements_management_Slashlayers_Slash_avoiding_requirement_leakage_effect_leakingRequirements, nil, formatted))
 				} else {
 					matched = true
 				}
@@ -204,7 +204,7 @@ func hasExpectedLeakingComment(sourceText string, pos int, leakedServiceName str
 
 // parseLeakedRequirements analyzes the service shape to find requirement types that
 // are shared across all effect-typed members. This is the "leaking requirements" heuristic.
-func parseLeakedRequirements(c *checker.Checker, serviceShape *checker.Type, atLocation *ast.Node) []*checker.Type {
+func parseLeakedRequirements(tp *typeparser.TypeParser, c *checker.Checker, serviceShape *checker.Type, atLocation *ast.Node) []*checker.Type {
 	properties := c.GetPropertiesOfType(serviceShape)
 	if len(properties) < 1 {
 		return nil
@@ -221,7 +221,7 @@ func parseLeakedRequirements(c *checker.Checker, serviceShape *checker.Type, atL
 			return true
 		}
 		// Exclude Scope types
-		if typeparser.IsScopeType(c, t, atLocation) {
+		if tp.IsScopeType(t, atLocation) {
 			return true
 		}
 		return false
@@ -241,7 +241,7 @@ func parseLeakedRequirements(c *checker.Checker, serviceShape *checker.Type, atL
 		// or from the return type of a single call signature
 		var effectContextType *checker.Type
 
-		effect := typeparser.EffectType(c, servicePropertyType, atLocation)
+		effect := tp.EffectType(servicePropertyType, atLocation)
 		if effect != nil {
 			effectContextType = effect.R
 		} else {
@@ -250,7 +250,7 @@ func parseLeakedRequirements(c *checker.Checker, serviceShape *checker.Type, atL
 			if len(sigs) == 1 {
 				retType := c.GetReturnTypeOfSignature(sigs[0])
 				if retType != nil {
-					retEffect := typeparser.EffectType(c, retType, atLocation)
+					retEffect := tp.EffectType(retType, atLocation)
 					if retEffect != nil {
 						effectContextType = retEffect.R
 					}
@@ -263,7 +263,7 @@ func parseLeakedRequirements(c *checker.Checker, serviceShape *checker.Type, atL
 		}
 
 		effectMembers++
-		result := typeparser.AppendToUniqueTypesMap(c, memory, effectContextType, shouldExclude)
+		result := tp.AppendToUniqueTypesMap(memory, effectContextType, shouldExclude)
 
 		if !sharedInitialized {
 			sharedRequirementsKeys = result.AllIndexes

@@ -1,13 +1,12 @@
 package refactors
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var AsyncAwaitToFn = refactor.Refactor{
@@ -29,11 +28,11 @@ func runAsyncAwaitToFn(ctx *refactor.Context) []ls.CodeAction {
 		return nil
 	}
 
-	effectModuleName := effectutil.FindEffectModuleIdentifier(ctx.SourceFile)
+	effectModuleName := typeparser.FindEffectModuleIdentifier(ctx.SourceFile)
 
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Rewrite to Effect.fn",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			newDecl := transformAsyncToEffectFn(tracker, asyncFn, effectModuleName)
 			if newDecl != nil {
 				ast.SetParentInChildren(newDecl)
@@ -55,14 +54,14 @@ func runAsyncAwaitToFn(ctx *refactor.Context) []ls.CodeAction {
 }
 
 // transformAsyncToEffectFn transforms an async function to use Effect.fn.
-func transformAsyncToEffectFn(tracker *change.Tracker, node *ast.Node, effectModuleName string) *ast.Node {
+func transformAsyncToEffectFn(tracker *rewriter.Tracker, node *ast.Node, effectModuleName string) *ast.Node {
 	body := typeparser.GetFunctionLikeBody(node)
 	if body == nil {
 		return nil
 	}
 
 	// Transform await expressions to yield* Effect.promise(...)
-	transformedBody := transformBodyAwaitToYield(tracker, body, func(t *change.Tracker, expr *ast.Node) *ast.Node {
+	transformedBody := transformBodyAwaitToYield(tracker, body, func(t *rewriter.Tracker, expr *ast.Node) *ast.Node {
 		return buildYieldStarPromise(t, expr, effectModuleName)
 	})
 
@@ -77,7 +76,7 @@ func transformAsyncToEffectFn(tracker *change.Tracker, node *ast.Node, effectMod
 }
 
 // buildEffectFnCall builds: Effect.fn("name")(function*(params) { body })
-func buildEffectFnCall(tracker *change.Tracker, node *ast.Node, body *ast.Node, effectModuleName string, fnName string) *ast.Node {
+func buildEffectFnCall(tracker *rewriter.Tracker, node *ast.Node, body *ast.Node, effectModuleName string, fnName string) *ast.Node {
 	var blockBody *ast.Node
 	if body.Kind == ast.KindBlock {
 		blockBody = body
@@ -151,7 +150,7 @@ func buildEffectFnCall(tracker *change.Tracker, node *ast.Node, body *ast.Node, 
 // buildFnDeclaration builds the appropriate declaration wrapping the Effect.fn call.
 // For function declarations: const name = Effect.fn("name")(...)
 // For expressions/arrows: just the Effect.fn("name")(...) expression
-func buildFnDeclaration(tracker *change.Tracker, node *ast.Node, effectFnCall *ast.Node, _ string) *ast.Node {
+func buildFnDeclaration(tracker *rewriter.Tracker, node *ast.Node, effectFnCall *ast.Node, _ string) *ast.Node {
 	if node.Kind == ast.KindFunctionDeclaration {
 		fd := node.AsFunctionDeclaration()
 		if fd.Name() == nil {
@@ -169,8 +168,8 @@ func buildFnDeclaration(tracker *change.Tracker, node *ast.Node, effectFnCall *a
 			effectFnCall,
 		)
 		varDeclList := tracker.NewVariableDeclarationList(
-			ast.NodeFlagsConst,
 			tracker.NewNodeList([]*ast.Node{varDecl}),
+			ast.NodeFlagsConst,
 		)
 		return tracker.NewVariableStatement(modifiers, varDeclList)
 	}

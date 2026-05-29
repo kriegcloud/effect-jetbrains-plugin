@@ -3,9 +3,8 @@ package completions
 import (
 	"fmt"
 
-	"github.com/effect-ts/effect-typescript-go/internal/completion"
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/completion"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/lsp/lsproto"
 )
 
@@ -24,17 +23,15 @@ func runRpcMakeClasses(ctx *completion.Context) []*lsproto.CompletionItem {
 		return nil
 	}
 
-	// Get checker for version detection
-	ch, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	defer done()
+	tp := ctx.TypeParser
 
 	// V3 only
-	version := typeparser.SupportedEffectVersion(ch)
+	version := tp.SupportedEffectVersion()
 	if version != typeparser.EffectMajorV3 {
 		return nil
 	}
 
-	rpcIdentifier := effectutil.FindModuleIdentifierForPackage(ctx.SourceFile, "@effect/rpc", "Rpc")
+	rpcIdentifier := typeparser.FindModuleIdentifierForPackage(ctx.SourceFile, "@effect/rpc", "Rpc")
 	accessedText := data.AccessedObjectText()
 
 	// Only fully-qualified case (e.g., Rpc.make)

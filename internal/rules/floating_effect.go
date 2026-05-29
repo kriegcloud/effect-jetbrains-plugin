@@ -2,9 +2,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
@@ -27,8 +27,8 @@ var FloatingEffect = rule.Rule{
 	DefaultSeverity: etscore.SeverityError,
 	SupportedEffect: []string{"v3", "v4"},
 	Codes: []int32{
-		tsdiag.Effect_must_be_yielded_or_assigned_to_a_variable_effect_floatingEffect.Code(),
-		tsdiag.Effect_able_0_must_be_yielded_or_assigned_to_a_variable_effect_floatingEffect.Code(),
+		tsdiag.This_Effect_value_is_neither_yielded_nor_used_in_an_assignment_effect_floatingEffect.Code(),
+		tsdiag.This_Effect_able_0_value_is_neither_yielded_nor_assigned_to_a_variable_effect_floatingEffect.Code(),
 	},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
 		var diags []*ast.Diagnostic
@@ -41,7 +41,7 @@ var FloatingEffect = rule.Rule{
 			}
 
 			// Check if this node is a floating Effect expression statement
-			if result := detectFloatingEffect(ctx.Checker, n); result != nil {
+			if result := detectFloatingEffect(ctx.TypeParser, ctx.Checker, n); result != nil {
 				// Use the expression's position if this is an expression statement
 				// to avoid including leading trivia in the span
 				expr := n
@@ -54,10 +54,10 @@ var FloatingEffect = rule.Rule{
 
 				var diag *ast.Diagnostic
 				if result.isStrict {
-					diag = ctx.NewDiagnostic(ctx.SourceFile, ctx.GetErrorRange(expr), tsdiag.Effect_must_be_yielded_or_assigned_to_a_variable_effect_floatingEffect, nil)
+					diag = ctx.NewDiagnostic(ctx.SourceFile, ctx.GetErrorRange(expr), tsdiag.This_Effect_value_is_neither_yielded_nor_used_in_an_assignment_effect_floatingEffect, nil)
 				} else {
 					typeName := ctx.Checker.TypeToString(result.exprType)
-					diag = ctx.NewDiagnostic(ctx.SourceFile, ctx.GetErrorRange(expr), tsdiag.Effect_able_0_must_be_yielded_or_assigned_to_a_variable_effect_floatingEffect, nil, typeName)
+					diag = ctx.NewDiagnostic(ctx.SourceFile, ctx.GetErrorRange(expr), tsdiag.This_Effect_able_0_value_is_neither_yielded_nor_assigned_to_a_variable_effect_floatingEffect, nil, typeName)
 				}
 				diags = append(diags, diag)
 			}
@@ -76,7 +76,7 @@ var FloatingEffect = rule.Rule{
 // detectFloatingEffect checks if a node is an expression statement containing an Effect type
 // that is neither yielded nor assigned. Returns nil if the node should not be reported,
 // or a result with type info for selecting the appropriate diagnostic message.
-func detectFloatingEffect(c *checker.Checker, node *ast.Node) *floatingEffectResult {
+func detectFloatingEffect(tp *typeparser.TypeParser, _ *checker.Checker, node *ast.Node) *floatingEffectResult {
 	// Must be an ExpressionStatement
 	if node == nil || node.Kind != ast.KindExpressionStatement {
 		return nil
@@ -95,33 +95,32 @@ func detectFloatingEffect(c *checker.Checker, node *ast.Node) *floatingEffectRes
 	}
 
 	// Get the type of the expression
-	t := typeparser.GetTypeAtLocation(c, expr)
+	t := tp.GetTypeAtLocation(expr)
 	if t == nil {
 		return nil
 	}
 
-	// Check if it's an Effect type using the quick check first
-	if !typeparser.HasEffectTypeId(c, t, expr) {
-		return nil
-	}
+	if tp.HasEffectTypeId(t, expr) {
+		// Full Effect validation.
+		if !tp.IsEffectType(t, expr) {
+			return nil
+		}
 
-	// Full validation
-	if !typeparser.IsEffectType(c, t, expr) {
-		return nil
-	}
+		// Exclude Fiber types (considered valid floating operations)
+		if tp.IsFiberType(t, expr) {
+			return nil
+		}
 
-	// Exclude Fiber types (considered valid floating operations)
-	if typeparser.IsFiberType(c, t, expr) {
-		return nil
-	}
-
-	// Exclude Effect subtypes (Exit, Option, Either, Pool, etc.)
-	if typeparser.IsEffectSubtype(c, t, expr) {
+		// Exclude Effect subtypes (Exit, Option, Either, Pool, etc.)
+		if tp.IsEffectSubtype(t, expr) {
+			return nil
+		}
+	} else if tp.StreamType(t, expr) == nil {
 		return nil
 	}
 
 	// Determine if this is strictly an Effect or an Effect-able type
-	isStrict := typeparser.StrictIsEffectType(c, t, expr)
+	isStrict := tp.StrictIsEffectType(t, expr)
 	return &floatingEffectResult{
 		isStrict: isStrict,
 		exprType: t,

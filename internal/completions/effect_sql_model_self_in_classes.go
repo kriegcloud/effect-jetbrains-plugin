@@ -3,9 +3,8 @@ package completions
 import (
 	"fmt"
 
-	"github.com/effect-ts/effect-typescript-go/internal/completion"
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/completion"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/lsp/lsproto"
 )
 
@@ -24,23 +23,21 @@ func runEffectSqlModelSelfInClasses(ctx *completion.Context) []*lsproto.Completi
 		return nil
 	}
 
-	// Get checker for version detection and API reference checks
-	ch, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	defer done()
+	tp := ctx.TypeParser
 
 	// V3 only
-	version := typeparser.SupportedEffectVersion(ch)
+	version := tp.SupportedEffectVersion()
 	if version != typeparser.EffectMajorV3 {
 		return nil
 	}
 
-	modelIdentifier := effectutil.FindModuleIdentifierForPackage(ctx.SourceFile, "@effect/sql", "Model")
+	modelIdentifier := typeparser.FindModuleIdentifierForPackage(ctx.SourceFile, "@effect/sql", "Model")
 	accessedText := data.AccessedObjectText()
 	isFullyQualified := modelIdentifier == accessedText
 	className := data.ClassNameText()
 
 	// For non-fully-qualified: validate with IsNodeReferenceToEffectSqlModelModuleApi
-	if !isFullyQualified && !typeparser.IsNodeReferenceToEffectSqlModelModuleApi(ch, data.AccessedObject, "Class") {
+	if !isFullyQualified && !tp.IsNodeReferenceToEffectSqlModelModuleApi(data.AccessedObject, "Class") {
 		return nil
 	}
 

@@ -11,18 +11,18 @@ import (
 	"maps"
 	"regexp"
 
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 // StructuralSchemaGen holds the context for converting resolved types to Schema expressions.
 type StructuralSchemaGen struct {
-	Tracker          *change.Tracker
+	Tracker          *rewriter.Tracker
 	SourceFile       *ast.SourceFile
 	Checker          *checker.Checker
+	TypeParser       *typeparser.TypeParser
 	SchemaIdentifier string
 	Version          typeparser.EffectMajorVersion
 
@@ -52,12 +52,13 @@ type processingContext struct {
 }
 
 // NewStructuralSchemaGen creates a StructuralSchemaGen for type-checker-based schema generation.
-func NewStructuralSchemaGen(tracker *change.Tracker, sf *ast.SourceFile, c *checker.Checker, version typeparser.EffectMajorVersion) *StructuralSchemaGen {
+func NewStructuralSchemaGen(tracker *rewriter.Tracker, tp *typeparser.TypeParser, sf *ast.SourceFile, c *checker.Checker, version typeparser.EffectMajorVersion) *StructuralSchemaGen {
 	return &StructuralSchemaGen{
 		Tracker:               tracker,
 		SourceFile:            sf,
 		Checker:               c,
-		SchemaIdentifier:      effectutil.FindModuleIdentifier(sf, "Schema"),
+		TypeParser:            tp,
+		SchemaIdentifier:      typeparser.FindModuleIdentifier(sf, "Schema"),
 		Version:               version,
 		hoistedSchemas:        make(map[checker.TypeId]hoistedEntry),
 		typeToStatementIndex:  make(map[checker.TypeId]int),
@@ -108,8 +109,8 @@ func (g *StructuralSchemaGen) pushHoistedVariableStatement(name string, t *check
 		result,
 	)
 	varDeclList := g.Tracker.NewVariableDeclarationList(
-		ast.NodeFlagsConst,
 		g.Tracker.NewNodeList([]*ast.Node{varDecl}),
+		ast.NodeFlagsConst,
 	)
 	stmt := g.Tracker.NewVariableStatement(nil, varDeclList)
 	g.pushHoistedStatement(name, t, stmt, func() *ast.Node {
@@ -575,7 +576,7 @@ func (g *StructuralSchemaGen) ScanExistingSchemas(scope *ast.Node) {
 		if t == nil {
 			continue
 		}
-		schemaTypes := typeparser.EffectSchemaTypes(g.Checker, t, scope)
+		schemaTypes := g.TypeParser.EffectSchemaTypes(t, scope)
 		if schemaTypes == nil {
 			continue
 		}
@@ -635,8 +636,8 @@ func (g *StructuralSchemaGen) Process(typeMap map[string]*checker.Type, scope *a
 			r.result,
 		)
 		varDeclList := g.Tracker.NewVariableDeclarationList(
-			ast.NodeFlagsConst,
 			g.Tracker.NewNodeList([]*ast.Node{varDecl}),
+			ast.NodeFlagsConst,
 		)
 		modifiers := g.Tracker.NewModifierList([]*ast.Node{
 			g.Tracker.NewModifier(ast.KindExportKeyword),

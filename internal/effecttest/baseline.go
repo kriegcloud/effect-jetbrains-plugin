@@ -10,8 +10,10 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/effect-ts/effect-typescript-go/internal/layergraph"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/bundledeffect"
+	"github.com/effect-ts/tsgo/internal/graph"
+	"github.com/effect-ts/tsgo/internal/layergraph"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -23,7 +25,7 @@ import (
 
 // TestDataPath returns the path to our testdata directory.
 func TestDataPath() string {
-	return filepath.Join(EffectTsGoRootPath(), "testdata")
+	return filepath.Join(bundledeffect.EffectTsGoRootPath(), "testdata")
 }
 
 // BaselineLocalPath returns the path to write local baselines.
@@ -244,6 +246,7 @@ func generatePipingFlowBaseline(
 	sourceFileGetter func(string) *ast.SourceFile,
 ) string {
 	var sb strings.Builder
+	tp := typeparser.NewTypeParser(c.Program(), c)
 
 	for _, file := range inputFiles {
 		sf := sourceFileGetter(file.UnitName)
@@ -252,7 +255,7 @@ func generatePipingFlowBaseline(
 			continue
 		}
 
-		flows := typeparser.PipingFlows(c, sf, true)
+		flows := tp.PipingFlows(sf, true)
 		fmt.Fprintf(&sb, "==== %s (%d flows) ====\n", file.UnitName, len(flows))
 
 		for _, flow := range flows {
@@ -275,7 +278,7 @@ func generatePipingFlowBaseline(
 			subjectText := scanner.GetSourceTextOfNodeFromSourceFile(sf, flow.Subject.Node, false)
 			fmt.Fprintf(&sb, "Subject: %s\n", escapeNewlines(subjectText))
 			if flow.Subject.OutType != nil {
-				fmt.Fprintf(&sb, "Subject Type: %s\n", c.TypeToStringEx(flow.Subject.OutType, nil, checker.TypeFormatFlagsNoTruncation))
+				fmt.Fprintf(&sb, "Subject Type: %s\n", c.TypeToStringEx(flow.Subject.OutType, nil, checker.TypeFormatFlagsNoTruncation, nil))
 			} else {
 				sb.WriteString("Subject Type: \n")
 			}
@@ -300,7 +303,7 @@ func generatePipingFlowBaseline(
 
 				outTypeStr := ""
 				if t.OutType != nil {
-					outTypeStr = c.TypeToStringEx(t.OutType, nil, checker.TypeFormatFlagsNoTruncation)
+					outTypeStr = c.TypeToStringEx(t.OutType, nil, checker.TypeFormatFlagsNoTruncation, nil)
 				}
 
 				fmt.Fprintf(&sb, "  [%d] kind: %s\n", i, string(t.Kind))
@@ -312,6 +315,150 @@ func generatePipingFlowBaseline(
 	}
 
 	return sb.String()
+}
+
+// DoExecutionFlowBaseline generates a .flows.txt index baseline and per-source
+// Mermaid baselines for Effect tests.
+func DoExecutionFlowBaseline(
+	t *testing.T,
+	baselineName string,
+	c *checker.Checker,
+	inputFiles []*harnessutil.TestFile,
+	sourceFileGetter func(string) *ast.SourceFile,
+	subfolder string,
+) {
+	indexContent, mermaidFiles := generateExecutionFlowBaseline(c, baselineName, inputFiles, sourceFileGetter)
+	runEffectBaseline(t, baselineName+".flows.txt", indexContent, subfolder)
+	for _, mermaidFile := range mermaidFiles {
+		runEffectBaseline(t, mermaidFile.fileName, mermaidFile.content, subfolder)
+	}
+}
+
+type executionFlowMermaidBaseline struct {
+	fileName string
+	content  string
+}
+
+func generateExecutionFlowBaseline(
+	c *checker.Checker,
+	baselineName string,
+	inputFiles []*harnessutil.TestFile,
+	sourceFileGetter func(string) *ast.SourceFile,
+) (string, []executionFlowMermaidBaseline) {
+	var index strings.Builder
+	tp := typeparser.NewTypeParser(c.Program(), c)
+	var mermaidFiles []executionFlowMermaidBaseline
+	usedNames := make(map[string]int)
+
+	for _, file := range inputFiles {
+		sf := sourceFileGetter(file.UnitName)
+		if sf == nil {
+			continue
+		}
+
+		flow := tp.ExecutionFlow(sf)
+		if flow == nil {
+			continue
+		}
+		fileName := nextExecutionFlowMermaidFileName(baselineName, sf.FileName(), usedNames)
+		mermaidFiles = append(mermaidFiles, executionFlowMermaidBaseline{
+			fileName: fileName,
+			content: flow.ToMermaid(graph.MermaidOptions[typeparser.ExecutionNode, typeparser.ExecutionLink]{
+				NodeLabel: func(node typeparser.ExecutionNode) string {
+					return formatExecutionFlowNodeLabel(c, sf, node)
+				},
+				NodeShape: func(node typeparser.ExecutionNode) (string, string) {
+					switch node.Kind {
+					case typeparser.ExecutionNodeKindLogicMerge:
+						return "(((", ")))"
+					case typeparser.ExecutionNodeKindValue:
+						return "[/", "/]"
+					case typeparser.ExecutionNodeKindFunction:
+						return "[[", "]]"
+					}
+					return "[", "]"
+				},
+				EdgeLabel: func(edge typeparser.ExecutionLink) string {
+					return formatExecutionFlowEdgeLabel(sf, edge)
+				},
+			}),
+		})
+		index.WriteString(sf.FileName())
+		index.WriteString(" -> ")
+		index.WriteString(fileName)
+		index.WriteString("\n")
+	}
+
+	return index.String(), mermaidFiles
+}
+
+func nextExecutionFlowMermaidFileName(baselineName string, sourceFileName string, usedNames map[string]int) string {
+	base := filepath.Base(sourceFileName)
+	ext := filepath.Ext(base)
+	base = strings.TrimSuffix(base, ext)
+	if base == "" {
+		base = "source"
+	}
+
+	count := usedNames[base]
+	usedNames[base] = count + 1
+	if count > 0 {
+		base = fmt.Sprintf("%s%d", base, count)
+	}
+
+	return fmt.Sprintf("%s.flows.%s.mermaid", baselineName, base)
+}
+
+func formatExecutionFlowNodeLabel(c *checker.Checker, sf *ast.SourceFile, node typeparser.ExecutionNode) string {
+	var lines []string
+	switch node.Kind {
+	case typeparser.ExecutionNodeKindValue:
+		lines = append(lines, "type: "+formatExecutionType(c, node.Type))
+		lines = append(lines, "node: "+formatExecutionSourceNode(sf, node.Node))
+		return strings.Join(lines, "\n")
+	case typeparser.ExecutionNodeKindLogicMerge:
+		lines = append(lines, "type: "+formatExecutionType(c, node.Type))
+		lines = append(lines, "node: "+formatExecutionSourceNode(sf, node.Node))
+		return strings.Join(lines, "\n")
+	case typeparser.ExecutionNodeKindFunction:
+		lines = append(lines, "type: "+formatExecutionType(c, node.Type))
+		lines = append(lines, "node: "+formatExecutionSourceNode(sf, node.Node))
+		return strings.Join(lines, "\n")
+	default:
+		lines = append(lines, "type: "+formatExecutionType(c, node.Type))
+		lines = append(lines, "callee: "+formatExecutionSourceNode(sf, node.Callee))
+	}
+
+	args := "[]"
+	if len(node.Args) > 0 {
+		parts := make([]string, 0, len(node.Args))
+		for _, arg := range node.Args {
+			parts = append(parts, formatExecutionSourceNode(sf, arg))
+		}
+		args = "[" + strings.Join(parts, ", ") + "]"
+	}
+	lines = append(lines, "args: "+args)
+	return strings.Join(lines, "\n")
+}
+
+func formatExecutionFlowEdgeLabel(_ *ast.SourceFile, edge typeparser.ExecutionLink) string {
+	var lines []string
+	lines = append(lines, "kind: "+string(edge.Kind))
+	return strings.Join(lines, "\n")
+}
+
+func formatExecutionType(c *checker.Checker, typ *checker.Type) string {
+	if typ == nil {
+		return ""
+	}
+	return c.TypeToStringEx(typ, nil, checker.TypeFormatFlagsNoTruncation, nil)
+}
+
+func formatExecutionSourceNode(sf *ast.SourceFile, node *ast.Node) string {
+	if sf == nil || node == nil {
+		return ""
+	}
+	return escapeNewlines(scanner.GetSourceTextOfNodeFromSourceFile(sf, node, false))
 }
 
 // escapeNewlines replaces newlines with \n for baseline display.
@@ -341,6 +488,7 @@ func generateLayerGraphBaseline(
 	sourceFileGetter func(string) *ast.SourceFile,
 ) string {
 	var sb strings.Builder
+	tp := typeparser.NewTypeParser(c.Program(), c)
 
 	// Read follow depth from program-level plugin options (populated from tsconfig.json)
 	followDepth := 0
@@ -385,8 +533,8 @@ func generateLayerGraphBaseline(
 				if vd.Name().Kind != ast.KindIdentifier {
 					continue
 				}
-				t := typeparser.GetTypeAtLocation(c, vd.Initializer)
-				if !typeparser.IsLayerType(c, t, vd.Initializer) {
+				t := tp.GetTypeAtLocation(vd.Initializer)
+				if !tp.IsLayerType(t, vd.Initializer) {
 					continue
 				}
 				exports = append(exports, layerExport{
@@ -407,7 +555,7 @@ func generateLayerGraphBaseline(
 				ExplodeOnlyLayerCalls: false,
 			}
 
-			fullGraph := layergraph.ExtractLayerGraph(c, export.initializer, sf, opts)
+			fullGraph := layergraph.ExtractLayerGraph(tp, c, export.initializer, sf, opts)
 			outlineGraph := layergraph.ExtractOutlineGraph(c, fullGraph)
 			providersAndRequirers := layergraph.ExtractProvidersAndRequirers(c, fullGraph)
 
@@ -448,16 +596,16 @@ func runEffectBaseline(t *testing.T, fileName string, actual string, subfolder s
 	if err != nil {
 		if os.IsNotExist(err) {
 			// New baseline — write both local and reference files.
-			if err := os.MkdirAll(localDir, 0755); err != nil {
+			if err := os.MkdirAll(localDir, 0o755); err != nil {
 				t.Fatalf("Failed to create local baseline directory: %v", err)
 			}
-			if err := os.WriteFile(localPath, []byte(actual), 0644); err != nil {
+			if err := os.WriteFile(localPath, []byte(actual), 0o644); err != nil {
 				t.Fatalf("Failed to write local baseline: %v", err)
 			}
-			if err := os.MkdirAll(referenceDir, 0755); err != nil {
+			if err := os.MkdirAll(referenceDir, 0o755); err != nil {
 				t.Fatalf("Failed to create reference baseline directory: %v", err)
 			}
-			if err := os.WriteFile(referencePath, []byte(actual), 0644); err != nil {
+			if err := os.WriteFile(referencePath, []byte(actual), 0o644); err != nil {
 				t.Fatalf("Failed to write reference baseline: %v", err)
 			}
 			t.Logf("Created new baseline at %s", referencePath)
@@ -473,10 +621,10 @@ func runEffectBaseline(t *testing.T, fileName string, actual string, subfolder s
 	}
 
 	// Mismatch — write local baseline so developers can inspect the diff.
-	if err := os.MkdirAll(localDir, 0755); err != nil {
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		t.Fatalf("Failed to create local baseline directory: %v", err)
 	}
-	if err := os.WriteFile(localPath, []byte(actual), 0644); err != nil {
+	if err := os.WriteFile(localPath, []byte(actual), 0o644); err != nil {
 		t.Fatalf("Failed to write local baseline: %v", err)
 	}
 

@@ -1,12 +1,12 @@
 package refactors
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/refactor"
+	"github.com/effect-ts/tsgo/internal/refactor"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/core"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var ToggleLazyConst = refactor.Refactor{
@@ -72,7 +72,7 @@ func runToggleLazyConst(ctx *refactor.Context) []ls.CodeAction {
 			// Unwrap: remove the `() => ` prefix and any trailing content
 			action := ctx.NewRefactorAction(refactor.RefactorAction{
 				Description: "Toggle lazy const",
-				Run: func(tracker *change.Tracker) {
+				Run: func(tracker *rewriter.Tracker) {
 					// Delete from body.end to initializer.end (trailing content after body)
 					if af.Body.End() != initializer.End() {
 						tracker.DeleteRange(ctx.SourceFile, core.NewTextRange(af.Body.End(), initializer.End()))
@@ -92,7 +92,7 @@ func runToggleLazyConst(ctx *refactor.Context) []ls.CodeAction {
 	// Wrap: insert `() => ` before the initializer
 	action := ctx.NewRefactorAction(refactor.RefactorAction{
 		Description: "Toggle lazy const",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			tracker.InsertText(ctx.SourceFile, ctx.BytePosToLSPPosition(initializer.Pos()), " () =>")
 		},
 	})

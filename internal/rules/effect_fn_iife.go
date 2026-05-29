@@ -2,9 +2,9 @@
 package rules
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/core"
@@ -19,9 +19,9 @@ var EffectFnIife = rule.Rule{
 	Description:     "Effect.fn or Effect.fnUntraced is called as an IIFE; use Effect.gen instead",
 	DefaultSeverity: etscore.SeverityWarning,
 	SupportedEffect: []string{"v3", "v4"},
-	Codes:           []int32{tsdiag.X_0_1_returns_a_reusable_function_that_can_take_arguments_but_here_it_s_called_immediately_Use_Effect_gen_instead_2_effect_effectFnIife.Code()},
+	Codes:           []int32{tsdiag.X_0_1_returns_a_reusable_function_that_can_take_arguments_but_it_is_invoked_immediately_here_Effect_gen_represents_the_immediate_use_form_for_this_pattern_2_effect_effectFnIife.Code()},
 	Run: func(ctx *rule.Context) []*ast.Diagnostic {
-		matches := AnalyzeEffectFnIife(ctx.Checker, ctx.SourceFile)
+		matches := AnalyzeEffectFnIife(ctx.TypeParser, ctx.Checker, ctx.SourceFile)
 		diags := make([]*ast.Diagnostic, len(matches))
 		for i, m := range matches {
 			result := m.Result
@@ -34,7 +34,7 @@ var EffectFnIife = rule.Rule{
 				traceText := ctx.SourceFile.Text()[result.TraceExpression.Pos():result.TraceExpression.End()]
 				withSpanHint = " with Effect.withSpan(" + traceText + ") piped in the end to maintain tracing spans"
 			}
-			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.X_0_1_returns_a_reusable_function_that_can_take_arguments_but_here_it_s_called_immediately_Use_Effect_gen_instead_2_effect_effectFnIife, nil, effectModuleName, result.Variant, withSpanHint)
+			diags[i] = ctx.NewDiagnostic(m.SourceFile, m.Location, tsdiag.X_0_1_returns_a_reusable_function_that_can_take_arguments_but_it_is_invoked_immediately_here_Effect_gen_represents_the_immediate_use_form_for_this_pattern_2_effect_effectFnIife, nil, effectModuleName, result.Variant, withSpanHint)
 		}
 		return diags
 	},
@@ -45,12 +45,22 @@ var EffectFnIife = rule.Rule{
 type EffectFnIifeMatch struct {
 	SourceFile *ast.SourceFile
 	Location   core.TextRange
-	Result     *typeparser.EffectFnIifeResult
+	Result     *EffectFnIifeResult
+}
+
+type EffectFnIifeResult struct {
+	OuterCall         *ast.CallExpression
+	InnerCall         *ast.CallExpression
+	EffectModule      *ast.Expression
+	Variant           string
+	GeneratorFunction *ast.FunctionExpression
+	PipeArguments     []*ast.Node
+	TraceExpression   *ast.Node
 }
 
 // AnalyzeEffectFnIife finds all Effect.fn or Effect.fnUntraced calls that are
 // immediately invoked (IIFE pattern) in the given source file.
-func AnalyzeEffectFnIife(c *checker.Checker, sf *ast.SourceFile) []EffectFnIifeMatch {
+func AnalyzeEffectFnIife(tp *typeparser.TypeParser, _ *checker.Checker, sf *ast.SourceFile) []EffectFnIifeMatch {
 	var matches []EffectFnIifeMatch
 
 	var walk ast.Visitor
@@ -59,7 +69,7 @@ func AnalyzeEffectFnIife(c *checker.Checker, sf *ast.SourceFile) []EffectFnIifeM
 			return false
 		}
 
-		if result := typeparser.ParseEffectFnIife(c, n); result != nil {
+		if result := parseEffectFnIife(tp, n); result != nil {
 			matches = append(matches, EffectFnIifeMatch{
 				SourceFile: sf,
 				Location:   scanner.GetErrorRangeForNode(sf, result.OuterCall.AsNode()),
@@ -74,4 +84,39 @@ func AnalyzeEffectFnIife(c *checker.Checker, sf *ast.SourceFile) []EffectFnIifeM
 	walk(sf.AsNode())
 
 	return matches
+}
+
+func parseEffectFnIife(tp *typeparser.TypeParser, node *ast.Node) *EffectFnIifeResult {
+	if tp == nil || node == nil || node.Kind != ast.KindCallExpression {
+		return nil
+	}
+
+	outerCall := node.AsCallExpression()
+	if outerCall == nil || outerCall.Expression == nil {
+		return nil
+	}
+
+	innerNode := outerCall.Expression
+	if innerNode.Kind != ast.KindCallExpression {
+		return nil
+	}
+
+	innerCall := innerNode.AsCallExpression()
+	if innerCall == nil {
+		return nil
+	}
+
+	if result := tp.EffectFnCall(innerNode); result != nil {
+		return &EffectFnIifeResult{
+			OuterCall:         outerCall,
+			InnerCall:         innerCall,
+			EffectModule:      result.EffectModule,
+			Variant:           string(result.Variant),
+			GeneratorFunction: result.GeneratorFunction(),
+			PipeArguments:     result.PipeArguments,
+			TraceExpression:   result.TraceExpression,
+		}
+	}
+
+	return nil
 }

@@ -1,33 +1,29 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 var MissingStarInYieldEffectGenFix = fixable.Fixable{
 	Name:        "missingStarInYieldEffectGen",
 	Description: "Replace yield with yield* inside Effect generator scopes",
-	ErrorCodes:  []int32{tsdiag.When_yielding_Effects_inside_Effect_gen_you_should_use_yield_Asterisk_instead_of_yield_effect_missingStarInYieldEffectGen.Code()},
+	ErrorCodes:  []int32{tsdiag.This_uses_yield_for_an_Effect_value_yield_Asterisk_is_the_Effect_aware_form_in_this_context_effect_missingStarInYieldEffectGen.Code()},
 	FixIDs:      []string{"missingStarInYieldEffectGen_fix"},
 	Run:         runMissingStarInYieldEffectGenFix,
 }
 
 func runMissingStarInYieldEffectGenFix(ctx *fixable.Context) []ls.CodeAction {
 
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeMissingStarInYieldEffectGen(c, sf)
+	matches := rules.AnalyzeMissingStarInYieldEffectGen(ctx.TypeParser, c, sf)
 
 	var yieldNode *ast.Node
 	for _, match := range matches {
@@ -43,7 +39,7 @@ func runMissingStarInYieldEffectGenFix(ctx *fixable.Context) []ls.CodeAction {
 
 	if action := ctx.NewFixAction(fixable.FixAction{
 		Description: "Replace yield with yield*",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			clonedExpr := tracker.DeepCloneNode(yieldNode.AsYieldExpression().Expression)
 			newYieldExpr := tracker.NewYieldExpression(tracker.NewToken(ast.KindAsteriskToken), clonedExpr)
 			ast.SetParentInChildren(newYieldExpr)

@@ -3,9 +3,8 @@ package completions
 import (
 	"fmt"
 
-	"github.com/effect-ts/effect-typescript-go/internal/completion"
-	"github.com/effect-ts/effect-typescript-go/internal/effectutil"
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/completion"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/lsp/lsproto"
 )
 
@@ -24,14 +23,10 @@ func runEffectDataClasses(ctx *completion.Context) []*lsproto.CompletionItem {
 		return nil
 	}
 
-	dataIdentifier := effectutil.FindModuleIdentifier(ctx.SourceFile, "Data")
+	dataIdentifier := typeparser.FindModuleIdentifier(ctx.SourceFile, "Data")
 	accessedText := data.AccessedObjectText()
 	isFullyQualified := dataIdentifier == accessedText
 	className := data.ClassNameText()
-
-	// Get checker for API reference checks
-	ch, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	defer done()
 
 	// Build replacement range from byte offsets
 	replacementRange := byteSpanToRange(ctx, data.ReplacementStart, data.ReplacementLength)
@@ -40,7 +35,7 @@ func runEffectDataClasses(ctx *completion.Context) []*lsproto.CompletionItem {
 	var items []*lsproto.CompletionItem
 
 	// Data.TaggedError
-	if isFullyQualified || typeparser.IsNodeReferenceToEffectDataModuleApi(ch, data.AccessedObject, "TaggedError") {
+	if isFullyQualified || ctx.TypeParser.IsNodeReferenceToEffectDataModuleApi(data.AccessedObject, "TaggedError") {
 		var insertText string
 		if isFullyQualified {
 			insertText = fmt.Sprintf(`%s.TaggedError("%s")<{${0}}>{}`, dataIdentifier, className)
@@ -54,7 +49,7 @@ func runEffectDataClasses(ctx *completion.Context) []*lsproto.CompletionItem {
 	}
 
 	// Data.TaggedClass
-	if isFullyQualified || typeparser.IsNodeReferenceToEffectDataModuleApi(ch, data.AccessedObject, "TaggedClass") {
+	if isFullyQualified || ctx.TypeParser.IsNodeReferenceToEffectDataModuleApi(data.AccessedObject, "TaggedClass") {
 		var insertText string
 		if isFullyQualified {
 			insertText = fmt.Sprintf(`%s.TaggedClass("%s")<{${0}}>{}`, dataIdentifier, className)

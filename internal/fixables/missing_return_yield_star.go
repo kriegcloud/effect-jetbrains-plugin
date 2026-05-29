@@ -2,34 +2,30 @@
 package fixables
 
 import (
-	"github.com/effect-ts/effect-typescript-go/internal/fixable"
-	"github.com/effect-ts/effect-typescript-go/internal/rules"
+	"github.com/effect-ts/tsgo/internal/fixable"
+	"github.com/effect-ts/tsgo/internal/rules"
 	"github.com/microsoft/typescript-go/shim/ast"
 	tsdiag "github.com/microsoft/typescript-go/shim/diagnostics"
 	"github.com/microsoft/typescript-go/shim/ls"
-	"github.com/microsoft/typescript-go/shim/ls/change"
+	"github.com/effect-ts/tsgo/internal/rewriter"
 )
 
 // MissingReturnYieldStarFix adds "return" before a yield* expression in Effect.gen when needed.
 var MissingReturnYieldStarFix = fixable.Fixable{
 	Name:        "missingReturnYieldStar",
 	Description: "Add return before yield* for never-success Effect yields",
-	ErrorCodes:  []int32{tsdiag.It_is_recommended_to_use_return_yield_Asterisk_for_Effects_that_never_succeed_to_signal_a_definitive_exit_point_for_type_narrowing_and_tooling_support_effect_missingReturnYieldStar.Code()},
+	ErrorCodes:  []int32{tsdiag.This_Effect_never_succeeds_using_return_yield_Asterisk_preserves_a_definitive_generator_exit_point_for_type_narrowing_and_tooling_support_effect_missingReturnYieldStar.Code()},
 	FixIDs:      []string{"missingReturnYieldStar_fix"},
 	Run:         runMissingReturnYieldStarFix,
 }
 
 func runMissingReturnYieldStarFix(ctx *fixable.Context) []ls.CodeAction {
 
-	c, done := ctx.GetTypeCheckerForFile(ctx.SourceFile)
-	if c == nil {
-		return nil
-	}
-	defer done()
+	c := ctx.Checker
 
 	sf := ctx.SourceFile
 
-	matches := rules.AnalyzeMissingReturnYieldStar(c, sf)
+	matches := rules.AnalyzeMissingReturnYieldStar(ctx.TypeParser, c, sf)
 
 	var matchedExprStmt *ast.Node
 	for _, match := range matches {
@@ -45,7 +41,7 @@ func runMissingReturnYieldStarFix(ctx *fixable.Context) []ls.CodeAction {
 
 	if action := ctx.NewFixAction(fixable.FixAction{
 		Description: "Add return statement",
-		Run: func(tracker *change.Tracker) {
+		Run: func(tracker *rewriter.Tracker) {
 			clonedExpr := tracker.DeepCloneNode(matchedExprStmt.Expression())
 			returnStmt := tracker.NewReturnStatement(clonedExpr)
 			ast.SetParentInChildren(returnStmt)

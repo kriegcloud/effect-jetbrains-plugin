@@ -20,19 +20,20 @@ import (
 	"github.com/microsoft/typescript-go/shim/vfs"
 	"github.com/microsoft/typescript-go/shim/vfs/vfstest"
 
-	"github.com/effect-ts/effect-typescript-go/internal/typeparser"
+	"github.com/effect-ts/tsgo/internal/bundledeffect"
+	"github.com/effect-ts/tsgo/internal/typeparser"
 
 	// Import etscheckerhooks to register Effect diagnostic callbacks
-	_ "github.com/effect-ts/effect-typescript-go/etscheckerhooks"
+	_ "github.com/effect-ts/tsgo/etscheckerhooks"
 )
 
 // TestCasesDir returns the path to the Effect test cases directory for the given version.
-func TestCasesDir(version EffectVersion) string {
-	return filepath.Join(EffectTsGoRootPath(), "testdata", "tests", string(version))
+func TestCasesDir(version bundledeffect.EffectVersion) string {
+	return filepath.Join(bundledeffect.EffectTsGoRootPath(), "testdata", "tests", string(version))
 }
 
 // DiscoverTestCases finds all .ts test files in the test cases directory for the given version.
-func DiscoverTestCases(version EffectVersion) ([]string, error) {
+func DiscoverTestCases(version bundledeffect.EffectVersion) ([]string, error) {
 	dir := TestCasesDir(version)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -48,8 +49,10 @@ func DiscoverTestCases(version EffectVersion) ([]string, error) {
 	return cases, nil
 }
 
-var lineDelimiter = regexp.MustCompile("\r?\n")
-var optionRegex = regexp.MustCompile(`(?m)^\/{2}\s*@(\w+)\s*:\s*([^\r\n]*)`)
+var (
+	lineDelimiter = regexp.MustCompile("\r?\n")
+	optionRegex   = regexp.MustCompile(`(?m)^\/{2}\s*@(\w+)\s*:\s*([^\r\n]*)`)
+)
 
 // testUnit represents a single file within a multi-file test case.
 type testUnit struct {
@@ -121,7 +124,7 @@ const DefaultTsConfig = `{
 }`
 
 // RunEffectTest executes a single Effect diagnostic test case for the given version.
-func RunEffectTest(t *testing.T, version EffectVersion, testFile string) {
+func RunEffectTest(t *testing.T, version bundledeffect.EffectVersion, testFile string) {
 	AcquireProgram()
 	defer ReleaseProgram()
 
@@ -139,7 +142,7 @@ func RunEffectTest(t *testing.T, version EffectVersion, testFile string) {
 	testfs := make(map[string]any)
 
 	// Mount Effect package
-	if err := MountEffect(version, testfs); err != nil {
+	if err := bundledeffect.MountEffect(version, testfs); err != nil {
 		t.Fatal("Failed to mount Effect:", err)
 	}
 
@@ -322,7 +325,7 @@ func RunEffectTest(t *testing.T, version EffectVersion, testFile string) {
 	t.Run("errors", func(t *testing.T) {
 		c, done := program.GetTypeChecker(ctx)
 		defer done()
-		effectVersion := typeparser.DetectEffectVersionString(c)
+		effectVersion := typeparser.NewTypeParser(program, c).DetectEffectVersionString()
 		DoEffectErrorBaseline(
 			t,
 			baselineName,
@@ -355,6 +358,22 @@ func RunEffectTest(t *testing.T, version EffectVersion, testFile string) {
 		c, done := program.GetTypeChecker(ctx)
 		defer done()
 		DoLayerGraphBaseline(
+			t,
+			baselineName,
+			c,
+			inputFiles,
+			func(fileName string) *ast.SourceFile {
+				return program.GetSourceFile(fileName)
+			},
+			baselineSubfolder,
+		)
+	})
+
+	// Generate execution flow baseline
+	t.Run("flows", func(t *testing.T) {
+		c, done := program.GetTypeChecker(ctx)
+		defer done()
+		DoExecutionFlowBaseline(
 			t,
 			baselineName,
 			c,

@@ -22,6 +22,12 @@ var AfterInlayHintsCallback = ls.AfterInlayHintsCallback
 var AfterQuickInfoCallback = ls.AfterQuickInfoCallback
 type CallHierarchyDeclaration = ls.CallHierarchyDeclaration
 type CandidateOrTypeInfo = ls.CandidateOrTypeInfo
+//go:linkname ClientSupportsDocumentChanges github.com/microsoft/typescript-go/internal/ls.ClientSupportsDocumentChanges
+func ClientSupportsDocumentChanges(ctx context.Context) bool
+//go:linkname ClientSupportsRenameResourceOperations github.com/microsoft/typescript-go/internal/ls.ClientSupportsRenameResourceOperations
+func ClientSupportsRenameResourceOperations(ctx context.Context) bool
+//go:linkname ClientSupportsWillRenameFiles github.com/microsoft/typescript-go/internal/ls.ClientSupportsWillRenameFiles
+func ClientSupportsWillRenameFiles(ctx context.Context) bool
 type CodeAction = ls.CodeAction
 type CodeFixContext = ls.CodeFixContext
 type CodeFixProvider = ls.CodeFixProvider
@@ -52,6 +58,7 @@ const ExportKindExportEquals = ls.ExportKindExportEquals
 const ExportKindModule = ls.ExportKindModule
 const ExportKindNamed = ls.ExportKindNamed
 const ExportKindUMD = ls.ExportKindUMD
+var FixClassIncorrectlyImplementsInterfaceProvider = ls.FixClassIncorrectlyImplementsInterfaceProvider
 type Host = ls.Host
 type ImpExpKind = ls.ImpExpKind
 const ImpExpKindExport = ls.ImpExpKindExport
@@ -63,6 +70,7 @@ type ImportTracker = ls.ImportTracker
 type ImportsResult = ls.ImportsResult
 //go:linkname IsInString github.com/microsoft/typescript-go/internal/ls.IsInString
 func IsInString(sourceFile *ast.SourceFile, position int, previousToken *ast.Node) bool
+var IsolatedDeclarationsFixProvider = ls.IsolatedDeclarationsFixProvider
 type KeywordCompletionFilters = ls.KeywordCompletionFilters
 const KeywordCompletionFiltersAll = ls.KeywordCompletionFiltersAll
 const KeywordCompletionFiltersClassElementKeywords = ls.KeywordCompletionFiltersClassElementKeywords
@@ -78,7 +86,7 @@ type LanguageService = ls.LanguageService
 type extra_LanguageService struct {
   projectPath tspath.Path
   host ls.Host
-  activeConfig *lsutil.UserPreferences
+  activeConfig lsutil.UserPreferences
   program *compiler.Program
   converters *lsconv.Converters
   documentPositionMappers map[string]*sourcemap.DocumentPositionMapper
@@ -99,7 +107,7 @@ func NewSymbolAndEntries(kind ls.DefinitionKind, node *ast.Node, symbol *ast.Sym
 type PossibleTypeArgumentInfo = ls.PossibleTypeArgumentInfo
 type Project = ls.Project
 //go:linkname ProvideWorkspaceSymbols github.com/microsoft/typescript-go/internal/ls.ProvideWorkspaceSymbols
-func ProvideWorkspaceSymbols(ctx context.Context, programs []*compiler.Program, converters *lsconv.Converters, preferences *lsutil.UserPreferences, query string) (lsproto.WorkspaceSymbolResponse, error)
+func ProvideWorkspaceSymbols(ctx context.Context, programs []*compiler.Program, converters *lsconv.Converters, preferences lsutil.UserPreferences, query string) (lsproto.WorkspaceSymbolResponse, error)
 //go:linkname RangeContainsRange github.com/microsoft/typescript-go/internal/ls.RangeContainsRange
 func RangeContainsRange(r1 core.TextRange, r2 core.TextRange) bool
 type RefactorProvider = ls.RefactorProvider
@@ -109,14 +117,16 @@ func RegisterAfterCompletionCallback(cb func(ctx context.Context, sf *ast.Source
 //go:linkname RegisterAfterDocumentSymbolsCallback github.com/microsoft/typescript-go/internal/ls.RegisterAfterDocumentSymbolsCallback
 func RegisterAfterDocumentSymbolsCallback(cb func(ctx context.Context, sf *ast.SourceFile, symbols []*lsproto.DocumentSymbol, program *compiler.Program, langService *ls.LanguageService) []*lsproto.DocumentSymbol)
 //go:linkname RegisterAfterInlayHintsCallback github.com/microsoft/typescript-go/internal/ls.RegisterAfterInlayHintsCallback
-func RegisterAfterInlayHintsCallback(cb func(c *checker.Checker, sf *ast.SourceFile, span core.TextRange, preferences *lsutil.InlayHintsPreferences, hints []*lsproto.InlayHint, converters *lsconv.Converters) []*lsproto.InlayHint)
+func RegisterAfterInlayHintsCallback(cb func(program checker.Program, c *checker.Checker, sf *ast.SourceFile, span core.TextRange, preferences *lsutil.InlayHintsPreferences, hints []*lsproto.InlayHint, converters *lsconv.Converters) []*lsproto.InlayHint)
 //go:linkname RegisterAfterQuickInfoCallback github.com/microsoft/typescript-go/internal/ls.RegisterAfterQuickInfoCallback
-func RegisterAfterQuickInfoCallback(cb func(c *checker.Checker, sf *ast.SourceFile, node *ast.Node, symbol *ast.Symbol, quickInfo string, documentation string, isMarkdown bool) (string, string, *ast.Node))
+func RegisterAfterQuickInfoCallback(cb func(program checker.Program, c *checker.Checker, sf *ast.SourceFile, node *ast.Node, symbol *ast.Symbol, quickInfo string, documentation string, isMarkdown bool) (string, string, *ast.Node))
 //go:linkname RegisterCodeFixProvider github.com/microsoft/typescript-go/internal/ls.RegisterCodeFixProvider
 func RegisterCodeFixProvider(provider *ls.CodeFixProvider)
 //go:linkname RegisterRefactorProvider github.com/microsoft/typescript-go/internal/ls.RegisterRefactorProvider
 func RegisterRefactorProvider(provider *ls.RefactorProvider)
 type RenameInfo = ls.RenameInfo
+//go:linkname SemanticTokensLegend github.com/microsoft/typescript-go/internal/ls.SemanticTokensLegend
+func SemanticTokensLegend(clientCapabilities lsproto.ResolvedSemanticTokensClientCapabilities) *lsproto.SemanticTokensLegend
 type SortText = ls.SortText
 const SortTextAutoImportSuggestions = ls.SortTextAutoImportSuggestions
 const SortTextClassMemberSnippets = ls.SortTextClassMemberSnippets

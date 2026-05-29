@@ -1,8 +1,8 @@
 package etsexecutehooks
 
 import (
-	"github.com/effect-ts/effect-typescript-go/etscore"
-	"github.com/effect-ts/effect-typescript-go/internal/rule"
+	"github.com/effect-ts/tsgo/etscore"
+	"github.com/effect-ts/tsgo/internal/rule"
 	"github.com/microsoft/typescript-go/shim/ast"
 	"github.com/microsoft/typescript-go/shim/core"
 	"github.com/microsoft/typescript-go/shim/diagnostics"
@@ -17,6 +17,9 @@ func init() {
 // It extracts the Effect plugin options from compiler options and delegates to
 // FilterDiagnosticsForExitCode.
 func filterDiagnosticsForExitCode(opts *core.CompilerOptions, diagnostics []*ast.Diagnostic) []*ast.Diagnostic {
+	if opts.Effect == nil {
+		return FilterDiagnosticsForExitCode(nil, diagnostics)
+	}
 	return FilterDiagnosticsForExitCode(opts.Effect, diagnostics)
 }
 

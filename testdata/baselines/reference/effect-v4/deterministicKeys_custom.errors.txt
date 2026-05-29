@@ -1,8 +1,8 @@
 === Metadata ===
 Effect version: 4.0.0
 
-/.src/test.ts(10,56): error TS377049: Key should be '@effect/test-app/test/MyClass'. effect(deterministicKeys)
-/.src/test.ts(16,6): error TS377049: Key should be '@effect/test-app/test/TTLRequest'. effect(deterministicKeys)
+/.src/test.ts(10,56): error TS377049: This key does not match the deterministic key for this declaration. The expected key is `@effect/test-app/test/MyClass`. effect(deterministicKeys)
+/.src/test.ts(16,6): error TS377049: This key does not match the deterministic key for this declaration. The expected key is `@effect/test-app/test/TTLRequest`. effect(deterministicKeys)
 
 
 ==== /.src/tsconfig.json (0 errors) ====
@@ -23,10 +23,10 @@ Effect version: 4.0.0
     
 
 ==== /.src/utils.ts (0 errors) ====
-    import { ServiceMap } from "effect"
+    import { Context } from "effect"
     
     export function MyConstructor<X>(/** @effect-identifier */ identifier: string) {
-      return class extends ServiceMap.Service<X, {}>()("hey/" + identifier) {}
+      return class extends Context.Service<X, {}>()("hey/" + identifier) {}
     }
     
     export const Class = <
@@ -55,16 +55,16 @@ Effect version: 4.0.0
 ==== /.src/test.ts (2 errors) ====
     // @effect-diagnostics deterministicKeys:error
     import * as Persistable from "./utils"
-    import { ServiceMap } from "effect"
+    import { Context } from "effect"
     
     // simple case inside same file
     export function LocalConstructor<X>(/** @effect-identifier */ identifier: string) {
-      return class extends ServiceMap.Service<X, {}>()("hey/" + identifier) {}
+      return class extends Context.Service<X, {}>()("hey/" + identifier) {}
     }
     
     export class MyClass extends LocalConstructor<MyClass>("Hello") {
                                                            ~~~~~~~
-!!! error TS377049: Key should be '@effect/test-app/test/MyClass'. effect(deterministicKeys)
+!!! error TS377049: This key does not match the deterministic key for this declaration. The expected key is `@effect/test-app/test/MyClass`. effect(deterministicKeys)
     }
     
     // referenced on another file
@@ -72,7 +72,7 @@ Effect version: 4.0.0
       payload: { id: number }
     }>()("TTLRequest", {
          ~~~~~~~~~~~~
-!!! error TS377049: Key should be '@effect/test-app/test/TTLRequest'. effect(deterministicKeys)
+!!! error TS377049: This key does not match the deterministic key for this declaration. The expected key is `@effect/test-app/test/TTLRequest`. effect(deterministicKeys)
       primaryKey: (req) => `TTLRequest:${req.id}`
     }) {}
     
