@@ -131,3 +131,7 @@ tasks {
         dependsOn(patchChangelog)
     }
 }
+
+tasks.named("qodanaScan") {
+    mustRunAfter(tasks.matching { candidate -> candidate.name != name })
+}
