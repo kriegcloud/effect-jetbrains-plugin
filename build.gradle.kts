@@ -1,5 +1,6 @@
 import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
@@ -80,6 +81,7 @@ intellijPlatform {
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
+            untilBuild = providers.gradleProperty("pluginUntilBuild")
         }
     }
 
@@ -98,7 +100,8 @@ intellijPlatform {
 
     pluginVerification {
         ides {
-            recommended()
+            create(IntelliJPlatformType.WebStorm, providers.gradleProperty("platformVersion"))
+            create(IntelliJPlatformType.IntellijIdeaUltimate, providers.gradleProperty("pluginVerifierIntelliJIdeaVersion"))
         }
     }
 }

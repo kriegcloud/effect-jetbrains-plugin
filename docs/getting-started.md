@@ -16,9 +16,8 @@
   - `.cjs`
   - `.mjs`
 - One of the following binary strategies:
-  - Plugin-managed `LATEST`
-  - Plugin-managed `PINNED`
   - A `MANUAL` path to an executable native `tsgo` binary
+  - Plugin-managed `LATEST` or `PINNED` after you explicitly choose managed npm downloads
 
 Community Edition and Android Studio are out of scope for this plugin.
 
@@ -44,9 +43,9 @@ project-managed TypeScript binaries.
 
 | Mode | When to use it | Requirements |
 | --- | --- | --- |
-| `LATEST` | You want the newest published `@effect/tsgo` for your platform | Network access to npm during resolution |
-| `PINNED` | You need a stable version across projects or teammates | A specific `@effect/tsgo` version string |
-| `MANUAL` | You already manage the binary yourself | An executable native `tsgo` path |
+| `MANUAL` | You already manage the binary yourself, or want no plugin-managed download | An executable native `tsgo` path |
+| `LATEST` | You want the newest published `@effect/tsgo` for your platform | Network access to npm during resolution and download |
+| `PINNED` | You need a stable version across projects or teammates | A specific `@effect/tsgo` version string and network access to npm |
 
 The plugin validates pinned versions, manual paths, JSON fields, the runtime server port, and the
 metrics polling interval before applying settings.
@@ -63,6 +62,8 @@ npm exec --yes --package @effect/tsgo -- effect-tsgo get-exe-path
 ```
 
 Use the resulting executable path in `MANUAL` mode.
+
+Managed modes download npm platform packages and validate npm tarball integrity before extraction.
 
 ## Start The Language Server
 

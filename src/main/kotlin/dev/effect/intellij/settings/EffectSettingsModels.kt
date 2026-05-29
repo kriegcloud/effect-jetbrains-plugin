@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import dev.effect.intellij.core.EffectPluginConstants
 
 data class EffectProjectSettings(
-    val binaryMode: EffectBinaryMode = EffectBinaryMode.LATEST,
+    val binaryMode: EffectBinaryMode = EffectBinaryMode.MANUAL,
     val pinnedVersion: String = "",
     val manualBinaryPath: String = "",
     val extraEnv: Map<String, String> = emptyMap(),
@@ -18,7 +18,7 @@ data class EffectProjectSettings(
 )
 
 class EffectProjectSettingsState {
-    var binaryMode: String = EffectBinaryMode.LATEST.name
+    var binaryMode: String = EffectBinaryMode.MANUAL.name
     var pinnedVersion: String = ""
     var manualBinaryPath: String = ""
     var extraEnv: MutableMap<String, String> = linkedMapOf()

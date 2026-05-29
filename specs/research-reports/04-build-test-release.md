@@ -88,6 +88,6 @@ Avoid:
 Start from the template, but update the target platform baseline and add a dedicated fixture/test strategy for both LSP and Dev Tools parity before implementation begins.
 
 ## Source checkpoints
-- `.repos/intellij-platform-plugin-template/build.gradle.kts`
-- `.repos/intellij-platform-plugin-template/gradle.properties`
-- `.repos/intellij-platform-plugin-template/src/main/resources/META-INF/plugin.xml`
+- IntelliJ Platform Plugin Template `build.gradle.kts`
+- IntelliJ Platform Plugin Template `gradle.properties`
+- IntelliJ Platform Plugin Template `src/main/resources/META-INF/plugin.xml`

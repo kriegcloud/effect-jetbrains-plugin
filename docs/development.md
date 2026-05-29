@@ -8,6 +8,10 @@ Use these top-level docs as the main entry points:
   - public landing page and Marketplace-description source
 - [docs/README](README.md)
   - canonical long-form user documentation
+- [Publishing](publishing.md)
+  - Marketplace release process, owner setup, signing, and first-upload checklist
+- [Reference sources](reference-sources.md)
+  - upstream reference repos and canary provenance
 - [specs/README](../specs/README.md)
   - implementation spec package and handoff history
 
@@ -37,8 +41,7 @@ node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo
   - `Deferred`
   - `Pending evidence`
 - Keep debugger wording as best-effort unless there is recorded paused-session smoke evidence.
-- Keep Mermaid execute-command wording tied to the local canary until that bridge is published in
-  `@effect/tsgo`.
+- Keep Mermaid execute-command wording experimental until that bridge is published in `@effect/tsgo`.
 - Keep support statements aligned with the current target baseline:
   - WebStorm `2026.2` EAP / `262.*`
   - IntelliJ IDEA Ultimate `2026.2` EAP / `262.*`
@@ -55,16 +58,18 @@ The most important implementation references in this repo are:
 When docs drift from code, prefer fixing the docs to match shipped behavior unless the review turns
 up a genuine implementation bug that should be corrected separately.
 
-## Local `@effect/tsgo` Canary
+## External `@effect/tsgo` Canary
 
-The plugin's managed `LATEST` and `PINNED` modes resolve published npm builds. To exercise repo-local
-server patches, build the subtree and point `MANUAL` binary mode at the generated executable:
+The plugin's managed `LATEST` and `PINNED` modes resolve published npm builds. To exercise unpublished
+server patches, clone `Effect-TS/effect-tsgo` outside this repository, build it there, and point
+`MANUAL` binary mode at the generated executable:
 
 ```bash
-(cd .repos/effect-tsgo && bash _tools/setup-repo.sh --ci && pnpm run build)
+git clone https://github.com/Effect-TS/effect-tsgo ../effect-tsgo-canary
+(cd ../effect-tsgo-canary && bash _tools/setup-repo.sh --ci && pnpm run build)
 ```
 
-The expected local binary path is `.repos/effect-tsgo/tsgo`. This is the route for validating
+Use the resulting `../effect-tsgo-canary/tsgo` path in `MANUAL` mode. This is the route for validating
 the `_effectGetLayerMermaid` execute-command bridge before it exists in a published package.
 
 ## Current Verification Posture

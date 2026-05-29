@@ -113,7 +113,7 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         val service = project.getService(EffectProjectSettingsService::class.java)
         service.loadState(EffectProjectSettingsState().also { it.binaryMode = "BROKEN" })
 
-        assertEquals(EffectBinaryMode.LATEST, service.currentSettings().binaryMode)
+        assertEquals(EffectBinaryMode.MANUAL, service.currentSettings().binaryMode)
     }
 
     private fun makeNonExecutable(path: java.nio.file.Path) {

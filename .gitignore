@@ -2,6 +2,7 @@
 .gradle/
 .idea/
 .intellijPlatform/
+.repos/
 .kotlin/
 build/
 out/

@@ -133,7 +133,7 @@ private fun EffectProjectSettingsState.toModel(): EffectProjectSettings =
     )
 
 private fun parseBinaryMode(raw: String): EffectBinaryMode =
-    runCatching { EffectBinaryMode.valueOf(raw) }.getOrDefault(EffectBinaryMode.LATEST)
+    runCatching { EffectBinaryMode.valueOf(raw) }.getOrDefault(EffectBinaryMode.MANUAL)
 
 private fun EffectProjectSettings.toState(): EffectProjectSettingsState =
     EffectProjectSettingsState().also { state ->

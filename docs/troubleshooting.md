@@ -13,7 +13,8 @@ When something goes wrong, check these in order:
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| Widget stays on `Resolving Binary` or moves to `Error` in `LATEST` or `PINNED` mode | The plugin cannot reach npm, the version is wrong, or your platform is unsupported by the published package | Recheck connectivity and the configured version, then restart the server |
+| Widget says `Not Configured` or manual mode will not apply | The default `MANUAL` mode has no valid executable path yet | Provide a valid executable native `tsgo` path or explicitly switch to a managed mode |
+| Widget stays on `Resolving Binary` or moves to `Error` in `LATEST` or `PINNED` mode | The plugin cannot reach npm, the version is wrong, the npm integrity check failed, or your platform is unsupported by the published package | Recheck connectivity and the configured version, then restart the server |
 | Manual mode will not apply | The path is blank, invalid, missing, not a file, or not executable | Provide a valid executable native `tsgo` path |
 | Widget reaches `Restart Required` | LSP-relevant settings changed | Use the widget restart action after applying settings |
 | No LSP startup when a file opens | The file is not a supported TypeScript extension or the server failed before startup completed | Use a supported file and inspect the widget state plus logs |
@@ -24,11 +25,14 @@ When something goes wrong, check these in order:
 
 - Requires network access to npm during version resolution and download
 - Chooses the current `latest` dist-tag for `@effect/tsgo`
+- Validates npm tarball integrity before extraction
 
 ### `PINNED`
 
 - Requires a non-blank version string
 - Uses the exact version you configured
+- Requires network access to npm during download
+- Validates npm tarball integrity before extraction
 
 ### `MANUAL`
 

@@ -9,7 +9,7 @@ Fix all actionable issues identified in review, close the verification gaps that
 - `specs/PLAN.md`
 - `specs/DESIGN.md`
 - `specs/RESEARCH.md`
-- local reference repos, especially `.repos/vscode-extension`, `.repos/effect-tsgo`, and `.repos/zed-effect-tsgo`
+- upstream reference repos listed in `docs/reference-sources.md`, especially the Effect VS Code extension, Effect tsgo, and Zed Effect tsgo extension
 
 ## Context carried forward
 - Core `@effect/tsgo` parity remains the release-critical path.
@@ -24,7 +24,7 @@ Fix all actionable issues identified in review, close the verification gaps that
 - The Kotlin runtime parser currently expects synthetic fields such as `id`, `type`, `attributes`, and `state.incremental`.
 - The local Effect Dev Tools reference emits `_tag`, `name`, `tags`, and the real metric state shapes.
 - Update the runtime models, parser, summaries, and UI rendering to match the local reference protocol exactly.
-- Use `.repos/vscode-extension/src/instrumentation/encoders.ts` and `.repos/vscode-extension/src/instrumentation/instrumentation.ts` as the source of truth for runtime payload shape.
+- Use the Effect VS Code extension instrumentation sources as the source of truth for runtime payload shape.
 
 ### 2. Runtime outbound frame formatting bug
 - The runtime server currently sends `MetricsRequest` and `Pong` with a literal `\n` sequence in the payload.

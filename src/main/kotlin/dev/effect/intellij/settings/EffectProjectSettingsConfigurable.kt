@@ -160,7 +160,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
 
     fun toSettings(): EffectProjectSettings =
         EffectProjectSettings(
-            binaryMode = binaryMode.selectedItem as? EffectBinaryMode ?: EffectBinaryMode.LATEST,
+            binaryMode = binaryMode.selectedItem as? EffectBinaryMode ?: EffectBinaryMode.MANUAL,
             pinnedVersion = pinnedVersion.text.trim(),
             manualBinaryPath = manualBinaryPath.text.trim(),
             extraEnv = parseEnv(extraEnv.text),
@@ -186,7 +186,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     }
 
     private fun updateBinaryFieldState() {
-        val mode = binaryMode.selectedItem as? EffectBinaryMode ?: EffectBinaryMode.LATEST
+        val mode = binaryMode.selectedItem as? EffectBinaryMode ?: EffectBinaryMode.MANUAL
         pinnedVersion.isEnabled = mode == EffectBinaryMode.PINNED
         manualBinaryPath.isEnabled = mode == EffectBinaryMode.MANUAL
     }

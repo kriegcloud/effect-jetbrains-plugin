@@ -13,8 +13,10 @@ import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
-import java.util.concurrent.ExecutorService
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -94,6 +96,50 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         assertEquals(EffectBinaryMode.PINNED, resolution.mode)
         assertEquals("9.9.9", resolution.version)
         assertTrue(Files.exists(resolution.binaryPath))
+    }
+
+    fun testManagedDownloadRejectsIntegrityMismatch() {
+        val version = "8.8.8"
+        val tarballName = "${platformPackage.substringAfter('/')}-${version}.tgz"
+        val tarballPath = tempDir.resolve(tarballName)
+        val cacheRoot = tempDir.resolve("bad-integrity-cache")
+        writeTarball(tarballPath)
+
+        server.createContext("/$platformPackage/$version") { exchange ->
+            respondJson(
+                exchange,
+                """{"dist":{"tarball":"http://127.0.0.1:${server.address.port}/tarballs/$tarballName","integrity":"${badIntegrity()}"}}""",
+            )
+        }
+        server.createContext("/tarballs/$tarballName") { exchange ->
+            val bytes = Files.readAllBytes(tarballPath)
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+
+        val binaryService = EffectBinaryService.getInstance()
+        binaryService.registryBaseUrl = "http://127.0.0.1:${server.address.port}"
+        val applicationStateService = dev.effect.intellij.settings.EffectApplicationStateService.getInstance()
+        val originalApplicationState = applicationStateService.currentState()
+        applicationStateService.loadState(originalApplicationState.copy(binaryCacheDirOverride = cacheRoot.toString()))
+
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.PINNED,
+                pinnedVersion = version,
+            ),
+        )
+
+        try {
+            binaryService.ensureAvailable(project)
+            fail("Expected managed download to reject mismatched npm integrity metadata")
+        } catch (error: EffectBinaryException) {
+            assertTrue(error.message?.contains("integrity") == true)
+        } finally {
+            applicationStateService.loadState(originalApplicationState)
+        }
+
+        assertFalse(Files.exists(cacheRoot.resolve(version)))
     }
 
     fun testManualModeUsesProvidedBinary() {
@@ -181,7 +227,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
             metadataRequests.incrementAndGet()
             respondJson(
                 exchange,
-                """{"dist":{"tarball":"http://127.0.0.1:${server.address.port}/tarballs/$tarballName"}}""",
+                metadataJson(version, tarballName, tarballPath),
             )
         }
         server.createContext("/tarballs/$tarballName") { exchange ->
@@ -245,7 +291,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         server.createContext("/$platformPackage/$version") { exchange ->
             respondJson(
                 exchange,
-                """{"dist":{"tarball":"http://127.0.0.1:${server.address.port}/tarballs/$tarballName"}}""",
+                metadataJson(version, tarballName, tarballPath),
             )
         }
         server.createContext("/tarballs/$tarballName") { exchange ->
@@ -269,6 +315,17 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
             }
         }
     }
+
+    private fun metadataJson(version: String, tarballName: String, tarballPath: Path): String =
+        """{"version":"$version","dist":{"tarball":"http://127.0.0.1:${server.address.port}/tarballs/$tarballName","integrity":"${integrity(tarballPath)}"}}"""
+
+    private fun integrity(path: Path): String {
+        val digest = MessageDigest.getInstance("SHA-512").digest(Files.readAllBytes(path))
+        return "sha512-${Base64.getEncoder().encodeToString(digest)}"
+    }
+
+    private fun badIntegrity(): String =
+        "sha512-${Base64.getEncoder().encodeToString(ByteArray(64))}"
 
     private fun respondJson(exchange: HttpExchange, body: String) {
         val bytes = body.toByteArray()

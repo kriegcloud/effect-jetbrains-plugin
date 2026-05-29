@@ -14,7 +14,7 @@ The project-level Effect settings page is split into these sections:
 
 | Section | Current purpose |
 | --- | --- |
-| `Binary` | Choose `LATEST`, `PINNED`, or `MANUAL`, set a pinned version, or provide a manual binary path |
+| `Binary` | Configure the default `MANUAL` path, or explicitly opt into managed `LATEST` / `PINNED` npm downloads |
 | `Language Server` | Pass extra environment variables, initialization options JSON, and workspace configuration JSON |
 | `Dev Tools` | Configure the runtime server port and metrics polling interval |
 | `Debugger` | Configure instrumentation injection and show current debugger bridge status |
@@ -35,7 +35,7 @@ TypeScript and JavaScript files.
 | Inlay hints | Implemented | Available on the locked `2026.2` EAP baseline |
 | Document and workspace symbols | Implemented | Expected on the `2026.2` EAP baseline |
 | Hover-based layer graph links | Implemented | This is the supported layer-graph path today |
-| Local Mermaid graph action | Adapted | Editor/Tools action opens Mermaid source when the LSP advertises the Effect execute-command bridge |
+| Local Mermaid graph action | Experimental | Editor/Tools action opens Mermaid source when the LSP advertises the Effect execute-command bridge |
 
 The table above describes the shipped surface area. Recorded manual editor smoke and richer
 real-binary semantic evidence are still explicit follow-up validation items in this repo.
@@ -120,7 +120,7 @@ This is an adapted JetBrains surface, not full VS Code debug-sidebar parity.
 | Live debugger snapshots | Adapted; available while the attached session is paused and instrumentation is installed |
 | Automatic Node.js run/debug instrumentation injection | Adapted |
 | Optional advanced tracer / JCEF panel | Adapted |
-| Local Mermaid graph action | Adapted; requires an Effect `tsgo` build with `_effectGetLayerMermaid` execute-command support |
+| Local Mermaid graph action | Experimental; requires an Effect `tsgo` build with `_effectGetLayerMermaid` execute-command support |
 | Literal VS Code layout parity | Not a goal; JetBrains-native adapted UX is the current direction |
 
 Use [troubleshooting](troubleshooting.md) if startup or runtime behavior does not match the flow

@@ -5,12 +5,12 @@ Validate and deepen the existing research package for the JetBrains plugin effor
 
 ## Required inputs
 - `specs/RESEARCH_PLAN.md`
-- local reference repos under `.repos/`
+- upstream reference repos listed in `docs/reference-sources.md`
 - any official JetBrains docs needed to confirm unsupported or version-sensitive facts
 
 ## Context carried forward
-- `.repos/zed-effect-tsgo` is the clean reference for direct `@effect/tsgo` integration.
-- `.repos/vscode-extension` is mainly Effect Dev Tools, not a pure `@effect/tsgo` plugin.
+- The Zed Effect tsgo extension is the clean reference for direct `@effect/tsgo` integration.
+- The Effect VS Code extension is mainly Effect Dev Tools, not a pure `@effect/tsgo` plugin.
 - JetBrains LSP support is commercial-IDE-only.
 - Layer-mermaid parity is blocked on a non-standard request path.
 

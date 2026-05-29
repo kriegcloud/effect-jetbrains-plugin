@@ -12,6 +12,10 @@ Use these pages in this order:
   - Binary failures, runtime/server issues, status meanings, logs, and known evidence gaps
 - [Development guide](development.md)
   - Build, test, verifier, docs maintenance, and the spec set used by contributors
+- [Publishing guide](publishing.md)
+  - Marketplace release posture, owner setup, signing, first-upload steps, and listing checklist
+- [Reference sources](reference-sources.md)
+  - Upstream reference repositories and canary provenance now that local subtrees are no longer tracked
 
 ## Documentation conventions
 

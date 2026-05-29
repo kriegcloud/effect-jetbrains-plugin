@@ -107,14 +107,9 @@ Stage implementation in this order:
 4. Non-standard request parity such as local layer-mermaid preview
 
 ## Source checkpoints
-- `.repos/effect-tsgo/README.md`
-- `.repos/effect-tsgo/_packages/tsgo/package.json`
-- `.repos/effect-tsgo/_packages/tsgo/src/cli.ts`
-- `.repos/effect-tsgo/_patches/011-ls-codeactions.patch`
-- `.repos/effect-tsgo/_patches/012-ls-hover.patch`
-- `.repos/effect-tsgo/_patches/015-ls-inlay-hints.patch`
-- `.repos/effect-tsgo/_patches/017-ls-server-refactor-capability.patch`
-- `.repos/effect-tsgo/_patches/022-ls-completions.patch`
-- `.repos/effect-tsgo/_patches/024-ls-document-symbols.patch`
-- `.repos/effect-tsgo/internal/effecttest/hover_test.go`
-- `.repos/zed-effect-tsgo/src/tsgo.rs`
+- Effect tsgo `README.md`
+- Effect tsgo `_packages/tsgo/package.json`
+- Effect tsgo `_packages/tsgo/src/cli.ts`
+- Effect tsgo LSP patch inventory for code actions, hover, inlay hints, completions, and symbols
+- Effect tsgo `internal/effecttest/hover_test.go`
+- Zed Effect tsgo extension `src/tsgo.rs`
