@@ -68,7 +68,11 @@ class EffectBinaryService {
                 status.markResolvingBinary("Resolving @effect/tsgo")
                 val platform = currentPlatformPackage()
                 val version = when (settings.binaryMode) {
-                    EffectBinaryMode.LATEST -> resolveLatestVersion()
+                    EffectBinaryMode.LATEST -> {
+                        status.markCheckingForUpdate("Checking latest @effect/tsgo version")
+                        resolveLatestVersion()
+                    }
+
                     EffectBinaryMode.PINNED -> settings.pinnedVersion
                     EffectBinaryMode.MANUAL -> error("unreachable")
                 }.ifBlank {
@@ -81,6 +85,7 @@ class EffectBinaryService {
 
                 synchronized(cacheOperationLock) {
                     if (!binaryPath.exists()) {
+                        status.markDownloadingBinary("Downloading ${platform.packageName}@$version")
                         installManagedPackage(platform.packageName, version, versionRoot, binaryPath)
                     }
                     ensureExecutable(binaryPath)
@@ -118,6 +123,7 @@ class EffectBinaryService {
     private fun validateManualBinary(path: Path) {
         when {
             path.toString().isBlank() -> throw EffectBinaryException("Manual binary path is blank.")
+            !path.isAbsolute -> throw EffectBinaryException("Manual binary path must be absolute: $path")
             !Files.exists(path) -> throw EffectBinaryException("Manual binary path does not exist: $path")
             !Files.isRegularFile(path) -> throw EffectBinaryException("Manual binary path must point to a file: $path")
             !Files.isExecutable(path) -> throw EffectBinaryException("Manual binary path must be executable: $path")

@@ -96,6 +96,26 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         assertTrue(problems.any { it.field == "manualBinaryPath" && it.message.contains("valid filesystem path") })
     }
 
+    fun testManualModeRejectsRelativePath() {
+        val service = project.getService(EffectProjectSettingsService::class.java)
+
+        val problems = service.validate(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.MANUAL,
+                manualBinaryPath = "relative-tsgo",
+            ),
+        )
+
+        assertTrue(problems.any { it.field == "manualBinaryPath" && it.message.contains("absolute") })
+    }
+
+    fun testInvalidPersistedBinaryModeFallsBackToLatest() {
+        val service = project.getService(EffectProjectSettingsService::class.java)
+        service.loadState(EffectProjectSettingsState().also { it.binaryMode = "BROKEN" })
+
+        assertEquals(EffectBinaryMode.LATEST, service.currentSettings().binaryMode)
+    }
+
     private fun makeNonExecutable(path: java.nio.file.Path) {
         if (System.getProperty("os.name").contains("win", ignoreCase = true)) {
             path.toFile().setExecutable(false, false)

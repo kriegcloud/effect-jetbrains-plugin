@@ -3,13 +3,18 @@
 ## What You Need
 
 - A supported JetBrains IDE:
-  - WebStorm `2025.3.x`
-  - IntelliJ IDEA Ultimate `2025.3.x`
-- A project with supported TypeScript files:
+  - WebStorm `2026.2` EAP
+  - IntelliJ IDEA Ultimate `2026.2` EAP
+- A Java 25 toolchain for local builds against the `262.*` EAP platform line.
+- A project with supported TypeScript or JavaScript files:
   - `.ts`
   - `.tsx`
   - `.cts`
   - `.mts`
+  - `.js`
+  - `.jsx`
+  - `.cjs`
+  - `.mjs`
 - One of the following binary strategies:
   - Plugin-managed `LATEST`
   - Plugin-managed `PINNED`
@@ -62,7 +67,7 @@ Use the resulting executable path in `MANUAL` mode.
 ## Start The Language Server
 
 1. Save your settings.
-2. Open a supported TypeScript file.
+2. Open a supported TypeScript or JavaScript file.
 3. Watch the Effect LSP widget move through startup states until it reaches `Running`.
 
 The widget is the plugin's status-bar surface for:
@@ -91,7 +96,8 @@ The default runtime server port is `34437`.
 - LSP settings are project-scoped.
 - Runtime metrics are polled from connected clients.
 - Tracer data is streamed from runtime span events.
-- The `Debug` tab is present, but it currently provides attach/setup guidance instead of live
-  `Context`, `Span Stack`, `Fibers`, or `Breakpoints` snapshots.
+- A browser-backed `Tracer Web` tab appears when the IDE's JCEF runtime is available.
+- The `Debug` tab can attach to a paused debug session, inject optional Node.js instrumentation,
+  and show best-effort `Context`, `Span Stack`, `Fibers`, and `Breakpoints` snapshots.
 
 Continue with the [usage guide](usage.md) once the plugin is installed and running.

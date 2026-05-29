@@ -69,6 +69,7 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
                 try {
                     val manualPath = Path.of(settings.manualBinaryPath)
                     when {
+                        !manualPath.isAbsolute -> problems += SettingProblem("manualBinaryPath", "The manual binary path must be absolute.")
                         !Files.exists(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path does not exist.")
                         !Files.isRegularFile(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path must point to a file.")
                         !Files.isExecutable(manualPath) -> problems += SettingProblem("manualBinaryPath", "The manual binary path must be executable.")
@@ -118,7 +119,7 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
 
 private fun EffectProjectSettingsState.toModel(): EffectProjectSettings =
     EffectProjectSettings(
-        binaryMode = EffectBinaryMode.valueOf(binaryMode),
+        binaryMode = parseBinaryMode(binaryMode),
         pinnedVersion = pinnedVersion.trim(),
         manualBinaryPath = manualBinaryPath.trim(),
         extraEnv = extraEnv.toMap(),
@@ -130,6 +131,9 @@ private fun EffectProjectSettingsState.toModel(): EffectProjectSettings =
         injectNodeOptions = injectNodeOptions,
         injectDebugConfigurationTypes = injectDebugConfigurationTypes.map(String::trim).filter(String::isNotBlank),
     )
+
+private fun parseBinaryMode(raw: String): EffectBinaryMode =
+    runCatching { EffectBinaryMode.valueOf(raw) }.getOrDefault(EffectBinaryMode.LATEST)
 
 private fun EffectProjectSettings.toState(): EffectProjectSettingsState =
     EffectProjectSettingsState().also { state ->

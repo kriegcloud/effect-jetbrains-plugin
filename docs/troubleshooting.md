@@ -57,15 +57,18 @@ If a managed install looks stale or corrupted:
 
 ## Debug Tab Expectations
 
-An empty or guidance-only `Debug` tab is not currently a bug by itself.
+An empty or guidance-only `Debug` tab is not automatically a bug by itself.
 
 Today the tab is expected to:
 
 - show attach/setup guidance
 - identify the active debug session when attached
-- avoid fabricating live Effect runtime snapshots
+- refresh best-effort Effect runtime snapshots while the session is paused and instrumentation is
+  available
+- report a clear message when the session is running or does not support expression evaluation
 
-Live `Context`, `Span Stack`, `Fibers`, and `Breakpoints` data remain deferred.
+If `Context`, `Span Stack`, `Fibers`, or `Breakpoints` are empty, confirm the debug target was
+started with the bundled instrumentation or use the toolbar refresh after pausing inside Effect code.
 
 ## Logs And Verification Status
 

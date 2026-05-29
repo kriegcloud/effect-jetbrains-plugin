@@ -8,5 +8,5 @@ object EffectPluginConstants {
     const val DEFAULT_DEV_TOOLS_PORT = 34437
     const val DEFAULT_METRICS_POLL_INTERVAL_MS = 500
     const val DEFAULT_BINARY_CACHE_DIR = "effect-tsgo"
-    val SUPPORTED_TYPESCRIPT_EXTENSIONS = setOf("ts", "tsx", "cts", "mts")
+    val SUPPORTED_TYPESCRIPT_EXTENSIONS = setOf("ts", "tsx", "cts", "mts", "js", "jsx", "cjs", "mjs")
 }

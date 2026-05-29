@@ -1,0 +1,15 @@
+diff --git a/internal/lsp/server.go b/internal/lsp/server.go
+index 39f2958..60721ec 100644
+--- a/internal/lsp/server.go
++++ b/internal/lsp/server.go
+@@ -672,7 +672,9 @@ func (s *Server) handleRequestOrNotification(ctx context.Context, req *lsproto.R
+ 			idStr = " (" + req.ID.String() + ")"
+ 		}
+ 		if err != nil {
+-			if _, ok := errors.AsType[userFacingRequestFailedError](err); !ok {
++			if errors.Is(err, io.EOF) {
++				s.logger.Info("handled method '", req.Method, "'", idStr, " in ", time.Since(start))
++			} else if _, ok := errors.AsType[userFacingRequestFailedError](err); !ok {
+ 				s.logger.Error("error handling method '", req.Method, "'", idStr, ": ", err)
+ 			} else {
+ 				s.logger.Info("handled method '", req.Method, "'", idStr, " in ", time.Since(start))

@@ -6,6 +6,8 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.ultimate</depends>
     <depends>com.intellij.modules.lsp</depends>
+    <depends>JavaScript</depends>
+    <depends>NodeJS</depends>
 
     <resource-bundle>messages.EffectBundle</resource-bundle>
 
@@ -13,11 +15,13 @@
         <notificationGroup id="dev.effect.jetbrains" displayType="BALLOON" isLogByDefault="true"/>
 
         <applicationService serviceImplementation="dev.effect.intellij.binary.EffectBinaryService"/>
+        <applicationService serviceImplementation="dev.effect.intellij.debug.EffectInstrumentationService"/>
         <applicationService serviceImplementation="dev.effect.intellij.notifications.EffectNotificationService"/>
         <applicationService serviceImplementation="dev.effect.intellij.settings.EffectApplicationStateService"/>
 
         <projectService serviceImplementation="dev.effect.intellij.debug.EffectDebugBridgeService"/>
         <projectService serviceImplementation="dev.effect.intellij.devtools.EffectDevToolsService"/>
+        <projectService serviceImplementation="dev.effect.intellij.lsp.EffectLayerMermaidService"/>
         <projectService serviceImplementation="dev.effect.intellij.lsp.EffectLspProjectService"/>
         <projectService serviceImplementation="dev.effect.intellij.settings.EffectProjectSettingsService"/>
         <projectService serviceImplementation="dev.effect.intellij.status.EffectStatusService"/>
@@ -37,4 +41,19 @@
 
         <platform.lsp.serverSupportProvider implementation="dev.effect.intellij.lsp.EffectLspServerSupportProvider"/>
     </extensions>
+
+    <extensions defaultExtensionNs="JavaScript">
+        <nodeRunConfigurationExtension implementation="dev.effect.intellij.debug.EffectNodeInstrumentationRunConfigurationExtension"/>
+    </extensions>
+
+    <actions>
+        <action
+                id="dev.effect.intellij.ShowLayerMermaid"
+                class="dev.effect.intellij.lsp.EffectShowLayerMermaidAction"
+                text="Effect Dev Tools: Show Layer Mermaid Graph"
+                description="Open the Mermaid graph for the Effect Layer at the caret">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

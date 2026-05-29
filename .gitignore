@@ -1,9 +1,7 @@
-.idea/
+.DS_Store
 .gradle/
+.idea/
+.intellijPlatform/
+.kotlin/
 build/
 out/
-
-# JetBrains test sandbox noise inside the tracked .intellijPlatform tree.
-.intellijPlatform/sandbox/*/*/log-test/open-telemetry-*
-.intellijPlatform/sandbox/*/*/system-test/index/dirty-file-queues/light_temp*
-.intellijPlatform/sandbox/*/*/system-test/projects/light_temp*/

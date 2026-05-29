@@ -9,6 +9,7 @@ package etslshooks
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -24,14 +25,31 @@ import (
 	"github.com/effect-ts/tsgo/internal/refactors"
 	"github.com/effect-ts/tsgo/internal/typeparser"
 	"github.com/microsoft/typescript-go/shim/ast"
+	"github.com/microsoft/typescript-go/shim/astnav"
 	"github.com/microsoft/typescript-go/shim/checker"
 	"github.com/microsoft/typescript-go/shim/compiler"
 	"github.com/microsoft/typescript-go/shim/core"
 	"github.com/microsoft/typescript-go/shim/ls"
 	"github.com/microsoft/typescript-go/shim/ls/autoimport"
+	"github.com/microsoft/typescript-go/shim/ls/lsconv"
 	"github.com/microsoft/typescript-go/shim/lsp/lsproto"
 	"github.com/microsoft/typescript-go/shim/modulespecifiers"
 )
+
+const layerMermaidCommand = "_effectGetLayerMermaid"
+
+type layerMermaidRequest struct {
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	Character int    `json:"character"`
+	Kind      string `json:"kind,omitempty"`
+}
+
+type layerMermaidResponse struct {
+	Success     bool   `json:"success"`
+	MermaidCode string `json:"mermaidCode,omitempty"`
+	Message     string `json:"message,omitempty"`
+}
 
 func init() {
 	// Register the Effect code fix provider with the language service
@@ -58,6 +76,11 @@ func init() {
 			)
 		}
 		return autoimportstyle.NewFixTransformer(resolvedOptions)
+	})
+	// Register the VS Code-compatible Mermaid command used by JetBrains and other LSP clients.
+	ls.RegisterExecuteCommandHandler(layerMermaidCommand, ls.ExecuteCommandHandler{
+		TextDocumentURI: layerMermaidTextDocumentURI,
+		Execute:         executeLayerMermaidCommand,
 	})
 }
 
@@ -220,6 +243,168 @@ func afterQuickInfo(program checker.Program, c *checker.Checker, sf *ast.SourceF
 	documentation = formatEffectTypeParams(c, effect, documentation, isMarkdown)
 
 	return quickInfo, documentation, nil
+}
+
+func layerMermaidTextDocumentURI(params *lsproto.ExecuteCommandParams) (lsproto.DocumentUri, error) {
+	request, err := parseLayerMermaidRequest(params)
+	if err != nil {
+		return "", err
+	}
+	_, uri := layerMermaidPathAndURI(request.Path)
+	return uri, nil
+}
+
+func executeLayerMermaidCommand(ctx context.Context, languageService *ls.LanguageService, params *lsproto.ExecuteCommandParams) (lsproto.ExecuteCommandResponse, error) {
+	request, err := parseLayerMermaidRequest(params)
+	if err != nil {
+		return layerMermaidResult(false, "", err.Error()), nil
+	}
+
+	fileName, _ := layerMermaidPathAndURI(request.Path)
+	program := languageService.GetProgram()
+	if program == nil {
+		return layerMermaidResult(false, "", "No TypeScript program is available."), nil
+	}
+
+	sf := program.GetSourceFile(fileName)
+	if sf == nil && fileName != request.Path {
+		sf = program.GetSourceFile(request.Path)
+	}
+	if sf == nil {
+		return layerMermaidResult(false, "", "Source file is not part of the active TypeScript program."), nil
+	}
+
+	effectConfig := program.Options().Effect
+	if effectConfig == nil {
+		return layerMermaidResult(false, "", "Effect compiler options are not enabled for this source file."), nil
+	}
+
+	position := int(ls.LanguageService_converters(languageService).LineAndCharacterToPosition(sf, lsproto.Position{
+		Line:      uint32(request.Line),
+		Character: uint32(request.Character),
+	}))
+	node := astnav.GetTouchingPropertyName(sf, position)
+	if node == nil {
+		return layerMermaidResult(false, "", "No Layer declaration found at the requested position."), nil
+	}
+
+	declarationName := findLayerDeclarationName(node)
+	if declarationName == nil {
+		return layerMermaidResult(false, "", "No Layer declaration found at the requested position."), nil
+	}
+
+	c, done := program.GetTypeCheckerForFile(ctx, sf)
+	defer done()
+	if c == nil {
+		return layerMermaidResult(false, "", "Type checker is not available for this source file."), nil
+	}
+
+	tp := typeparser.NewTypeParser(program, c)
+	layerType := tp.GetTypeAtLocation(declarationName)
+	if layerType == nil || !tp.IsLayerType(layerType, declarationName) {
+		return layerMermaidResult(false, "", "The requested declaration is not an Effect Layer."), nil
+	}
+
+	mermaidCode := buildLayerMermaidDiagram(tp, c, sf, declarationName, effectConfig, request.Kind)
+	if mermaidCode == "" {
+		return layerMermaidResult(false, "", "No Layer graph could be extracted for this declaration."), nil
+	}
+
+	return layerMermaidResult(true, mermaidCode, ""), nil
+}
+
+func parseLayerMermaidRequest(params *lsproto.ExecuteCommandParams) (layerMermaidRequest, error) {
+	var request layerMermaidRequest
+	if params == nil {
+		return request, fmt.Errorf("missing execute command params")
+	}
+	if params.Command != layerMermaidCommand {
+		return request, fmt.Errorf("unsupported execute command: %s", params.Command)
+	}
+	if params.Arguments == nil || len(*params.Arguments) == 0 {
+		return request, fmt.Errorf("missing Layer Mermaid request argument")
+	}
+
+	payload, err := json.Marshal((*params.Arguments)[0])
+	if err != nil {
+		return request, fmt.Errorf("invalid Layer Mermaid request argument: %w", err)
+	}
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return request, fmt.Errorf("invalid Layer Mermaid request argument: %w", err)
+	}
+
+	request.Path = strings.TrimSpace(request.Path)
+	if request.Path == "" {
+		return request, fmt.Errorf("Layer Mermaid request path is required")
+	}
+	if request.Line < 0 || request.Character < 0 {
+		return request, fmt.Errorf("Layer Mermaid request position must be non-negative")
+	}
+	switch request.Kind {
+	case "", "full", "nested":
+		request.Kind = "full"
+	case "outline":
+	default:
+		return request, fmt.Errorf("unsupported Layer Mermaid graph kind: %s", request.Kind)
+	}
+	return request, nil
+}
+
+func layerMermaidPathAndURI(path string) (string, lsproto.DocumentUri) {
+	if strings.HasPrefix(path, "file:") || strings.Contains(path, "://") {
+		uri := lsproto.DocumentUri(path)
+		return uri.FileName(), uri
+	}
+	return path, lsconv.FileNameToDocumentURI(path)
+}
+
+func layerMermaidResult(success bool, mermaidCode string, message string) lsproto.ExecuteCommandResponse {
+	var body any = layerMermaidResponse{
+		Success:     success,
+		MermaidCode: mermaidCode,
+		Message:     message,
+	}
+	return lsproto.ExecuteCommandResponse{LSPAny: &body}
+}
+
+func findLayerDeclarationName(node *ast.Node) *ast.Node {
+	for current := node; current != nil; current = current.Parent {
+		switch current.Kind {
+		case ast.KindVariableDeclaration:
+			return current.AsVariableDeclaration().Name()
+		case ast.KindPropertyDeclaration:
+			return current.AsPropertyDeclaration().Name()
+		}
+	}
+	if isDeclarationName(node) {
+		return node
+	}
+	return nil
+}
+
+func buildLayerMermaidDiagram(tp *typeparser.TypeParser, c *checker.Checker, sf *ast.SourceFile, node *ast.Node, effectConfig *etscore.EffectPluginOptions, kind string) string {
+	var initializer *ast.Node
+	if node.Parent != nil {
+		switch node.Parent.Kind {
+		case ast.KindVariableDeclaration:
+			initializer = node.Parent.AsVariableDeclaration().Initializer
+		case ast.KindPropertyDeclaration:
+			initializer = node.Parent.AsPropertyDeclaration().Initializer
+		}
+	}
+	if initializer == nil {
+		return ""
+	}
+
+	opts := layergraph.ExtractLayerGraphOptions{
+		FollowSymbolsDepth: effectConfig.GetLayerGraphFollowDepth(),
+	}
+	fullGraph := layergraph.ExtractLayerGraph(tp, c, initializer, sf, opts)
+	if kind == "outline" {
+		outlineGraph := layergraph.ExtractOutlineGraph(c, fullGraph)
+		return layergraph.FormatOutlineGraph(c, outlineGraph, sf)
+	}
+	return layergraph.FormatNestedLayerGraph(c, fullGraph, sf)
 }
 
 // formatLayerHover builds the Layer hover documentation including providers/requirers

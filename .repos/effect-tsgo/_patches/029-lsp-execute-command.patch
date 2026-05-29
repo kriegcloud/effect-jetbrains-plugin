@@ -1,0 +1,151 @@
+diff --git a/internal/ls/execute_command.go b/internal/ls/execute_command.go
+new file mode 100644
+index 000000000..e5b5eaed3
+--- /dev/null
++++ b/internal/ls/execute_command.go
+@@ -0,0 +1,74 @@
++package ls
++
++import (
++	"context"
++	"fmt"
++	"slices"
++	"sync"
++
++	"github.com/microsoft/typescript-go/internal/lsp/lsproto"
++)
++
++// ExecuteCommandHandler lets language-service extensions attach workspace
++// commands that still need a document-scoped LanguageService instance.
++type ExecuteCommandHandler struct {
++	TextDocumentURI func(*lsproto.ExecuteCommandParams) (lsproto.DocumentUri, error)
++	Execute         func(context.Context, *LanguageService, *lsproto.ExecuteCommandParams) (lsproto.ExecuteCommandResponse, error)
++}
++
++var (
++	executeCommandHandlersMu sync.RWMutex
++	executeCommandHandlers   = map[string]ExecuteCommandHandler{}
++)
++
++func RegisterExecuteCommandHandler(command string, handler ExecuteCommandHandler) {
++	if command == "" {
++		panic("execute command must not be empty")
++	}
++	if handler.TextDocumentURI == nil {
++		panic("execute command handler must provide TextDocumentURI")
++	}
++	if handler.Execute == nil {
++		panic("execute command handler must provide Execute")
++	}
++
++	executeCommandHandlersMu.Lock()
++	defer executeCommandHandlersMu.Unlock()
++	executeCommandHandlers[command] = handler
++}
++
++func ExecuteCommandNames() []string {
++	executeCommandHandlersMu.RLock()
++	defer executeCommandHandlersMu.RUnlock()
++
++	commands := make([]string, 0, len(executeCommandHandlers))
++	for command := range executeCommandHandlers {
++		commands = append(commands, command)
++	}
++	slices.Sort(commands)
++	return commands
++}
++
++func ExecuteCommandDocumentURI(params *lsproto.ExecuteCommandParams) (lsproto.DocumentUri, error) {
++	handler, ok := executeCommandHandler(params.Command)
++	if !ok {
++		return "", fmt.Errorf("unknown execute command: %s", params.Command)
++	}
++	return handler.TextDocumentURI(params)
++}
++
++func ExecuteCommand(ctx context.Context, languageService *LanguageService, params *lsproto.ExecuteCommandParams) (lsproto.ExecuteCommandResponse, error) {
++	handler, ok := executeCommandHandler(params.Command)
++	if !ok {
++		return lsproto.ExecuteCommandResponse{}, fmt.Errorf("unknown execute command: %s", params.Command)
++	}
++	return handler.Execute(ctx, languageService, params)
++}
++
++func executeCommandHandler(command string) (ExecuteCommandHandler, bool) {
++	executeCommandHandlersMu.RLock()
++	defer executeCommandHandlersMu.RUnlock()
++
++	handler, ok := executeCommandHandlers[command]
++	return handler, ok
++}
+diff --git a/internal/lsp/server.go b/internal/lsp/server.go
+index b33350fbf..39f2958b9 100644
+--- a/internal/lsp/server.go
++++ b/internal/lsp/server.go
+@@ -756,6 +756,7 @@ var handlers = sync.OnceValue(func() handlerMap {
+ 	registerRequestHandler(handlers, lsproto.CallHierarchyOutgoingCallsInfo, (*Server).handleCallHierarchyOutgoingCalls)
+ 
+ 	registerRequestHandler(handlers, lsproto.WorkspaceSymbolInfo, (*Server).handleWorkspaceSymbol)
++	registerExecuteCommandRequestHandler(handlers, lsproto.WorkspaceExecuteCommandInfo, (*Server).handleExecuteCommand)
+ 	registerRequestHandler(handlers, lsproto.CompletionItemResolveInfo, (*Server).handleCompletionItemResolve)
+ 	registerRequestHandler(handlers, lsproto.CodeLensResolveInfo, (*Server).handleCodeLensResolve)
+ 	registerLanguageServiceDocumentRequestHandler(handlers, lsproto.TextDocumentSemanticTokensFullInfo, (*Server).handleSemanticTokensFull)
+@@ -845,6 +846,34 @@ func registerLanguageServiceDocumentRequestHandler[Req lsproto.HasTextDocumentUR
+ 	}
+ }
+ 
++func registerExecuteCommandRequestHandler(handlers handlerMap, info lsproto.RequestInfo[*lsproto.ExecuteCommandParams, lsproto.ExecuteCommandResponse], fn func(*Server, context.Context, *ls.LanguageService, *lsproto.ExecuteCommandParams) (lsproto.ExecuteCommandResponse, error)) {
++	handlers[info.Method] = func(s *Server, ctx context.Context, req *lsproto.RequestMessage) (func() error, error) {
++		params := req.Params.(*lsproto.ExecuteCommandParams)
++		uri, err := ls.ExecuteCommandDocumentURI(params)
++		if err != nil {
++			return nil, err
++		}
++		langService, err := s.session.GetLanguageService(ctx, uri)
++		if err != nil {
++			return nil, err
++		}
++		return func() error {
++			defer s.recover(req)
++			resp, lsErr := fn(s, ctx, langService, params)
++			// After any language service request, check if new global diagnostics were
++			// discovered during checking and push updated tsconfig diagnostics if so.
++			s.session.EnqueuePublishGlobalDiagnostics()
++			if lsErr != nil {
++				return lsErr
++			}
++			if ctx.Err() != nil {
++				return ctx.Err()
++			}
++			return s.sendResult(req.ID, resp)
++		}, nil
++	}
++}
++
+ func registerLanguageServiceWithAutoImportsRequestHandler[Req lsproto.HasTextDocumentURI, Resp any](handlers handlerMap, info lsproto.RequestInfo[Req, Resp], fn func(*Server, context.Context, *ls.LanguageService, Req) (Resp, error)) {
+ 	handlers[info.Method] = func(s *Server, ctx context.Context, req *lsproto.RequestMessage) (func() error, error) {
+ 		var params Req
+@@ -1143,6 +1172,12 @@ func (s *Server) handleInitialize(ctx context.Context, params *lsproto.Initializ
+ 		},
+ 	}
+ 
++	if commands := ls.ExecuteCommandNames(); len(commands) > 0 {
++		response.Capabilities.ExecuteCommandProvider = &lsproto.ExecuteCommandOptions{
++			Commands: commands,
++		}
++	}
++
+ 	return response, nil
+ }
+ 
+@@ -1564,6 +1599,10 @@ func (s *Server) handleWorkspaceSymbol(ctx context.Context, params *lsproto.Work
+ 	return resp, lsErr
+ }
+ 
++func (s *Server) handleExecuteCommand(ctx context.Context, languageService *ls.LanguageService, params *lsproto.ExecuteCommandParams) (lsproto.ExecuteCommandResponse, error) {
++	return ls.ExecuteCommand(ctx, languageService, params)
++}
++
+ func (s *Server) handleDocumentSymbol(ctx context.Context, ls *ls.LanguageService, params *lsproto.DocumentSymbolParams) (lsproto.DocumentSymbolResponse, error) {
+ 	return ls.ProvideDocumentSymbols(ctx, params.TextDocument.Uri)
+ }

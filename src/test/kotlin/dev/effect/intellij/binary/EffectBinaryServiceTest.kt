@@ -151,6 +151,22 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         }
     }
 
+    fun testManualModeRejectsRelativePath() {
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.MANUAL,
+                manualBinaryPath = "relative-tsgo",
+            ),
+        )
+
+        try {
+            EffectBinaryService.getInstance().ensureAvailable(project)
+            fail("Expected manual mode to reject a relative binary path")
+        } catch (error: EffectBinaryException) {
+            assertTrue(error.message?.contains("absolute") == true)
+        }
+    }
+
     fun testConcurrentManagedResolutionInstallsIntoCacheOnce() {
         val version = "4.5.6"
         val tarballName = "${platformPackage.substringAfter('/')}-${version}.tgz"

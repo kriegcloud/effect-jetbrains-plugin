@@ -36,10 +36,12 @@ node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo
   - `Adapted`
   - `Deferred`
   - `Pending evidence`
-- Do not turn deferred debugger, JCEF, or Mermaid transport work into release claims.
+- Keep debugger wording as best-effort unless there is recorded paused-session smoke evidence.
+- Keep Mermaid execute-command wording tied to the local canary until that bridge is published in
+  `@effect/tsgo`.
 - Keep support statements aligned with the current target baseline:
-  - WebStorm `2025.3.x`
-  - IntelliJ IDEA Ultimate `2025.3.x`
+  - WebStorm `2026.2` EAP / `262.*`
+  - IntelliJ IDEA Ultimate `2026.2` EAP / `262.*`
   - no Community Edition or Android Studio support claims
 
 ## Specs And Source Of Truth
@@ -52,6 +54,18 @@ The most important implementation references in this repo are:
 
 When docs drift from code, prefer fixing the docs to match shipped behavior unless the review turns
 up a genuine implementation bug that should be corrected separately.
+
+## Local `@effect/tsgo` Canary
+
+The plugin's managed `LATEST` and `PINNED` modes resolve published npm builds. To exercise repo-local
+server patches, build the subtree and point `MANUAL` binary mode at the generated executable:
+
+```bash
+(cd .repos/effect-tsgo && bash _tools/setup-repo.sh --ci && pnpm run build)
+```
+
+The expected local binary path is `.repos/effect-tsgo/tsgo`. This is the route for validating
+the `_effectGetLayerMermaid` execute-command bridge before it exists in a published package.
 
 ## Current Verification Posture
 

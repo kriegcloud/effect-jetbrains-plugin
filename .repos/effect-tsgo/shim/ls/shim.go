@@ -51,6 +51,13 @@ func DeprecateSortText(original ls.SortText) ls.SortText
 var ErrNeedsAutoImports = ls.ErrNeedsAutoImports
 var ErrNoSourceFile = ls.ErrNoSourceFile
 var ErrNoTokenAtPosition = ls.ErrNoTokenAtPosition
+//go:linkname ExecuteCommand github.com/microsoft/typescript-go/internal/ls.ExecuteCommand
+func ExecuteCommand(ctx context.Context, languageService *ls.LanguageService, params *lsproto.ExecuteCommandParams) (lsproto.ExecuteCommandResponse, error)
+//go:linkname ExecuteCommandDocumentURI github.com/microsoft/typescript-go/internal/ls.ExecuteCommandDocumentURI
+func ExecuteCommandDocumentURI(params *lsproto.ExecuteCommandParams) (lsproto.DocumentUri, error)
+type ExecuteCommandHandler = ls.ExecuteCommandHandler
+//go:linkname ExecuteCommandNames github.com/microsoft/typescript-go/internal/ls.ExecuteCommandNames
+func ExecuteCommandNames() []string
 type ExportInfo = ls.ExportInfo
 type ExportKind = ls.ExportKind
 const ExportKindDefault = ls.ExportKindDefault
@@ -122,6 +129,8 @@ func RegisterAfterInlayHintsCallback(cb func(program checker.Program, c *checker
 func RegisterAfterQuickInfoCallback(cb func(program checker.Program, c *checker.Checker, sf *ast.SourceFile, node *ast.Node, symbol *ast.Symbol, quickInfo string, documentation string, isMarkdown bool) (string, string, *ast.Node))
 //go:linkname RegisterCodeFixProvider github.com/microsoft/typescript-go/internal/ls.RegisterCodeFixProvider
 func RegisterCodeFixProvider(provider *ls.CodeFixProvider)
+//go:linkname RegisterExecuteCommandHandler github.com/microsoft/typescript-go/internal/ls.RegisterExecuteCommandHandler
+func RegisterExecuteCommandHandler(command string, handler ls.ExecuteCommandHandler)
 //go:linkname RegisterRefactorProvider github.com/microsoft/typescript-go/internal/ls.RegisterRefactorProvider
 func RegisterRefactorProvider(provider *ls.RefactorProvider)
 type RenameInfo = ls.RenameInfo

@@ -17,6 +17,7 @@ import com.intellij.util.ui.FormBuilder
 import java.awt.BorderLayout
 import java.awt.Dimension
 import javax.swing.JComponent
+import javax.swing.JCheckBox
 import javax.swing.JPanel
 import javax.swing.JSpinner
 import javax.swing.SpinnerNumberModel
@@ -68,17 +69,19 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     private val workspaceConfiguration = JBTextArea(8, 40)
     private val devToolsPort = JSpinner(SpinnerNumberModel(34_437, 1, 65_535, 1))
     private val metricsPollInterval = JSpinner(SpinnerNumberModel(500, 50, 60_000, 50))
+    private val injectNodeOptions = JCheckBox("Inject Effect instrumentation into Node.js run/debug configurations")
+    private val injectDebugConfigurationTypes = JBTextArea(3, 40).apply {
+        lineWrap = true
+        wrapStyleWord = true
+    }
+    private val spanStackIgnoreList = JBTextArea(4, 40)
     private val debuggerNotice = JBTextArea().apply {
         isEditable = false
         lineWrap = true
         wrapStyleWord = true
-        text = "Debugger instrumentation, automatic NODE_OPTIONS injection, span-stack filtering, and live Effect debug snapshots remain deferred. The current Debug tab only offers attach/setup guidance."
+        text = "Attach-time instrumentation is available for active debug sessions. Optional NODE_OPTIONS injection applies to Node.js run/debug configurations; live Context, Span Stack, Fibers, and Breakpoints snapshots are still best-effort while the JetBrains debugger bridge matures."
     }
     private val validationLabel = JBLabel()
-    private var storedSpanStackIgnoreList: List<String> = emptyList()
-    private var storedInjectNodeOptions: Boolean = false
-    private var storedInjectDebugConfigurationTypes: List<String> = listOf("Node.js")
-
     val panel: JComponent = JPanel(BorderLayout()).apply {
         val manualBinaryDescriptor = FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor().apply {
             title = "Select @effect/tsgo binary"
@@ -104,6 +107,9 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             .panel
 
         val debugPanel = FormBuilder.createFormBuilder()
+            .addComponent(injectNodeOptions)
+            .addLabeledComponent("Run/debug configuration types", JBScrollPane(injectDebugConfigurationTypes))
+            .addLabeledComponent("Span stack ignore list", JBScrollPane(spanStackIgnoreList))
             .addLabeledComponent("Debugger status", JBScrollPane(debuggerNotice))
             .panel
 
@@ -125,7 +131,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         preferredSize = Dimension(900, 640)
 
         binaryMode.addActionListener { updateBinaryFieldState() }
-        listOf(extraEnv, initializationOptions, workspaceConfiguration).forEach { area ->
+        listOf(extraEnv, initializationOptions, workspaceConfiguration, injectDebugConfigurationTypes, spanStackIgnoreList).forEach { area ->
             area.document.addDocumentListener(object : DocumentAdapter() {
                 override fun textChanged(event: DocumentEvent) {
                     clearProblems()
@@ -145,9 +151,9 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         workspaceConfiguration.text = settings.workspaceConfigurationJson
         devToolsPort.value = settings.devToolsPort
         metricsPollInterval.value = settings.metricsPollIntervalMs
-        storedSpanStackIgnoreList = settings.spanStackIgnoreList
-        storedInjectNodeOptions = settings.injectNodeOptions
-        storedInjectDebugConfigurationTypes = settings.injectDebugConfigurationTypes
+        injectNodeOptions.isSelected = settings.injectNodeOptions
+        injectDebugConfigurationTypes.text = settings.injectDebugConfigurationTypes.joinToString(separator = "\n")
+        spanStackIgnoreList.text = settings.spanStackIgnoreList.joinToString(separator = "\n")
         clearProblems()
         updateBinaryFieldState()
     }
@@ -162,9 +168,9 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             workspaceConfigurationJson = workspaceConfiguration.text.trim(),
             devToolsPort = devToolsPort.value as Int,
             metricsPollIntervalMs = metricsPollInterval.value as Int,
-            spanStackIgnoreList = storedSpanStackIgnoreList,
-            injectNodeOptions = storedInjectNodeOptions,
-            injectDebugConfigurationTypes = storedInjectDebugConfigurationTypes,
+            spanStackIgnoreList = parseList(spanStackIgnoreList.text),
+            injectNodeOptions = injectNodeOptions.isSelected,
+            injectDebugConfigurationTypes = parseList(injectDebugConfigurationTypes.text).ifEmpty { listOf("*") },
         )
 
     fun showProblems(problems: List<SettingProblem>) {
@@ -196,4 +202,11 @@ private class EffectProjectSettingsComponent(private val project: Project) {
                     else -> parts[0].trim() to parts[1]
                 }
             }
+
+    private fun parseList(text: String): List<String> =
+        text.lineSequence()
+            .flatMap { line -> line.splitToSequence(",") }
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .toList()
 }

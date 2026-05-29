@@ -14,7 +14,7 @@ data class EffectProjectSettings(
     val metricsPollIntervalMs: Int = EffectPluginConstants.DEFAULT_METRICS_POLL_INTERVAL_MS,
     val spanStackIgnoreList: List<String> = emptyList(),
     val injectNodeOptions: Boolean = false,
-    val injectDebugConfigurationTypes: List<String> = listOf("Node.js"),
+    val injectDebugConfigurationTypes: List<String> = listOf("*"),
 )
 
 class EffectProjectSettingsState {
@@ -28,7 +28,7 @@ class EffectProjectSettingsState {
     var metricsPollIntervalMs: Int = EffectPluginConstants.DEFAULT_METRICS_POLL_INTERVAL_MS
     var spanStackIgnoreList: MutableList<String> = mutableListOf()
     var injectNodeOptions: Boolean = false
-    var injectDebugConfigurationTypes: MutableList<String> = mutableListOf("Node.js")
+    var injectDebugConfigurationTypes: MutableList<String> = mutableListOf("*")
 }
 
 data class EffectApplicationState(
