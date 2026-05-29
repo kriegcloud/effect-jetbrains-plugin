@@ -32,12 +32,12 @@ class MyToolWindowFactory : ToolWindowFactory {
         private val service = toolWindow.project.service<MyProjectService>()
 
         fun getContent() = JBPanel<JBPanel<*>>().apply {
-            val label = JBLabel(MyBundle.message("randomLabel", "?"))
+            val label = JBLabel(MyBundle["randomLabel", "?"])
 
             add(label)
-            add(JButton(MyBundle.message("shuffle")).apply {
+            add(JButton(MyBundle["shuffle"]).apply {
                 addActionListener {
-                    label.text = MyBundle.message("randomLabel", service.getRandomNumber())
+                    label.text = MyBundle["randomLabel", service.getRandomNumber()]
                 }
             })
         }
