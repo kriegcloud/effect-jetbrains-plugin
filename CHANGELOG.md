@@ -4,6 +4,68 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add operator function for resource bundle key access in `MyBundle`
+
+### Changed
+
+- Upgrade Gradle Wrapper to `9.5.0`
+- Dependencies - upgrade `org.jetbrains.intellij.platform` to `2.16.0`
+- Dependencies - upgrade IntelliJ IDEA to `2025.2.6.2`
+- Dependencies (GitHub Actions) - upgrade `actions/upload-artifact` to `v7`
+- Dependencies (GitHub Actions) - upgrade `gradle/actions/setup-gradle` to `v6`
+- GitHub Actions - simplify plugin artifact upload in GitHub Actions workflow
+
+### Removed
+
+- Remove changelog configuration from `build.gradle.kts` as it is preconfigured now in the IntelliJ Platform Gradle Plugin
+- Remove `intellijPlatform.pluginConfiguration.description` default configuration from `build.gradle.kts`.
+- Remove `run-ui-tests.yml` workflow for outdated UI testing setup
+
+### Fixed
+
+- Update Run Plugin configuration to fix sandbox log file path
+- Remove `settings.gradle.kts` for cleanup of unused project configuration.
+- Update Run Plugin configuration to fix sandbox log file path
+
+## [2.5.0] - 2026-04-17
+
+### Changed
+
+- Migrate IntelliJ Platform repository configuration to `settings.gradle.kts`
+- Dependencies - upgrade `org.jetbrains.intellij.platform` to `2.14.0`
+- Update `group` property in `gradle.properties` and remove redundant `pluginGroup` configuration from `build.gradle.kts`
+- Update `version` property in `gradle.properties` and remove redundant `pluginVersion` configuration from `build.gradle.kts`
+- Inline `junit` dependency version in `build.gradle.kts` and remove it from `libs.versions.toml`.
+- Remove `platformVersion` property and inline its value in `build.gradle.kts` for cleaner configuration.
+- Remove `libs.versions.toml` and inline plugin versions in build scripts for simpler configuration.
+
+### Removed
+
+- Remove (empty) plugin and module dependency configurations from `build.gradle.kts` and `gradle.properties`.
+- Remove `opentest4j` dependency from `build.gradle.kts` and `libs.versions.toml`, redundant  since IntelliJ Platform 251+
+- Remove `gradleVersion` property and wrapper configuration as Gradle Wrapper should be updated with `./gradlew wrapper --gradle-version=9.4.1 && ./gradlew wrapper`
+- Remove Qodana configuration, dependencies, and related workflow steps.
+- Remove Kover configuration, dependencies, and related workflow steps.
+- Remove redundant Kotlin JVM toolchain configuration from `build.gradle.kts`
+- Remove redundant `intellijPlatform.pluginConfiguration.ideaVersion.sinceBuild` configuration from `build.gradle.kts`
+- Remove redundant `pluginSinceBuild` property from `gradle.properties`
+- Remove redundant `intellijPlatform.signing` configuration from `build.gradle.kts`
+- Remove redundant `intellijPlatform.publishing.token` configuration from `build.gradle.kts`
+- Remove redundant `intellijPlatform.pluginVerification` configuration from `build.gradle.kts`
+- Remove redundant `java` plugin declaration from `build.gradle.kts`
+- Remove `pluginVersion` configuration from `build.gradle.kts`.
+- Remove `pluginName` property from `gradle.properties` and `build.gradle.kts` as it is already set in the `plugin.xml`
+- Remove `intellijPlatform.publishing.channels` configuration from `build.gradle.kts`.
+- Remove `runIdeForUiTests` obsolete task from `build.gradle.kts`.
+
+## [2.4.1] - 2026-03-20
+
+### Fixed
+
+- GitHub Actions: handle empty releases list in draft cleanup step using `xargs -r`
+
 ### Changed
 
 - Upgrade Gradle Wrapper to `9.4.1`
@@ -890,7 +952,8 @@
 - GitHub Actions to automate testing and deployment
 - Kotlin support
 
-[Unreleased]: https://github.com/JetBrains/intellij-platform-plugin-template/compare/2.4.0...HEAD
+[Unreleased]: https://github.com/JetBrains/intellij-platform-plugin-template/compare/2.4.1...HEAD
+[2.4.1]: https://github.com/JetBrains/intellij-platform-plugin-template/compare/2.4.0...2.4.1
 [2.4.0]: https://github.com/JetBrains/intellij-platform-plugin-template/compare/2.3.1...2.4.0
 [2.3.1]: https://github.com/JetBrains/intellij-platform-plugin-template/compare/2.3.0...2.3.1
 [2.3.0]: https://github.com/JetBrains/intellij-platform-plugin-template/compare/2.2.0...2.3.0

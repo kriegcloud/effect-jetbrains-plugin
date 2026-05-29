@@ -16,9 +16,6 @@ jobs:
     name: Template Verify
     if: github.event.repository.name == 'intellij-platform-plugin-template'
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.properties.outputs.version }}
-      changelog: ${{ steps.properties.outputs.changelog }}
     steps:
 
       # Check out the current repository
@@ -31,9 +28,8 @@ jobs:
           echo "\`\`\`diff" >> $GITHUB_STEP_SUMMARY
 
           diff -U 0 \
-            -I '^pluginVersion' \
-            -I '^pluginGroup' \
-            -I '^pluginName' \
+            -I '^version' \
+            -I '^group' \
             -I '^pluginRepositoryUrl' \
             --label .github/template-cleanup/gradle.properties \
             --label gradle.properties \
