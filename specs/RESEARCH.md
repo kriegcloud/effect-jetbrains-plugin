@@ -3,9 +3,11 @@
 ## Executive summary
 The repo contains enough local evidence to define the product clearly:
 
-1. `.repos/zed-effect-tsgo` is the best reference for a direct `@effect/tsgo` LSP integration.
-2. `.repos/vscode-extension` is the best reference for Effect Dev Tools parity, not for `@effect/tsgo` editor wiring.
-3. `.repos/effect-tsgo` shows that JetBrains should launch the packaged binary directly and must not patch IDE-managed binaries.
+1. The Zed Effect tsgo extension is the best reference for a direct `@effect/tsgo` LSP integration.
+2. The Effect VS Code extension is the best reference for Effect Dev Tools parity, not for `@effect/tsgo` editor wiring.
+3. Effect tsgo shows that JetBrains should launch the packaged binary directly and must not patch IDE-managed binaries.
+
+Pinned upstream URLs and last imported commits live in [reference sources](../docs/reference-sources.md).
 4. Core layer graph access is already available through standard `@effect/tsgo` hover links; the blocked part is the VS Code-only local preview command built on a non-standard request path.
 5. JetBrains LSP support should target a `2025.3.x` baseline for maximal feature coverage. The official docs still exclude IntelliJ IDEA open source builds and Android Studio, but now also note that unified PyCharm without Pro subscription is supported starting in `2025.1`.
 

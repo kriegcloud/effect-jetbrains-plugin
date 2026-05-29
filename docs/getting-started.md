@@ -3,17 +3,21 @@
 ## What You Need
 
 - A supported JetBrains IDE:
-  - WebStorm `2025.3.x`
-  - IntelliJ IDEA Ultimate `2025.3.x`
-- A project with supported TypeScript files:
+  - WebStorm `2026.2` EAP
+  - IntelliJ IDEA Ultimate `2026.2` EAP
+- A Java 25 toolchain for local builds against the `262.*` EAP platform line.
+- A project with supported TypeScript or JavaScript files:
   - `.ts`
   - `.tsx`
   - `.cts`
   - `.mts`
+  - `.js`
+  - `.jsx`
+  - `.cjs`
+  - `.mjs`
 - One of the following binary strategies:
-  - Plugin-managed `LATEST`
-  - Plugin-managed `PINNED`
   - A `MANUAL` path to an executable native `tsgo` binary
+  - Plugin-managed `LATEST` or `PINNED` after you explicitly choose managed npm downloads
 
 Community Edition and Android Studio are out of scope for this plugin.
 
@@ -39,9 +43,9 @@ project-managed TypeScript binaries.
 
 | Mode | When to use it | Requirements |
 | --- | --- | --- |
-| `LATEST` | You want the newest published `@effect/tsgo` for your platform | Network access to npm during resolution |
-| `PINNED` | You need a stable version across projects or teammates | A specific `@effect/tsgo` version string |
-| `MANUAL` | You already manage the binary yourself | An executable native `tsgo` path |
+| `MANUAL` | You already manage the binary yourself, or want no plugin-managed download | An executable native `tsgo` path |
+| `LATEST` | You want the newest published `@effect/tsgo` for your platform | Network access to npm during resolution and download |
+| `PINNED` | You need a stable version across projects or teammates | A specific `@effect/tsgo` version string and network access to npm |
 
 The plugin validates pinned versions, manual paths, JSON fields, the runtime server port, and the
 metrics polling interval before applying settings.
@@ -59,10 +63,12 @@ npm exec --yes --package @effect/tsgo -- effect-tsgo get-exe-path
 
 Use the resulting executable path in `MANUAL` mode.
 
+Managed modes download npm platform packages and validate npm tarball integrity before extraction.
+
 ## Start The Language Server
 
 1. Save your settings.
-2. Open a supported TypeScript file.
+2. Open a supported TypeScript or JavaScript file.
 3. Watch the Effect LSP widget move through startup states until it reaches `Running`.
 
 The widget is the plugin's status-bar surface for:
@@ -91,7 +97,8 @@ The default runtime server port is `34437`.
 - LSP settings are project-scoped.
 - Runtime metrics are polled from connected clients.
 - Tracer data is streamed from runtime span events.
-- The `Debug` tab is present, but it currently provides attach/setup guidance instead of live
-  `Context`, `Span Stack`, `Fibers`, or `Breakpoints` snapshots.
+- A browser-backed `Tracer Web` tab appears when the IDE's JCEF runtime is available.
+- The `Debug` tab can attach to a paused debug session, inject optional Node.js instrumentation,
+  and show best-effort `Context`, `Span Stack`, `Fibers`, and `Breakpoints` snapshots.
 
 Continue with the [usage guide](usage.md) once the plugin is installed and running.

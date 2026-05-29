@@ -25,7 +25,9 @@ import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
+import java.security.MessageDigest
 import java.time.Duration
+import java.util.Base64
 import java.util.UUID
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
@@ -68,7 +70,11 @@ class EffectBinaryService {
                 status.markResolvingBinary("Resolving @effect/tsgo")
                 val platform = currentPlatformPackage()
                 val version = when (settings.binaryMode) {
-                    EffectBinaryMode.LATEST -> resolveLatestVersion()
+                    EffectBinaryMode.LATEST -> {
+                        status.markCheckingForUpdate("Checking latest @effect/tsgo version")
+                        resolveLatestVersion()
+                    }
+
                     EffectBinaryMode.PINNED -> settings.pinnedVersion
                     EffectBinaryMode.MANUAL -> error("unreachable")
                 }.ifBlank {
@@ -81,6 +87,7 @@ class EffectBinaryService {
 
                 synchronized(cacheOperationLock) {
                     if (!binaryPath.exists()) {
+                        status.markDownloadingBinary("Downloading ${platform.packageName}@$version")
                         installManagedPackage(platform.packageName, version, versionRoot, binaryPath)
                     }
                     ensureExecutable(binaryPath)
@@ -118,6 +125,7 @@ class EffectBinaryService {
     private fun validateManualBinary(path: Path) {
         when {
             path.toString().isBlank() -> throw EffectBinaryException("Manual binary path is blank.")
+            !path.isAbsolute -> throw EffectBinaryException("Manual binary path must be absolute: $path")
             !Files.exists(path) -> throw EffectBinaryException("Manual binary path does not exist: $path")
             !Files.isRegularFile(path) -> throw EffectBinaryException("Manual binary path must point to a file: $path")
             !Files.isExecutable(path) -> throw EffectBinaryException("Manual binary path must be executable: $path")
@@ -150,6 +158,9 @@ class EffectBinaryService {
         val tarballUrl = metadataJson.path("dist").path("tarball").asText().ifBlank {
             throw EffectBinaryException("npm metadata for $packageName@$version did not include a tarball URL.")
         }
+        val integrity = metadataJson.path("dist").path("integrity").asText().ifBlank {
+            throw EffectBinaryException("npm metadata for $packageName@$version did not include tarball integrity.")
+        }
 
         val tempRoot = Files.createTempDirectory("effect-tsgo-download")
         val archivePath = tempRoot.resolve("package.tgz")
@@ -160,6 +171,7 @@ class EffectBinaryService {
             archivePath.deleteIfExists()
             throw EffectBinaryException("Failed to download $packageName@$version from npm: HTTP ${archiveResponse.statusCode()}")
         }
+        verifyArchiveIntegrity(packageName, version, archivePath, integrity)
 
         try {
             extractArchive(archivePath, stagingRoot)
@@ -227,6 +239,49 @@ class EffectBinaryService {
                 throw EffectBinaryException("Binary is not executable and could not be updated: $path")
             }
         }
+    }
+
+    private fun verifyArchiveIntegrity(packageName: String, version: String, archivePath: Path, integrity: String) {
+        val accepted = integrity
+            .splitToSequence(' ')
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .any { token -> tokenMatchesArchive(token, archivePath) }
+
+        if (!accepted) {
+            archivePath.deleteIfExists()
+            throw EffectBinaryException("Downloaded $packageName@$version did not match npm integrity metadata.")
+        }
+    }
+
+    private fun tokenMatchesArchive(token: String, archivePath: Path): Boolean {
+        val algorithm = token.substringBefore('-', missingDelimiterValue = "")
+        val expected = token.substringAfter('-', missingDelimiterValue = "")
+        if (algorithm.isBlank() || expected.isBlank()) {
+            return false
+        }
+
+        val jdkAlgorithm = when (algorithm.lowercase()) {
+            "sha512" -> "SHA-512"
+            "sha384" -> "SHA-384"
+            "sha256" -> "SHA-256"
+            "sha1" -> "SHA-1"
+            else -> return false
+        }
+
+        val digest = MessageDigest.getInstance(jdkAlgorithm)
+        archivePath.inputStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) {
+                    break
+                }
+                digest.update(buffer, 0, read)
+            }
+        }
+
+        return Base64.getEncoder().encodeToString(digest.digest()) == expected
     }
 
     private fun sendStringRequest(request: HttpRequest): HttpResponse<String> {

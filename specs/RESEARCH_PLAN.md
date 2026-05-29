@@ -5,21 +5,23 @@ Produce a decision-complete specification set for a JetBrains plugin that:
 
 1. Integrates `@effect/tsgo` as the TypeScript language server inside JetBrains IDEs.
 2. Reaches maximum feasible parity with the local reference implementations.
-3. Separates true `@effect/tsgo` scope from the extra Effect Dev Tools scope found in `.repos/vscode-extension`.
+3. Separates true `@effect/tsgo` scope from the extra Effect Dev Tools scope found in the Effect VS Code extension.
 
 ## Ground Truth
 
-### Local references
-- `.repos/zed-effect-tsgo`
+### Reference sources
+- Zed Effect tsgo extension
   - Direct `@effect/tsgo` LSP integration for Zed.
   - Best reference for binary acquisition, version pinning, and passing settings into the server.
-- `.repos/effect-tsgo`
+- Effect tsgo
   - Source of the server, CLI packaging model, feature surface, and platform binaries.
-- `.repos/vscode-extension`
+- Effect VS Code extension
   - Effect Dev Tools plugin, not a pure `@effect/tsgo` editor integration.
   - Useful for observability, debug, metrics, tracer, and instrumentation parity targets.
-- `.repos/intellij-platform-plugin-template`
+- IntelliJ Platform Plugin Template
   - Starting scaffold for Gradle, plugin metadata, tests, signing, verification, and packaging.
+
+Pinned upstream URLs and last imported commits live in [reference sources](../docs/reference-sources.md).
 
 ### Critical scope clarification
 The request combines two adjacent but different scopes:
@@ -34,10 +36,10 @@ The research must preserve that split so later implementation can stage the work
 ### 1. Reference inventory
 Identify every user-facing surface, configuration point, transport, and lifecycle behavior in:
 
-- `.repos/zed-effect-tsgo`
-- `.repos/effect-tsgo`
-- `.repos/vscode-extension`
-- `.repos/intellij-platform-plugin-template`
+- Zed Effect tsgo extension
+- Effect tsgo
+- Effect VS Code extension
+- IntelliJ Platform Plugin Template
 
 Output:
 - `specs/research-reports/01-vscode-parity-surface.md`

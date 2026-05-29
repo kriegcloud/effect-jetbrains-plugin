@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import dev.effect.intellij.core.EffectPluginConstants
 
 data class EffectProjectSettings(
-    val binaryMode: EffectBinaryMode = EffectBinaryMode.LATEST,
+    val binaryMode: EffectBinaryMode = EffectBinaryMode.MANUAL,
     val pinnedVersion: String = "",
     val manualBinaryPath: String = "",
     val extraEnv: Map<String, String> = emptyMap(),
@@ -14,11 +14,11 @@ data class EffectProjectSettings(
     val metricsPollIntervalMs: Int = EffectPluginConstants.DEFAULT_METRICS_POLL_INTERVAL_MS,
     val spanStackIgnoreList: List<String> = emptyList(),
     val injectNodeOptions: Boolean = false,
-    val injectDebugConfigurationTypes: List<String> = listOf("Node.js"),
+    val injectDebugConfigurationTypes: List<String> = listOf("*"),
 )
 
 class EffectProjectSettingsState {
-    var binaryMode: String = EffectBinaryMode.LATEST.name
+    var binaryMode: String = EffectBinaryMode.MANUAL.name
     var pinnedVersion: String = ""
     var manualBinaryPath: String = ""
     var extraEnv: MutableMap<String, String> = linkedMapOf()
@@ -28,7 +28,7 @@ class EffectProjectSettingsState {
     var metricsPollIntervalMs: Int = EffectPluginConstants.DEFAULT_METRICS_POLL_INTERVAL_MS
     var spanStackIgnoreList: MutableList<String> = mutableListOf()
     var injectNodeOptions: Boolean = false
-    var injectDebugConfigurationTypes: MutableList<String> = mutableListOf("Node.js")
+    var injectDebugConfigurationTypes: MutableList<String> = mutableListOf("*")
 }
 
 data class EffectApplicationState(

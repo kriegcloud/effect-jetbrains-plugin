@@ -135,7 +135,11 @@ class EffectDevToolsService(private val project: Project) : Disposable {
 
     fun selectActiveClient(project: Project = this.project, clientId: String?) {
         synchronized(lock) {
-            activeClientId = clientId?.takeIf { clients.containsKey(it) }
+            val selectedClientId = clientId?.takeIf { clients.containsKey(it) }
+            if (activeClientId == selectedClientId) {
+                return
+            }
+            activeClientId = selectedClientId
             publishLocked()
         }
     }

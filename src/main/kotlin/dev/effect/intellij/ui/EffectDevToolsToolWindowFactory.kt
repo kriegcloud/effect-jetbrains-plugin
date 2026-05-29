@@ -19,6 +19,10 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.xdebugger.XDebuggerManager
 import dev.effect.intellij.debug.DebugBridgeState
 import dev.effect.intellij.debug.EffectDebugBridgeService
+import dev.effect.intellij.debug.EffectDebugBreakpointsSnapshot
+import dev.effect.intellij.debug.EffectDebugFiberEntry
+import dev.effect.intellij.debug.EffectDebugSpanEntry
+import dev.effect.intellij.debug.EffectDebugValueSnapshot
 import dev.effect.intellij.devtools.DevToolsRuntimeState
 import dev.effect.intellij.devtools.EffectDevToolsService
 import dev.effect.intellij.devtools.RuntimeClientSnapshot
@@ -27,6 +31,7 @@ import dev.effect.intellij.devtools.RuntimeMetricSnapshot
 import dev.effect.intellij.devtools.RuntimeSpanEventSnapshot
 import dev.effect.intellij.devtools.RuntimeSpanSnapshot
 import dev.effect.intellij.settings.EffectProjectSettingsConfigurable
+import dev.effect.intellij.webview.EffectWebTracerSupport
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
@@ -43,6 +48,7 @@ import javax.swing.tree.DefaultTreeModel
 class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
     private val devToolsService = project.getService(EffectDevToolsService::class.java)
     private val debugBridgeService = project.getService(EffectDebugBridgeService::class.java)
+    private var browserTracerPanel: Disposable? = null
     @Volatile
     private var disposed = false
 
@@ -59,6 +65,9 @@ class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
                     ResetMetricsAction(project),
                     ResetTracerAction(project),
                     AttachDebugAction(project),
+                    RefreshDebugSnapshotsAction(project),
+                    TogglePauseOnDefectsAction(project),
+                    InterruptCurrentFiberAction(project),
                 ),
                 true,
             ).component,
@@ -70,6 +79,8 @@ class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
         val clientsPanel = ClientsTabPanel(project, devToolsService)
         val metricsPanel = MetricsTabPanel(devToolsService)
         val tracerPanel = TracerTabPanel(devToolsService)
+        val webTracerPanel = EffectWebTracerSupport.createPanelOrNull()
+        browserTracerPanel = webTracerPanel
         val debugPanel = DebugTabGroup(debugBridgeService)
 
         devToolsService.addListener({ state ->
@@ -77,6 +88,7 @@ class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
                 clientsPanel.refresh(state)
                 metricsPanel.refresh(state)
                 tracerPanel.refresh(state)
+                webTracerPanel?.refresh(state)
             }
         }, this)
         debugBridgeService.addListener({ state ->
@@ -89,12 +101,14 @@ class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
         clientsPanel.refresh(initialRuntimeState)
         metricsPanel.refresh(initialRuntimeState)
         tracerPanel.refresh(initialRuntimeState)
+        webTracerPanel?.refresh(initialRuntimeState)
         debugPanel.refresh(debugBridgeService.currentState())
 
         return JTabbedPane().apply {
             addTab("Clients", clientsPanel.component)
             addTab("Metrics", metricsPanel.component)
             addTab("Tracer", tracerPanel.component)
+            webTracerPanel?.let { addTab("Tracer Web", it.component) }
             addTab("Debug", debugPanel.component)
         }
     }
@@ -109,6 +123,8 @@ class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
 
     override fun dispose() {
         disposed = true
+        browserTracerPanel?.dispose()
+        browserTracerPanel = null
     }
 }
 
@@ -316,10 +332,10 @@ private class TracerTabPanel(
 private class DebugTabGroup(
     private val debugBridgeService: EffectDebugBridgeService,
 ) {
-    private val contextPanel = DebugStatePanel("Context")
-    private val spanStackPanel = DebugStatePanel("Span Stack")
-    private val fibersPanel = DebugStatePanel("Fibers")
-    private val breakpointsPanel = DebugStatePanel("Breakpoints")
+    private val contextPanel = DebugStatePanel("Context", DebugBridgeState::formatContextSnapshot)
+    private val spanStackPanel = DebugStatePanel("Span Stack", DebugBridgeState::formatSpanStackSnapshot)
+    private val fibersPanel = DebugStatePanel("Fibers", DebugBridgeState::formatFibersSnapshot)
+    private val breakpointsPanel = DebugStatePanel("Breakpoints", DebugBridgeState::formatBreakpointsSnapshot)
 
     val component: JComponent = JTabbedPane().apply {
         addTab("Context", contextPanel.component)
@@ -335,7 +351,10 @@ private class DebugTabGroup(
     }
 }
 
-private class DebugStatePanel(private val title: String) {
+private class DebugStatePanel(
+    private val title: String,
+    private val formatter: (DebugBridgeState) -> String,
+) {
     private val header = JBLabel()
     private val body = JBTextArea().apply {
         isEditable = false
@@ -351,10 +370,18 @@ private class DebugStatePanel(private val title: String) {
     fun refresh(state: DebugBridgeState) {
         header.text = if (state.attachedSessionName == null) {
             "$title: no debug session attached"
+        } else if (state.refreshInProgress) {
+            "$title: refreshing ${state.attachedSessionName}"
         } else {
             "$title: attached to ${state.attachedSessionName} (${state.attachedSessionType ?: "unknown"})"
         }
-        body.text = state.guidance
+        body.text = buildString {
+            if (state.error != null) {
+                appendLine(state.error)
+                appendLine()
+            }
+            append(formatter(state))
+        }
     }
 }
 
@@ -452,6 +479,53 @@ private class AttachDebugAction(private val project: Project) : AnAction(
     }
 }
 
+private class RefreshDebugSnapshotsAction(private val project: Project) : AnAction(
+    "Refresh Debug",
+    "Refresh Effect debug snapshots from the attached session",
+    AllIcons.Actions.Refresh,
+) {
+    override fun actionPerformed(event: AnActionEvent) {
+        project.getService(EffectDebugBridgeService::class.java).refreshSnapshots(project)
+    }
+
+    override fun update(event: AnActionEvent) {
+        event.presentation.isEnabled = project.getService(EffectDebugBridgeService::class.java)
+            .currentState()
+            .attachedSessionName != null
+    }
+}
+
+private class TogglePauseOnDefectsAction(private val project: Project) : AnAction(
+    "Pause on Defects",
+    "Toggle Effect pause-on-defect instrumentation",
+    AllIcons.Actions.Execute,
+) {
+    override fun actionPerformed(event: AnActionEvent) {
+        project.getService(EffectDebugBridgeService::class.java).togglePauseOnDefects(project)
+    }
+
+    override fun update(event: AnActionEvent) {
+        event.presentation.isEnabled = project.getService(EffectDebugBridgeService::class.java)
+            .currentState()
+            .attachedSessionName != null
+    }
+}
+
+private class InterruptCurrentFiberAction(private val project: Project) : AnAction(
+    "Interrupt Fiber",
+    "Interrupt the current Effect fiber in the attached session",
+    AllIcons.Run.Stop,
+) {
+    override fun actionPerformed(event: AnActionEvent) {
+        project.getService(EffectDebugBridgeService::class.java).interruptCurrentFiber(project)
+    }
+
+    override fun update(event: AnActionEvent) {
+        val state = project.getService(EffectDebugBridgeService::class.java).currentState()
+        event.presentation.isEnabled = state.snapshot?.fibers?.any { it.isCurrent } == true
+    }
+}
+
 private fun RuntimeClientSnapshot.formatClientDetails(): String = buildString {
     appendLine(name)
     appendLine(remoteAddress)
@@ -494,6 +568,101 @@ private fun RuntimeSpanEventSnapshot.formatSpanEventDetails(): String = buildStr
     if (details.isNotEmpty()) {
         appendLine()
         details.forEach { detail -> appendLine("${detail.key}: ${detail.value}") }
+    }
+}
+
+private fun DebugBridgeState.formatContextSnapshot(): String {
+    val current = snapshot ?: return guidance
+    if (current.context.isEmpty()) {
+        return current.message ?: "No Effect Context entries are visible for the current fiber."
+    }
+    return buildString {
+        current.message?.let {
+            appendLine(it)
+            appendLine()
+        }
+        current.context.forEach { entry ->
+            appendLine(entry.tag)
+            appendLine(entry.value.formatDebugValue("  "))
+        }
+    }
+}
+
+private fun DebugBridgeState.formatSpanStackSnapshot(): String {
+    val current = snapshot ?: return guidance
+    if (current.spanStack.isEmpty()) {
+        return current.message ?: "No Effect spans are visible for the current fiber."
+    }
+    return current.spanStack.joinToString(separator = "\n\n") { it.formatDebugSpan() }
+}
+
+private fun DebugBridgeState.formatFibersSnapshot(): String {
+    val current = snapshot ?: return guidance
+    if (current.fibers.isEmpty()) {
+        return current.message ?: "No live Effect fibers have been observed yet."
+    }
+    return current.fibers.joinToString(separator = "\n\n") { it.formatDebugFiber() }
+}
+
+private fun DebugBridgeState.formatBreakpointsSnapshot(): String {
+    val current = snapshot ?: return guidance
+    return current.breakpoints.formatDebugBreakpoints()
+}
+
+private fun EffectDebugBreakpointsSnapshot.formatDebugBreakpoints(): String = buildString {
+    appendLine("pauseOnDefects: $pauseOnDefects")
+    location?.let {
+        appendLine("lastPauseLocation: ${it.path ?: "<unknown>"}:${it.line ?: 0}:${it.column ?: 0}")
+    }
+    if (values.isNotEmpty()) {
+        appendLine()
+        appendLine("Values")
+        values.forEach { value -> appendLine(value.formatDebugValue("  ")) }
+    }
+}
+
+private fun EffectDebugFiberEntry.formatDebugFiber(): String = buildString {
+    append(id)
+    if (isCurrent) {
+        append(" current")
+    }
+    appendLine()
+    appendLine("interruptible: $isInterruptible")
+    appendLine("interrupted: $isInterrupted")
+    lifeTimeMillis?.let { appendLine("lifetimeMs: $it") }
+    if (children.isNotEmpty()) {
+        appendLine("children: ${children.joinToString()}")
+    }
+    if (stack.isNotEmpty()) {
+        appendLine()
+        appendLine("Span Stack")
+        stack.forEach { span -> appendLine("  ${span.formatDebugSpan().replace("\n", "\n  ")}") }
+    }
+}
+
+private fun EffectDebugSpanEntry.formatDebugSpan(): String = buildString {
+    appendLine(name)
+    spanId?.let { appendLine("spanId: $it") }
+    traceId?.let { appendLine("traceId: $it") }
+    stackIndex?.let { appendLine("stackIndex: $it") }
+    if (path != null) {
+        appendLine("source: $path:${line ?: 0}:${column ?: 0}")
+    }
+    if (attributes.isNotEmpty()) {
+        appendLine("attributes: ${attributes.joinToString()}")
+    }
+}
+
+private fun EffectDebugValueSnapshot.formatDebugValue(indent: String = ""): String = buildString {
+    append(indent)
+    append(label)
+    type?.takeIf { it != label }?.let { append(" : ").append(it) }
+    summary?.takeIf { it != label }?.let { append(" = ").append(it) }
+    if (children.isNotEmpty()) {
+        children.forEach { child ->
+            appendLine()
+            append(child.formatDebugValue("$indent  "))
+        }
     }
 }
 

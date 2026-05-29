@@ -1,11 +1,12 @@
 import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
     id("java")
     alias(libs.plugins.kotlin)
-    alias(libs.plugins.intelliJPlatform)
+    id("org.jetbrains.intellij.platform")
     alias(libs.plugins.changelog)
     alias(libs.plugins.qodana)
     alias(libs.plugins.kover)
@@ -15,15 +16,7 @@ group = providers.gradleProperty("pluginGroup").get()
 version = providers.gradleProperty("pluginVersion").get()
 
 kotlin {
-    jvmToolchain(21)
-}
-
-repositories {
-    mavenCentral()
-
-    intellijPlatform {
-        defaultRepositories()
-    }
+    jvmToolchain(25)
 }
 
 dependencies {
@@ -88,6 +81,7 @@ intellijPlatform {
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
+            untilBuild = providers.gradleProperty("pluginUntilBuild")
         }
     }
 
@@ -106,7 +100,8 @@ intellijPlatform {
 
     pluginVerification {
         ides {
-            recommended()
+            create(IntelliJPlatformType.WebStorm, providers.gradleProperty("platformVersion"))
+            create(IntelliJPlatformType.IntellijIdeaUltimate, providers.gradleProperty("pluginVerifierIntelliJIdeaVersion"))
         }
     }
 }

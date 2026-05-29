@@ -6,7 +6,7 @@ Turn the validated research into a JetBrains-native, implementation-ready design
 ## Required inputs
 - `specs/RESEARCH.md`
 - `specs/research-reports/*.md`
-- local template under `.repos/intellij-platform-plugin-template`
+- IntelliJ Platform Plugin Template reference listed in `docs/reference-sources.md`
 
 ## Context carried forward
 - Primary targets are WebStorm and IntelliJ IDEA Ultimate.

@@ -9,6 +9,8 @@ import java.util.EventListener
 enum class EffectLspStatus {
     NOT_CONFIGURED,
     RESOLVING_BINARY,
+    CHECKING_FOR_UPDATE,
+    DOWNLOADING_BINARY,
     STARTING,
     RUNNING,
     RESTART_REQUIRED,
@@ -44,6 +46,10 @@ class EffectStatusService {
     }
 
     fun markResolvingBinary(detail: String? = null) = update(EffectLspStatus.RESOLVING_BINARY, detail = detail)
+
+    fun markCheckingForUpdate(detail: String? = null) = update(EffectLspStatus.CHECKING_FOR_UPDATE, detail = detail)
+
+    fun markDownloadingBinary(detail: String? = null) = update(EffectLspStatus.DOWNLOADING_BINARY, detail = detail)
 
     fun markStarting(binaryPath: String? = null) = update(EffectLspStatus.STARTING, binaryPath = binaryPath)
 

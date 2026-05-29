@@ -1,7 +1,7 @@
 # Research Report: VS Code Parity Surface
 
 ## Summary
-`.repos/vscode-extension` is an Effect Dev Tools extension, not a direct `@effect/tsgo` editor integration. It is still the richest local reference for runtime clients, metrics, tracing, debugger-bound inspection, instrumentation injection, and the extra local layer-mermaid preview command.
+The Effect VS Code extension is an Effect Dev Tools extension, not a direct `@effect/tsgo` editor integration. It is still the richest reference for runtime clients, metrics, tracing, debugger-bound inspection, instrumentation injection, and the extra local layer-mermaid preview command.
 
 ## Main findings
 
@@ -74,18 +74,18 @@ This means JetBrains parity is not just a UI-porting exercise. It needs a real d
 Treat this repository as the reference for a separate `Dev Tools parity` workstream. Stage it after core `@effect/tsgo` parity, and stage the debugger-bound pieces after the basic tool-window surfaces.
 
 ## Source checkpoints
-- `.repos/vscode-extension/package.json`
-- `.repos/vscode-extension/src/extension.ts`
-- `.repos/vscode-extension/src/Clients.ts`
-- `.repos/vscode-extension/src/ClientsProvider.ts`
-- `.repos/vscode-extension/src/MetricsProvider.ts`
-- `.repos/vscode-extension/src/SpanProvider.ts`
-- `.repos/vscode-extension/src/TracerProvider.ts`
-- `.repos/vscode-extension/src/ContextProvider.ts`
-- `.repos/vscode-extension/src/DebugSpanStackProvider.ts`
-- `.repos/vscode-extension/src/DebugFibersProvider.ts`
-- `.repos/vscode-extension/src/DebugBreakpointsProvider.ts`
-- `.repos/vscode-extension/src/DebugEnv.ts`
-- `.repos/vscode-extension/src/DebugChannel.ts`
-- `.repos/vscode-extension/src/InjectNodeOptionsInstrumentationProvider.ts`
-- `.repos/vscode-extension/src/LayerHoverProvider.ts`
+- Effect VS Code extension `package.json`
+- Effect VS Code extension `src/extension.ts`
+- Effect VS Code extension `src/Clients.ts`
+- Effect VS Code extension `src/ClientsProvider.ts`
+- Effect VS Code extension `src/MetricsProvider.ts`
+- Effect VS Code extension `src/SpanProvider.ts`
+- Effect VS Code extension `src/TracerProvider.ts`
+- Effect VS Code extension `src/ContextProvider.ts`
+- Effect VS Code extension `src/DebugSpanStackProvider.ts`
+- Effect VS Code extension `src/DebugFibersProvider.ts`
+- Effect VS Code extension `src/DebugBreakpointsProvider.ts`
+- Effect VS Code extension `src/DebugEnv.ts`
+- Effect VS Code extension `src/DebugChannel.ts`
+- Effect VS Code extension `src/InjectNodeOptionsInstrumentationProvider.ts`
+- Effect VS Code extension `src/LayerHoverProvider.ts`

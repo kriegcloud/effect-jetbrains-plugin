@@ -1,16 +1,16 @@
 # Overview
 
 ## Project goal
-Build a JetBrains plugin for `@effect/tsgo` and the adjacent Effect Dev Tools surfaces, using the local references as the source of truth for desired behavior and parity.
+Build a JetBrains plugin for `@effect/tsgo` and the adjacent Effect Dev Tools surfaces, using the upstream references listed in [reference sources](../docs/reference-sources.md) as the source of truth for desired behavior and parity.
 
 ## Canonical references
-- `.repos/zed-effect-tsgo`
+- Zed Effect tsgo extension
   - direct `@effect/tsgo` editor integration reference
-- `.repos/effect-tsgo`
+- Effect tsgo
   - server, packaging, and feature reference
-- `.repos/vscode-extension`
+- Effect VS Code extension
   - Dev Tools parity reference
-- `.repos/intellij-platform-plugin-template`
+- IntelliJ Platform Plugin Template
   - build, packaging, and release scaffold
 
 ## Phase flow
@@ -43,7 +43,7 @@ Build a JetBrains plugin for `@effect/tsgo` and the adjacent Effect Dev Tools su
 ## Current defaults
 - Commercial JetBrains IDEs only
 - Primary targets: WebStorm and IntelliJ IDEA Ultimate
-- Platform baseline: `2025.3.x`
+- Platform baseline: WebStorm/IntelliJ Platform `262.*`
 - Runtime model: direct `@effect/tsgo --lsp --stdio`
 - No IDE binary patching
 

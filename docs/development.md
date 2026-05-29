@@ -8,6 +8,10 @@ Use these top-level docs as the main entry points:
   - public landing page and Marketplace-description source
 - [docs/README](README.md)
   - canonical long-form user documentation
+- [Publishing](publishing.md)
+  - Marketplace release process, owner setup, signing, and first-upload checklist
+- [Reference sources](reference-sources.md)
+  - upstream reference repos and canary provenance
 - [specs/README](../specs/README.md)
   - implementation spec package and handoff history
 
@@ -36,10 +40,11 @@ node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo
   - `Adapted`
   - `Deferred`
   - `Pending evidence`
-- Do not turn deferred debugger, JCEF, or Mermaid transport work into release claims.
+- Keep debugger wording as best-effort unless there is recorded paused-session smoke evidence.
+- Keep Mermaid execute-command wording experimental until that bridge is published in `@effect/tsgo`.
 - Keep support statements aligned with the current target baseline:
-  - WebStorm `2025.3.x`
-  - IntelliJ IDEA Ultimate `2025.3.x`
+  - WebStorm `2026.2` EAP / `262.*`
+  - IntelliJ IDEA Ultimate `2026.2` EAP / `262.*`
   - no Community Edition or Android Studio support claims
 
 ## Specs And Source Of Truth
@@ -52,6 +57,20 @@ The most important implementation references in this repo are:
 
 When docs drift from code, prefer fixing the docs to match shipped behavior unless the review turns
 up a genuine implementation bug that should be corrected separately.
+
+## External `@effect/tsgo` Canary
+
+The plugin's managed `LATEST` and `PINNED` modes resolve published npm builds. To exercise unpublished
+server patches, clone `Effect-TS/effect-tsgo` outside this repository, build it there, and point
+`MANUAL` binary mode at the generated executable:
+
+```bash
+git clone https://github.com/Effect-TS/effect-tsgo ../effect-tsgo-canary
+(cd ../effect-tsgo-canary && bash _tools/setup-repo.sh --ci && pnpm run build)
+```
+
+Use the resulting `../effect-tsgo-canary/tsgo` path in `MANUAL` mode. This is the route for validating
+the `_effectGetLayerMermaid` execute-command bridge before it exists in a published package.
 
 ## Current Verification Posture
 

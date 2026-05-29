@@ -16,9 +16,11 @@ import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.eclipse.lsp4j.ConfigurationItem
 import org.eclipse.lsp4j.InitializeResult
+import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
-import java.net.InetSocketAddress
+import java.security.MessageDigest
+import java.util.Base64
 
 class EffectLspStatusOwnershipTest : BasePlatformTestCase() {
     fun testBinaryResolutionDoesNotSetRunningBeforeLspInitialization() {
@@ -135,7 +137,7 @@ class EffectLspStatusOwnershipTest : BasePlatformTestCase() {
             server.createContext("/$platformPackage/$version") { exchange ->
                 respondJson(
                     exchange,
-                    """{"dist":{"tarball":"http://127.0.0.1:${server.address.port}/tarballs/$tarballName"}}""",
+                    """{"dist":{"tarball":"http://127.0.0.1:${server.address.port}/tarballs/$tarballName","integrity":"${integrity(tarballPath)}"}}""",
                 )
             }
             server.createContext("/tarballs/$tarballName") { exchange ->
@@ -226,6 +228,11 @@ class EffectLspStatusOwnershipTest : BasePlatformTestCase() {
                 tar.finish()
             }
         }
+    }
+
+    private fun integrity(path: Path): String {
+        val digest = MessageDigest.getInstance("SHA-512").digest(Files.readAllBytes(path))
+        return "sha512-${Base64.getEncoder().encodeToString(digest)}"
     }
 
     private fun respondJson(exchange: HttpExchange, body: String) {
