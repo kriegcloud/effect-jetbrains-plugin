@@ -1,8 +1,42 @@
 /**
+ * Type-safe HTTP clients derived from `HttpApi` declarations.
+ *
+ * This module turns the groups and endpoints described by an `HttpApi` into
+ * callable client methods backed by an `HttpClient`. Use {@link make} or
+ * {@link makeWith} to call a remote API with the same schema-driven contract as
+ * the server, and use {@link group}, {@link endpoint}, or {@link urlBuilder}
+ * when only part of an API or only the encoded URL is needed.
+ *
+ * **Mental model**
+ *
+ * A generated client mirrors the API structure: top-level endpoints become
+ * methods on the client, and named groups become nested objects. Each call
+ * encodes path parameters, query values, headers, and payloads from endpoint
+ * schemas, runs client middleware, executes the request, and decodes successful
+ * or declared error responses from the returned `HttpClientResponse`.
+ *
+ * **Common tasks**
+ *
+ * Use {@link make} when the `HttpClient` service should come from the Effect
+ * environment. Use {@link makeWith} when a concrete or transformed client is
+ * already available. Use {@link urlBuilder} to reuse endpoint path and query
+ * encoding without executing a request. Select `responseMode` per call when
+ * code needs the decoded value, the raw response, or both.
+ *
+ * **Gotchas**
+ *
+ * Payloads for HTTP methods without request bodies are encoded into URL
+ * parameters, and multipart payloads must be supplied as `FormData`.
+ * `response-only` skips success and error decoding for custom response
+ * handling. Declared error responses decode into the endpoint error type;
+ * unknown statuses fail as `HttpClientError.DecodeError`, and response decoding
+ * can fail with `SchemaError`.
+ *
  * @since 4.0.0
  */
 import * as Arr from "../../Array.ts"
 import * as Cause from "../../Cause.ts"
+import type * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
 import { identity } from "../../Function.ts"
 import * as Option from "../../Option.ts"
@@ -11,7 +45,6 @@ import * as Schema from "../../Schema.ts"
 import * as AST from "../../SchemaAST.ts"
 import * as Issue from "../../SchemaIssue.ts"
 import * as Transformation from "../../SchemaTransformation.ts"
-import type * as ServiceMap from "../../ServiceMap.ts"
 import type { Simplify } from "../../Types.ts"
 import * as UndefinedOr from "../../UndefinedOr.ts"
 import * as HttpBody from "../http/HttpBody.ts"
@@ -23,16 +56,18 @@ import * as HttpMethod from "../http/HttpMethod.ts"
 import * as UrlParams from "../http/UrlParams.ts"
 import * as HttpApi from "./HttpApi.ts"
 import * as HttpApiEndpoint from "./HttpApiEndpoint.ts"
-import type { BadRequest } from "./HttpApiError.ts"
 import type * as HttpApiGroup from "./HttpApiGroup.ts"
 import type * as HttpApiMiddleware from "./HttpApiMiddleware.ts"
 import * as HttpApiSchema from "./HttpApiSchema.ts"
 
 /**
- * @since 4.0.0
+ * The type-safe client shape generated from HTTP API groups, with non-top-level
+ * groups exposed as nested objects and top-level endpoints exposed as methods.
+ *
  * @category models
+ * @since 4.0.0
  */
-export type Client<Groups extends HttpApiGroup.Any, E = BadRequest, R = never> = Simplify<
+export type Client<Groups extends HttpApiGroup.Any, E = never, R = never> = Simplify<
   & {
     readonly [Group in Extract<Groups, { readonly topLevel: false }> as HttpApiGroup.Name<Group>]: Client.Group<
       Group,
@@ -47,27 +82,38 @@ export type Client<Groups extends HttpApiGroup.Any, E = BadRequest, R = never> =
 >
 
 /**
- * @since 4.0.0
+ * Derives the typed client interface for an `HttpApi`, preserving any additional
+ * client error and service requirements supplied by the caller.
+ *
  * @category models
+ * @since 4.0.0
  */
-export type ForApi<Api extends HttpApi.Any, E = BadRequest, R = never> = Api extends
+export type ForApi<Api extends HttpApi.Any, E = never, R = never> = Api extends
   HttpApi.HttpApi<infer _Id, infer Groups> ? Client<Groups, E, R> :
   never
 
 /**
+ * Helper types used to describe generated HTTP API clients, including endpoint
+ * methods, response modes, and grouped client shapes.
+ *
  * @since 4.0.0
- * @category models
  */
 export declare namespace Client {
   /**
-   * @since 4.0.0
+   * The response mode accepted by generated client methods, controlling whether a
+   * call returns the decoded success value, the raw response, or both.
+   *
    * @category models
+   * @since 4.0.0
    */
   export type ResponseMode = HttpApiEndpoint.ClientResponseMode
 
   /**
-   * @since 4.0.0
+   * Computes the value returned by a client method for a success type and response
+   * mode.
+   *
    * @category models
+   * @since 4.0.0
    */
   export type Response<Success, Mode extends ResponseMode> = [Mode] extends ["decoded-and-response"]
     ? [Success, HttpClientResponse.HttpClientResponse]
@@ -75,8 +121,11 @@ export declare namespace Client {
     : Success
 
   /**
-   * @since 4.0.0
+   * The client object for one API group, mapping each endpoint name in that group to
+   * its typed client method.
+   *
    * @category models
+   * @since 4.0.0
    */
   export type Group<Groups extends HttpApiGroup.Any, GroupName extends Groups["identifier"], E, R> =
     [HttpApiGroup.WithName<Groups, GroupName>] extends [HttpApiGroup.HttpApiGroup<infer _GroupName, infer _Endpoints>] ?
@@ -86,8 +135,12 @@ export declare namespace Client {
       never
 
   /**
-   * @since 4.0.0
+   * The typed function generated for an endpoint, accepting the endpoint request
+   * shape and returning an effect whose success, error, and service channels reflect
+   * the endpoint schemas, middleware, and selected response mode.
+   *
    * @category models
+   * @since 4.0.0
    */
   export type Method<Endpoint, E, R> = [Endpoint] extends [
     HttpApiEndpoint.HttpApiEndpoint<
@@ -122,8 +175,11 @@ export declare namespace Client {
     never
 
   /**
-   * @since 4.0.0
+   * Extracts client methods for endpoints in top-level groups so they can be exposed
+   * directly on the generated client object.
+   *
    * @category models
+   * @since 4.0.0
    */
   export type TopLevelMethods<Groups extends HttpApiGroup.Any, E, R> =
     Extract<Groups, { readonly topLevel: true }> extends
@@ -146,8 +202,11 @@ type UrlBuilderArgs<Endpoint extends HttpApiEndpoint.Any> = [UrlBuilderRequest<E
   : [request: UrlBuilderRequest<Endpoint>]
 
 /**
- * @since 4.0.0
+ * The type-safe URL builder shape for an HTTP API, mirroring the generated client
+ * layout while returning URL strings instead of executing requests.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type UrlBuilder<Api extends HttpApi.Any> = Api extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Simplify<
     & {
@@ -176,7 +235,8 @@ type UrlBuilderTopLevelMethods<Groups extends HttpApiGroup.Any> = Extract<Groups
   : never :
   never
 
-const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Any, E, R>(
+/** @internal */
+export const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Any, E, R>(
   api: HttpApi.HttpApi<ApiId, Groups>,
   options: {
     readonly httpClient: HttpClient.HttpClient.With<E, R>
@@ -186,12 +246,12 @@ const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Any, E, R>
     }>
     readonly onGroup?: (options: {
       readonly group: HttpApiGroup.AnyWithProps
-      readonly mergedAnnotations: ServiceMap.ServiceMap<never>
+      readonly mergedAnnotations: Context.Context<never>
     }) => void
     readonly onEndpoint: (options: {
       readonly group: HttpApiGroup.AnyWithProps
       readonly endpoint: HttpApiEndpoint.AnyWithProps
-      readonly mergedAnnotations: ServiceMap.ServiceMap<never>
+      readonly mergedAnnotations: Context.Context<never>
       readonly middleware: ReadonlySet<HttpApiMiddleware.AnyService>
       readonly successes: ReadonlyMap<number, readonly [Schema.Top, ...Array<Schema.Top>]>
       readonly errors: ReadonlyMap<number, readonly [Schema.Top, ...Array<Schema.Top>]>
@@ -202,9 +262,9 @@ const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Any, E, R>
       | undefined
     readonly baseUrl?: URL | string | undefined
   }
-): Effect.Effect<void, unknown, unknown> =>
+): Effect.Effect<void> =>
   Effect.gen(function*() {
-    const services = yield* Effect.services<any>()
+    const services = yield* Effect.context()
 
     const httpClient = options.httpClient.pipe(
       options?.baseUrl === undefined
@@ -369,8 +429,11 @@ const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Any, E, R>
   })
 
 /**
- * @since 4.0.0
+ * Constructs a type-safe client for an HTTP API using the `HttpClient` service,
+ * endpoint schemas, middleware, and optional client or response transformations.
+ *
  * @category constructors
+ * @since 4.0.0
  */
 export const make = <ApiId extends string, Groups extends HttpApiGroup.Any>(
   api: HttpApi.HttpApi<ApiId, Groups>,
@@ -386,15 +449,19 @@ export const make = <ApiId extends string, Groups extends HttpApiGroup.Any>(
   never,
   HttpClient.HttpClient | HttpApiGroup.MiddlewareClient<Groups>
 > =>
-  Effect.flatMap(HttpClient.HttpClient.asEffect(), (httpClient) =>
+  Effect.flatMap(HttpClient.HttpClient, (httpClient) =>
     makeWith(api, {
       ...options,
       httpClient: options?.transformClient ? options.transformClient(httpClient) : httpClient
     }))
 
 /**
- * @since 4.0.0
+ * Constructs a type-safe client for an HTTP API from the supplied `HttpClient`,
+ * using the API metadata to encode requests, execute middleware, and decode
+ * responses.
+ *
  * @category constructors
+ * @since 4.0.0
  */
 export const makeWith = <ApiId extends string, Groups extends HttpApiGroup.Any, E, R>(
   api: HttpApi.HttpApi<ApiId, Groups>,
@@ -405,7 +472,7 @@ export const makeWith = <ApiId extends string, Groups extends HttpApiGroup.Any, 
       | undefined
     readonly baseUrl?: URL | string | undefined
   }
-): Effect.Effect<Client<Groups, BadRequest | E, R>, never, HttpApiGroup.MiddlewareClient<Groups>> => {
+): Effect.Effect<Client<Groups, E, R>, never, HttpApiGroup.MiddlewareClient<Groups>> => {
   const client: Record<string, Record<string, any>> = {}
   return makeClient(api, {
     ...options,
@@ -420,8 +487,11 @@ export const makeWith = <ApiId extends string, Groups extends HttpApiGroup.Any, 
 }
 
 /**
- * @since 4.0.0
+ * Builds a typed client object for a single API group from the supplied
+ * `HttpClient`, filtering the API to that group.
+ *
  * @category constructors
+ * @since 4.0.0
  */
 export const group = <
   ApiId extends string,
@@ -440,7 +510,7 @@ export const group = <
     readonly baseUrl?: URL | string | undefined
   }
 ): Effect.Effect<
-  Client.Group<Groups, GroupName, BadRequest | E, R>,
+  Client.Group<Groups, GroupName, E, R>,
   never,
   HttpApiGroup.MiddlewareClient<HttpApiGroup.WithName<Groups, GroupName>>
 > => {
@@ -455,8 +525,11 @@ export const group = <
 }
 
 /**
- * @since 4.0.0
+ * Builds the typed client method for one endpoint in one API group, using the
+ * supplied `HttpClient` and endpoint metadata.
+ *
  * @category constructors
+ * @since 4.0.0
  */
 export const endpoint = <
   ApiId extends string,
@@ -480,7 +553,7 @@ export const endpoint = <
 ): Effect.Effect<
   Client.Method<
     HttpApiEndpoint.WithName<HttpApiGroup.Endpoints<HttpApiGroup.WithName<Groups, GroupName>>, EndpointName>,
-    BadRequest | E,
+    E,
     R
   >,
   never,
@@ -501,7 +574,8 @@ export const endpoint = <
 /**
  * Creates a type-safe URL builder that mirrors `HttpApiClient.make`.
  *
- * @example
+ * **Example** (Building typed URLs)
+ *
  * ```ts
  * import { Schema } from "effect"
  * import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
@@ -523,8 +597,9 @@ export const endpoint = <
  * })
  * //=> "https://api.example.com/users/123"
  * ```
- * @since 4.0.0
+ *
  * @category constructors
+ * @since 4.0.0
  */
 export const urlBuilder = <Api extends HttpApi.Any>(api: Api, options?: {
   readonly baseUrl?: URL | string | undefined
@@ -715,11 +790,11 @@ function getEncodePayloadSchemaFromBody(
   const encoding = HttpApiSchema.getPayloadEncoding(ast, method)
   const out = $HttpBody.pipe(Schema.decodeTo(
     schema,
-    Transformation.transformOrFail({
+    Transformation.transformOrFail<unknown, HttpBody.HttpBody>({
       decode(httpBody) {
         return Effect.fail(new Issue.Forbidden(Option.some(httpBody), { message: "Encode only schema" }))
       },
-      encode(t: unknown) {
+      encode(t) {
         switch (encoding._tag) {
           case "Multipart":
             return Effect.fail(new Issue.Forbidden(Option.some(t), { message: "Payload must be a FormData" }))

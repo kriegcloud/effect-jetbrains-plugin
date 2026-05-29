@@ -1,5 +1,19 @@
 /**
- * Node.js implementation of `ChildProcessSpawner`.
+ * Shared Node.js implementation of the child process spawner service.
+ *
+ * This module adapts `node:child_process.spawn` to the Effect
+ * `ChildProcessSpawner` service. Provide {@link layer} to run `ChildProcess`
+ * commands in Node-compatible runtimes: commands get scoped process handles
+ * with stdin sinks, stdout and stderr streams, exit-code waiting,
+ * interruption-time cleanup, process killing, and custom file-descriptor pipes.
+ *
+ * The implementation sits below the command-building API. It validates and
+ * resolves `cwd` through the Effect `FileSystem` and `Path` services,
+ * translates Node errno failures to `PlatformError`, and uses scopes to
+ * terminate referenced children when the owning effect is interrupted or
+ * finalized. Pipelines are flattened by {@link flattenCommand} and spawned one
+ * process at a time, wiring the selected source stream (`stdout`, `stderr`,
+ * `all`, or `fdN`) to the destination `stdin` or `fdN`.
  *
  * @since 4.0.0
  */
@@ -343,6 +357,23 @@ const make = Effect.gen(function*() {
     })
   }
 
+  const killProcessGroupOnExit = (
+    childProcess: NodeChildProcess.ChildProcess,
+    signal: NodeJS.Signals
+  ): void => {
+    if (globalThis.process.platform === "win32") {
+      NodeChildProcess.exec(`taskkill /pid ${childProcess.pid} /T /F`, () => {
+        // ignore errors during best-effort cleanup
+      })
+      return
+    }
+    try {
+      globalThis.process.kill(-childProcess.pid!, signal)
+    } catch {
+      // ignore errors during best-effort cleanup
+    }
+  }
+
   const killProcess = (
     command: ChildProcess.StandardCommand,
     childProcess: NodeChildProcess.ChildProcess,
@@ -419,6 +450,8 @@ const make = Effect.gen(function*() {
         const stdoutConfig = resolveOutputOption(cmd.options, "stdout")
         const stderrConfig = resolveOutputOption(cmd.options, "stderr")
         const resolvedAdditionalFds = resolveAdditionalFds(cmd.options)
+        let isReferenced = true
+        let cleanupOnNonZeroExit = false
 
         const cwd = yield* resolveWorkingDirectory(cmd.options)
         const env = resolveEnvironment(cmd.options)
@@ -444,6 +477,9 @@ const make = Effect.gen(function*() {
               }
               return yield* Effect.void
             }
+            if (!isReferenced) {
+              return yield* Effect.void
+            }
             // Process is still running, kill it
             return yield* killWithTimeout((command, childProcess, signal) =>
               Effect.catch(
@@ -458,6 +494,26 @@ const make = Effect.gen(function*() {
         )
 
         const pid = ProcessId(childProcess.pid!)
+        childProcess.on("exit", (code) => {
+          if (cleanupOnNonZeroExit && code !== 0 && Predicate.isNotNull(code)) {
+            killProcessGroupOnExit(childProcess, cmd.options.killSignal ?? "SIGTERM")
+          }
+        })
+        const reref = Effect.sync(() => {
+          if (!isReferenced) {
+            childProcess.ref()
+            isReferenced = true
+            cleanupOnNonZeroExit = false
+          }
+        })
+        const unref = Effect.sync(() => {
+          if (isReferenced) {
+            childProcess.unref()
+            isReferenced = false
+            cleanupOnNonZeroExit = true
+          }
+          return reref
+        })
         const stdin = yield* setupChildStdin(cmd, childProcess, stdinConfig)
         const { all, stderr, stdout } = setupChildOutputStreams(cmd, childProcess, stdoutConfig, stderrConfig)
         const { getInputFd, getOutputFd } = yield* setupAdditionalFds(cmd, childProcess, resolvedAdditionalFds)
@@ -495,14 +551,15 @@ const make = Effect.gen(function*() {
           stderr,
           all,
           getInputFd,
-          getOutputFd
+          getOutputFd,
+          unref
         })
       }
       case "PipedCommand": {
         const { commands, pipeOptions } = flattenCommand(cmd)
         const [root, ...pipeline] = commands
 
-        let handle = spawnCommand(root)
+        const handles = [yield* spawnCommand(root)]
 
         for (let i = 0; i < pipeline.length; i++) {
           const command = pipeline[i]
@@ -511,7 +568,7 @@ const make = Effect.gen(function*() {
 
           // Get the appropriate stream from the source based on `from` option
           const sourceStream = Stream.unwrap(
-            Effect.map(handle, (h) => getSourceStream(h, options.from))
+            Effect.succeed(getSourceStream(handles[handles.length - 1], options.from))
           )
 
           // Determine where to pipe: stdin or custom fd
@@ -519,34 +576,61 @@ const make = Effect.gen(function*() {
 
           if (toOption === "stdin") {
             // Pipe to stdin (default behavior)
-            handle = spawnCommand(ChildProcess.make(command.command, command.args, {
-              ...command.options,
-              stdin: { ...stdinConfig, stream: sourceStream }
-            }))
+            handles.push(
+              yield* spawnCommand(ChildProcess.make(command.command, command.args, {
+                ...command.options,
+                stdin: { ...stdinConfig, stream: sourceStream }
+              }))
+            )
           } else {
             // Pipe to custom fd (fd3, fd4, etc.)
             const fd = ChildProcess.parseFdName(toOption)
             if (Predicate.isNotUndefined(fd)) {
               const fdName = ChildProcess.fdName(fd) as `fd${number}`
               const existingFds = command.options.additionalFds ?? {}
-              handle = spawnCommand(ChildProcess.make(command.command, command.args, {
-                ...command.options,
-                additionalFds: {
-                  ...existingFds,
-                  [fdName]: { type: "input" as const, stream: sourceStream }
-                }
-              }))
+              handles.push(
+                yield* spawnCommand(ChildProcess.make(command.command, command.args, {
+                  ...command.options,
+                  additionalFds: {
+                    ...existingFds,
+                    [fdName]: { type: "input" as const, stream: sourceStream }
+                  }
+                }))
+              )
             } else {
               // Invalid fd name, fall back to stdin
-              handle = spawnCommand(ChildProcess.make(command.command, command.args, {
-                ...command.options,
-                stdin: { ...stdinConfig, stream: sourceStream }
-              }))
+              handles.push(
+                yield* spawnCommand(ChildProcess.make(command.command, command.args, {
+                  ...command.options,
+                  stdin: { ...stdinConfig, stream: sourceStream }
+                }))
+              )
             }
           }
         }
 
-        return yield* handle
+        const handle = handles[handles.length - 1]
+        const unref = Effect.gen(function*() {
+          const rerefs: Array<Effect.Effect<void, PlatformError.PlatformError>> = []
+          for (const handle of handles) {
+            rerefs.push(yield* handle.unref)
+          }
+          return Effect.forEach([...rerefs].reverse(), (reref) => reref, { discard: true })
+        })
+
+        return makeHandle({
+          pid: handle.pid,
+          exitCode: handle.exitCode,
+          isRunning: handle.isRunning,
+          kill: handle.kill,
+          stdin: handle.stdin,
+          stdout: handle.stdout,
+          stderr: handle.stderr,
+          all: handle.all,
+          getInputFd: handle.getInputFd,
+          getOutputFd: handle.getOutputFd,
+          unref
+        })
       }
     }
   })
@@ -555,10 +639,10 @@ const make = Effect.gen(function*() {
 })
 
 /**
- * Layer providing the `NodeChildProcessSpawner` implementation.
+ * Layer that provides the `NodeChildProcessSpawner` implementation.
  *
+ * @category layers
  * @since 4.0.0
- * @category Layers
  */
 export const layer: Layer.Layer<
   ChildProcessSpawner,
@@ -573,8 +657,8 @@ export const layer: Layer.Layer<
 /**
  * Result of flattening a pipeline of commands.
  *
+ * @category models
  * @since 4.0.0
- * @category Models
  */
 export interface FlattenedPipeline {
   readonly commands: Arr.NonEmptyReadonlyArray<ChildProcess.StandardCommand>
@@ -585,8 +669,8 @@ export interface FlattenedPipeline {
  * Flattens a `Command` into an array of `StandardCommand`s along with pipe
  * options for each connection.
  *
+ * @category transforming
  * @since 4.0.0
- * @category Utilities
  */
 export const flattenCommand = (
   command: ChildProcess.Command

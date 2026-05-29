@@ -1,11 +1,38 @@
 /**
- * @since 1.0.0
+ * SQLite WASM client implementation for Effect SQL, backed by `@effect/wa-sqlite`.
+ *
+ * This module exposes constructors and layers for providing both the
+ * SQLite-specific `SqliteClient` service and the generic Effect `SqlClient`
+ * service in browser, worker, and test runtimes. Use it for local-first
+ * browser storage, offline caches, client-side migrations, sandboxed test
+ * databases, and import/export workflows that snapshot a SQLite database as a
+ * `Uint8Array`.
+ *
+ * `makeMemory` opens an in-memory database through the WASM memory VFS, so data
+ * is transient unless the client `export` result is persisted and later passed
+ * back to `import`. `make` talks to a scoped `Worker`, `SharedWorker`, or
+ * `MessagePort`, which is the path used by the OPFS worker helper for persistent
+ * browser storage. Worker-backed queries cross a message boundary, transferable
+ * buffers can be supplied with `withTransferables`, and imports transfer the
+ * supplied `Uint8Array` buffer to the worker.
+ *
+ * Both client variants serialize access through a single connection. A
+ * transaction holds that connection for the lifetime of its scope, so keep
+ * transactions short and use them for multi-statement writes that must commit
+ * atomically. OPFS availability depends on the browser and origin, and multiple
+ * tabs or workers opening the same OPFS database should coordinate migrations
+ * and writes outside this module. Worker-backed clients restart their scoped
+ * connection on worker errors, `executeStream` is not implemented there, and
+ * SQLite does not support `updateValues`.
+ *
+ * @since 4.0.0
  */
 // oxlint-disable-next-line effect/no-import-from-barrel-package
 import * as WaSqlite from "@effect/wa-sqlite"
 import SQLiteESMFactory from "@effect/wa-sqlite/dist/wa-sqlite.mjs"
 import { MemoryVFS } from "@effect/wa-sqlite/src/examples/MemoryVFS.js"
 import * as Config from "effect/Config"
+import * as Context from "effect/Context"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -15,7 +42,6 @@ import * as Layer from "effect/Layer"
 import * as Scope from "effect/Scope"
 import * as ScopedRef from "effect/ScopedRef"
 import * as Semaphore from "effect/Semaphore"
-import * as ServiceMap from "effect/ServiceMap"
 import * as Stream from "effect/Stream"
 import * as Reactivity from "effect/unstable/reactivity/Reactivity"
 import * as Client from "effect/unstable/sql/SqlClient"
@@ -30,20 +56,26 @@ const classifyError = (cause: unknown, message: string, operation: string) =>
   classifySqliteError(cause, { message, operation })
 
 /**
- * @category type ids
- * @since 1.0.0
+ * Runtime identifier attached to SQLite WASM client values.
+ *
+ * @category type IDs
+ * @since 4.0.0
  */
 export const TypeId: TypeId = "~@effect/sql-sqlite-wasm/SqliteClient"
 
 /**
- * @category type ids
- * @since 1.0.0
+ * Type-level identifier for SQLite WASM client values.
+ *
+ * @category type IDs
+ * @since 4.0.0
  */
 export type TypeId = "~@effect/sql-sqlite-wasm/SqliteClient"
 
 /**
+ * SQLite WASM client service interface, extending `SqlClient` with database `export` and `import` operations and marking `updateValues` as unsupported for SQLite.
+ *
  * @category models
- * @since 1.0.0
+ * @since 4.0.0
  */
 export interface SqliteClient extends Client.SqlClient {
   readonly [TypeId]: TypeId
@@ -56,14 +88,18 @@ export interface SqliteClient extends Client.SqlClient {
 }
 
 /**
- * @category tags
- * @since 1.0.0
+ * Service tag for the SQLite WASM client.
+ *
+ * @category services
+ * @since 4.0.0
  */
-export const SqliteClient = ServiceMap.Service<SqliteClient>("@effect/sql-sqlite-wasm/SqliteClient")
+export const SqliteClient = Context.Service<SqliteClient>("@effect/sql-sqlite-wasm/SqliteClient")
 
 /**
+ * Configuration for an in-memory SQLite WASM client, including optional reactivity hooks, span attributes, and query/result name transforms.
+ *
  * @category models
- * @since 1.0.0
+ * @since 4.0.0
  */
 export interface SqliteClientMemoryConfig {
   readonly installReactivityHooks?: boolean
@@ -73,8 +109,10 @@ export interface SqliteClientMemoryConfig {
 }
 
 /**
+ * Configuration for a worker-backed SQLite WASM client, including the scoped worker or message port, optional reactivity hooks, span attributes, and query/result name transforms.
+ *
  * @category models
- * @since 1.0.0
+ * @since 4.0.0
  */
 export interface SqliteClientConfig {
   readonly worker: Effect.Effect<Worker | SharedWorker | MessagePort, never, Scope.Scope>
@@ -100,8 +138,10 @@ const initEffect = Effect.runSync(
 const registered = new Set<string>()
 
 /**
- * @category constructor
- * @since 1.0.0
+ * Creates a scoped in-memory SQLite WASM client using the memory VFS, serializing access through a semaphore and exposing database `export` and `import` operations.
+ *
+ * @category constructors
+ * @since 4.0.0
  */
 export const makeMemory = (
   options: SqliteClientMemoryConfig
@@ -230,7 +270,7 @@ export const makeMemory = (
     const acquirer = semaphore.withPermits(1)(Effect.succeed(connection))
     const transactionAcquirer = Effect.uninterruptibleMask((restore) => {
       const fiber = Fiber.getCurrent()!
-      const scope = ServiceMap.getUnsafe(fiber.services, Scope.Scope)
+      const scope = Context.getUnsafe(fiber.context, Scope.Scope)
       return Effect.as(
         Effect.tap(
           restore(semaphore.take(1)),
@@ -263,8 +303,10 @@ export const makeMemory = (
   })
 
 /**
- * @category constructor
- * @since 1.0.0
+ * Creates a scoped worker-backed SQLite WASM client, communicating with the configured worker or message port, restarting the scoped connection on worker errors, and exposing database `export` and `import` operations.
+ *
+ * @category constructors
+ * @since 4.0.0
  */
 export const make = (
   options: SqliteClientConfig
@@ -392,7 +434,7 @@ export const make = (
     const acquirer = semaphore.withPermits(1)(ScopedRef.get(connectionRef))
     const transactionAcquirer = Effect.uninterruptibleMask(Effect.fnUntraced(function*(restore) {
       const fiber = Fiber.getCurrent()!
-      const scope = ServiceMap.getUnsafe(fiber.services, Scope.Scope)
+      const scope = Context.getUnsafe(fiber.context, Scope.Scope)
       yield* restore(semaphore.take(1))
       yield* Scope.addFinalizer(scope, semaphore.release(1))
       return yield* ScopedRef.get(connectionRef)
@@ -431,81 +473,93 @@ const extractObject = (rows: [Array<string>, Array<any>]) => rows[1].map((row) =
 const extractRows = (rows: [Array<string>, Array<any>]) => rows[1]
 
 /**
- * @category tranferables
- * @since 1.0.0
+ * Fiber reference that stores transferables to include with worker-backed SQLite WASM query messages.
+ *
+ * @category transferables
+ * @since 4.0.0
  */
-export const Transferables = ServiceMap.Reference<ReadonlyArray<Transferable>>(
+export const Transferables = Context.Reference<ReadonlyArray<Transferable>>(
   "@effect/sql-sqlite-wasm/currentTransferables",
   { defaultValue: () => [] }
 )
 
 /**
- * @category tranferables
- * @since 1.0.0
+ * Runs an effect with the supplied transferables attached to worker-backed SQLite WASM query messages.
+ *
+ * @category transferables
+ * @since 4.0.0
  */
 export const withTransferables =
   (transferables: ReadonlyArray<Transferable>) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
     Effect.provideService(effect, Transferables, transferables)
 
 /**
+ * Builds a layer from an Effect `Config` value, providing both the in-memory SQLite WASM `SqliteClient` service and the generic `SqlClient` service.
+ *
  * @category layers
- * @since 1.0.0
+ * @since 4.0.0
  */
 export const layerMemoryConfig = (
   config: Config.Wrap<SqliteClientMemoryConfig>
 ): Layer.Layer<SqliteClient | Client.SqlClient, Config.ConfigError | SqlError> =>
-  Layer.effectServices(
-    Config.unwrap(config).asEffect().pipe(
+  Layer.effectContext(
+    Config.unwrap(config).pipe(
       Effect.flatMap(makeMemory),
       Effect.map((client) =>
-        ServiceMap.make(SqliteClient, client).pipe(
-          ServiceMap.add(Client.SqlClient, client)
+        Context.make(SqliteClient, client).pipe(
+          Context.add(Client.SqlClient, client)
         )
       )
     )
   ).pipe(Layer.provide(Reactivity.layer))
 
 /**
+ * Builds a layer from an in-memory SQLite WASM client configuration, providing both `SqliteClient` and the generic `SqlClient` service.
+ *
  * @category layers
- * @since 1.0.0
+ * @since 4.0.0
  */
 export const layerMemory = (
   config: SqliteClientMemoryConfig
 ): Layer.Layer<SqliteClient | Client.SqlClient, SqlError> =>
-  Layer.effectServices(
+  Layer.effectContext(
     Effect.map(makeMemory(config), (client) =>
-      ServiceMap.make(SqliteClient, client).pipe(
-        ServiceMap.add(Client.SqlClient, client)
+      Context.make(SqliteClient, client).pipe(
+        Context.add(Client.SqlClient, client)
       ))
   ).pipe(Layer.provide(Reactivity.layer))
 
 /**
+ * Builds a layer from a worker-backed SQLite WASM client configuration, providing both `SqliteClient` and the generic `SqlClient` service.
+ *
  * @category layers
- * @since 1.0.0
+ * @since 4.0.0
  */
 export const layer = (
   config: SqliteClientConfig
 ): Layer.Layer<SqliteClient | Client.SqlClient, SqlError> =>
-  Layer.effectServices(
+  Layer.effectContext(
     Effect.map(make(config), (client) =>
-      ServiceMap.make(SqliteClient, client).pipe(
-        ServiceMap.add(Client.SqlClient, client)
+      Context.make(SqliteClient, client).pipe(
+        Context.add(Client.SqlClient, client)
       ))
   ).pipe(Layer.provide(Reactivity.layer))
 
 /**
+ * Builds a layer from an Effect `Config` value, providing both the worker-backed SQLite WASM `SqliteClient` service and the generic `SqlClient` service.
+ *
  * @category layers
- * @since 1.0.0
+ * @since 4.0.0
  */
 export const layerConfig = (
   config: Config.Wrap<SqliteClientConfig>
 ): Layer.Layer<SqliteClient | Client.SqlClient, Config.ConfigError | SqlError> =>
-  Layer.effectServices(
-    Config.unwrap(config).asEffect().pipe(
+  Layer.effectContext(
+    Config.unwrap(config).pipe(
       Effect.flatMap(make),
       Effect.map((client) =>
-        ServiceMap.make(SqliteClient, client).pipe(
-          ServiceMap.add(Client.SqlClient, client)
+        Context.make(SqliteClient, client).pipe(
+          Context.add(Client.SqlClient, client)
         )
       )
     )

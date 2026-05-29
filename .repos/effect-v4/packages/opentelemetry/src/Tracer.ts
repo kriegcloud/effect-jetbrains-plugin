@@ -1,17 +1,34 @@
 /**
- * @since 1.0.0
+ * Bridges Effect tracing into OpenTelemetry by installing an Effect `Tracer`
+ * that creates OpenTelemetry spans, records attributes, events, links, errors,
+ * and status, and keeps OpenTelemetry context active while traced effects run.
+ * Use this module when an application already has an OpenTelemetry
+ * `TracerProvider`, or when the Node and Web SDK layers should expose Effect
+ * spans to OTLP, console, or other OpenTelemetry-compatible exporters.
+ *
+ * The layer constructors wire Effect's tracer service to either the global
+ * OpenTelemetry tracer provider or an explicitly provided `OtelTracer`. This
+ * module does not create exporters or span processors by itself, so spans are
+ * exported only when the provider has been configured by the application or by
+ * the Node/Web SDK layers. Parentage is taken from Effect spans first and can
+ * also attach to the active OpenTelemetry context, while `makeExternalSpan` and
+ * `withSpanContext` are the entry points for continuing an incoming remote
+ * trace. Preserve `traceFlags` and `traceState` when building external spans;
+ * otherwise sampling defaults to sampled and trace state cannot be propagated.
+ *
+ * @since 4.0.0
  */
 import * as Otel from "@opentelemetry/api"
 import * as OtelSemConv from "@opentelemetry/semantic-conventions"
 import * as Cause from "effect/Cause"
 import type * as Clock from "effect/Clock"
+import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import { constTrue, dual } from "effect/Function"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Predicate from "effect/Predicate"
-import * as ServiceMap from "effect/ServiceMap"
 import * as Tracer from "effect/Tracer"
 import { nanosToHrTime, recordToAttributes, unknownToAttributeValue } from "./internal/attributes.ts"
 import { Resource } from "./Resource.ts"
@@ -21,37 +38,45 @@ import { Resource } from "./Resource.ts"
 // =============================================================================
 
 /**
- * @since 1.0.0
- * @category Services
+ * Context service containing the OpenTelemetry `Tracer` used to create spans for Effect tracing.
+ *
+ * @category services
+ * @since 4.0.0
  */
-export class OtelTracer extends ServiceMap.Service<
+export class OtelTracer extends Context.Service<
   OtelTracer,
   Otel.Tracer
 >()("@effect/opentelemetry/Tracer") {}
 
 /**
- * @since 1.0.0
- * @category Services
+ * Context service containing the OpenTelemetry `TracerProvider` used to obtain tracers.
+ *
+ * @category services
+ * @since 4.0.0
  */
-export class OtelTracerProvider extends ServiceMap.Service<
+export class OtelTracerProvider extends Context.Service<
   OtelTracerProvider,
   Otel.TracerProvider
 >()("@effect/opentelemetry/Tracer/OtelTracerProvider") {}
 
 /**
- * @since 1.0.0
- * @category Services
+ * Context service containing OpenTelemetry trace flags used when constructing external span contexts.
+ *
+ * @category services
+ * @since 4.0.0
  */
-export class OtelTraceFlags extends ServiceMap.Service<
+export class OtelTraceFlags extends Context.Service<
   OtelTraceFlags,
   Otel.TraceFlags
 >()("@effect/opentelemetry/Tracer/OtelTraceFlags") {}
 
 /**
- * @since 1.0.0
- * @category Services
+ * Context service containing OpenTelemetry trace state used when constructing external span contexts.
+ *
+ * @category services
+ * @since 4.0.0
  */
-export class OtelTraceState extends ServiceMap.Service<
+export class OtelTraceState extends Context.Service<
   OtelTraceState,
   Otel.TraceState
 >()("@effect/opentelemetry/Tracer/OtelTraceState") {}
@@ -61,8 +86,10 @@ export class OtelTraceState extends ServiceMap.Service<
 // =============================================================================
 
 /**
- * @since 1.0.0
- * @category Constructors
+ * Creates an Effect `Tracer` implementation backed by the configured OpenTelemetry tracer.
+ *
+ * @category constructors
+ * @since 4.0.0
  */
 export const make: Effect.Effect<Tracer.Tracer, never, OtelTracer> = Effect.map(
   Effect.service(OtelTracer),
@@ -92,8 +119,10 @@ export const make: Effect.Effect<Tracer.Tracer, never, OtelTracer> = Effect.map(
 )
 
 /**
- * @since 1.0.0
- * @category Constructors
+ * Creates an Effect external span from an OpenTelemetry span context, preserving trace flags and trace state when provided.
+ *
+ * @category constructors
+ * @since 4.0.0
  */
 export const makeExternalSpan = (options: {
   readonly traceId: string
@@ -101,20 +130,20 @@ export const makeExternalSpan = (options: {
   readonly traceFlags?: number | undefined
   readonly traceState?: string | Otel.TraceState | undefined
 }): Tracer.ExternalSpan => {
-  const annotations = ServiceMap.mutate(ServiceMap.empty(), (annotations) => {
+  const annotations = Context.mutate(Context.empty(), (annotations) => {
     let next = annotations
     if (options.traceFlags !== undefined) {
-      next = ServiceMap.add(next, OtelTraceFlags, options.traceFlags)
+      next = Context.add(next, OtelTraceFlags, options.traceFlags)
     }
 
     if (typeof options.traceState === "string") {
       try {
-        next = ServiceMap.add(next, OtelTraceState, Otel.createTraceState(options.traceState))
+        next = Context.add(next, OtelTraceState, Otel.createTraceState(options.traceState))
       } catch {
         //
       }
     } else if (options.traceState) {
-      next = ServiceMap.add(next, OtelTraceState, options.traceState)
+      next = Context.add(next, OtelTraceState, options.traceState)
     }
 
     return next
@@ -134,8 +163,10 @@ export const makeExternalSpan = (options: {
 // =============================================================================
 
 /**
- * @since 1.0.0
- * @category Layers
+ * Layer that provides the current global OpenTelemetry tracer provider.
+ *
+ * @category layers
+ * @since 4.0.0
  */
 export const layerGlobalProvider: Layer.Layer<OtelTracerProvider> = Layer.sync(
   OtelTracerProvider,
@@ -143,8 +174,10 @@ export const layerGlobalProvider: Layer.Layer<OtelTracerProvider> = Layer.sync(
 )
 
 /**
- * @since 1.0.0
- * @category Layers
+ * Layer that creates an OpenTelemetry tracer from the provided tracer provider and resource metadata.
+ *
+ * @category layers
+ * @since 4.0.0
  */
 export const layerTracer: Layer.Layer<OtelTracer, never, OtelTracerProvider | Resource> = Layer.effect(
   OtelTracer,
@@ -159,30 +192,48 @@ export const layerTracer: Layer.Layer<OtelTracer, never, OtelTracerProvider | Re
 )
 
 /**
- * @since 1.0.0
- * @category Layers
+ * Layer that creates an OpenTelemetry tracer from the global tracer provider and the current resource.
+ *
+ * @category layers
+ * @since 4.0.0
  */
 export const layerGlobalTracer: Layer.Layer<OtelTracer, never, Resource> = layerTracer.pipe(
   Layer.provide(layerGlobalProvider)
 )
 
 /**
- * @since 1.0.0
- * @category Layers
+ * Layer that installs an Effect tracer backed by the global OpenTelemetry tracer provider.
+ *
+ * @category layers
+ * @since 4.0.0
  */
 export const layerGlobal: Layer.Layer<OtelTracer, never, Resource> = Layer.effect(Tracer.Tracer, make).pipe(
   Layer.provideMerge(layerGlobalTracer)
 )
 
 /**
- * @since 1.0.0
- * @category Layers
+ * Layer that installs the Effect tracer using an `OtelTracer` already provided in the environment.
+ *
+ * @category layers
+ * @since 4.0.0
  */
 export const layerWithoutOtelTracer: Layer.Layer<never, never, OtelTracer> = Layer.effect(Tracer.Tracer, make)
 
 /**
- * @since 1.0.0
- * @category Layers
+ * Layer that creates an OpenTelemetry tracer from a provider and resource, then installs it as the Effect tracer.
+ *
+ * **When to use**
+ *
+ * Use when your application already supplies an `OtelTracerProvider` and a
+ * `Resource`, and you want Effect spans to be created by an OpenTelemetry
+ * tracer derived from those services.
+ *
+ * @see {@link layerTracer} for creating only the OpenTelemetry tracer service
+ * @see {@link layerGlobal} for installing the Effect tracer from the global provider
+ * @see {@link layerWithoutOtelTracer} for installing an already-provided `OtelTracer`
+ *
+ * @category layers
+ * @since 4.0.0
  */
 export const layer: Layer.Layer<OtelTracer, never, OtelTracerProvider | Resource> = layerWithoutOtelTracer.pipe(
   Layer.provideMerge(layerTracer)
@@ -196,16 +247,17 @@ const bigint1e6 = BigInt(1_000_000)
 const bigint1e9 = BigInt(1_000_000_000)
 
 /**
- * Get the current OpenTelemetry span.
+ * Gets the current OpenTelemetry span.
  *
- * Works with both the official OpenTelemetry API (via `Tracer.layer`,
- * `NodeSdk.layer`, etc.) and the lightweight OTLP module (`OtlpTracer.layer`).
+ * **Details**
  *
- * When using OTLP, the returned span is a wrapper that conforms to the
- * OpenTelemetry `Span` interface.
+ * This accessor works with both the official OpenTelemetry API, such as
+ * `Tracer.layer` and `NodeSdk.layer`, and the lightweight OTLP module, such as
+ * `OtlpTracer.layer`. When using OTLP, the returned span is a wrapper that
+ * conforms to the OpenTelemetry `Span` interface.
  *
- * @since 1.0.0
  * @category accessors
+ * @since 4.0.0
  */
 export const currentOtelSpan: Effect.Effect<Otel.Span, Cause.NoSuchElementError> = Effect.clockWith((clock) =>
   Effect.map(Effect.currentSpan, (span) =>
@@ -302,13 +354,15 @@ const convertOtelTimeInput = (input: Otel.TimeInput | undefined, clock: Clock.Cl
 }
 
 /**
- * Set the effect's parent span from the given opentelemetry `SpanContext`.
+ * Sets an effect's parent span from the given OpenTelemetry `SpanContext`.
  *
- * This is handy when you set up OpenTelemetry outside of Effect and want to
- * attach to a parent span.
+ * **When to use**
  *
- * @since 1.0.0
- * @category Propagation
+ * Use when OpenTelemetry instrumentation outside Effect has already
+ * produced a parent span context and an effect should continue that trace.
+ *
+ * @category propagation
+ * @since 4.0.0
  */
 export const withSpanContext: {
   (
@@ -346,7 +400,7 @@ export class OtelSpan implements Tracer.Span {
 
   readonly name: string
   readonly kind: Tracer.SpanKind
-  readonly annotations: ServiceMap.ServiceMap<never>
+  readonly annotations: Context.Context<never>
   readonly links: Array<Tracer.SpanLink>
   readonly span: Otel.Span
   readonly spanId: string
@@ -464,7 +518,7 @@ const isSampled = (traceFlags: Otel.TraceFlags): boolean =>
 const getOtelParent = (
   tracer: Otel.TraceAPI,
   context: Otel.Context,
-  annotations: ServiceMap.ServiceMap<never>
+  annotations: Context.Context<never>
 ): Option.Option<Tracer.AnySpan> => {
   const otelParent = tracer.getSpan(context)?.spanContext()
   if (!otelParent) return Option.none()
@@ -478,7 +532,7 @@ const getOtelParent = (
 
 const makeSpanContext = (
   span: Tracer.AnySpan,
-  annotations?: ServiceMap.ServiceMap<never>
+  annotations?: Context.Context<never>
 ): Otel.SpanContext => {
   const traceFlags = makeTraceFlags(span, annotations)
   const traceState = makeTraceState(span, annotations)!
@@ -493,13 +547,13 @@ const makeSpanContext = (
 
 const makeTraceFlags = (
   span: Tracer.AnySpan,
-  annotations: ServiceMap.ServiceMap<never> | undefined
+  annotations: Context.Context<never> | undefined
 ): Otel.TraceFlags => {
   let traceFlags: Otel.TraceFlags | undefined
   if (Predicate.isNotUndefined(annotations)) {
     traceFlags = extractTraceService(span, annotations, OtelTraceFlags)
     if (Predicate.isUndefined(traceFlags)) {
-      traceFlags = ServiceMap.getOrUndefined(span.annotations, OtelTraceFlags)
+      traceFlags = Context.getOrUndefined(span.annotations, OtelTraceFlags)
     }
   }
   return traceFlags ?? Otel.TraceFlags.SAMPLED
@@ -507,13 +561,13 @@ const makeTraceFlags = (
 
 const makeTraceState = (
   span: Tracer.AnySpan,
-  annotations: ServiceMap.ServiceMap<never> | undefined
+  annotations: Context.Context<never> | undefined
 ): Otel.TraceState | undefined => {
   let traceState: Otel.TraceState | undefined
   if (Predicate.isNotUndefined(annotations)) {
     traceState = extractTraceService(span, annotations, OtelTraceState)
     if (Predicate.isUndefined(traceState)) {
-      traceState = ServiceMap.getOrUndefined(span.annotations, OtelTraceState)
+      traceState = Context.getOrUndefined(span.annotations, OtelTraceState)
     }
   }
   return traceState
@@ -521,20 +575,20 @@ const makeTraceState = (
 
 const extractTraceService = <I, S>(
   parent: Tracer.AnySpan,
-  annotations: ServiceMap.ServiceMap<never>,
-  service: ServiceMap.Service<I, S>
+  annotations: Context.Context<never>,
+  service: Context.Service<I, S>
 ) => {
-  const instance = ServiceMap.getOrUndefined(annotations, service)
+  const instance = Context.getOrUndefined(annotations, service)
   if (Predicate.isNotUndefined(instance)) {
     return instance
   }
-  return ServiceMap.getOrUndefined(parent.annotations, service)
+  return Context.getOrUndefined(parent.annotations, service)
 }
 
 const populateContext = (
   context: Otel.Context,
   span: Tracer.AnySpan,
-  annotations?: ServiceMap.ServiceMap<never> | undefined
+  annotations?: Context.Context<never> | undefined
 ): Otel.Context =>
   span instanceof OtelSpan ?
     Otel.trace.setSpan(context, span.span) :

@@ -1,15 +1,35 @@
 /**
+ * The `Activity` module defines named, schema-backed effects that run at the
+ * side-effect boundary of a durable workflow. Activities are executed through a
+ * `WorkflowEngine`, encode their success and failure values with the provided
+ * schemas, and can be replayed from persisted results instead of rerunning the
+ * underlying effect.
+ *
+ * Use activities for work that should not be embedded directly in workflow
+ * control flow, such as calling external services, writing to databases,
+ * enqueueing durable jobs, short sleeps delegated by `DurableClock`, or racing
+ * multiple external operations with `raceAll`. Keep activity names and schemas
+ * stable because engines use them, together with the workflow execution and
+ * retry attempt, to identify stored results.
+ *
+ * Activities can be interrupted and retried, and workflow resumes may observe a
+ * completed encoded result or run the activity again depending on what the
+ * engine has persisted. Make external side effects idempotent, use
+ * `idempotencyKey` for stable request keys derived from the workflow execution,
+ * and include the current attempt only when each retry must address a distinct
+ * external operation.
+ *
  * @since 4.0.0
  */
 import type { NonEmptyReadonlyArray } from "../../Array.ts"
 import * as Cause from "../../Cause.ts"
+import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
+import * as Effectable from "../../Effectable.ts"
 import { dual } from "../../Function.ts"
-import { PipeInspectableProto, YieldableProto } from "../../internal/core.ts"
 import * as Schedule from "../../Schedule.ts"
 import * as Schema from "../../Schema.ts"
 import type { Scope } from "../../Scope.ts"
-import * as ServiceMap from "../../ServiceMap.ts"
 import type * as Types from "../../Types.ts"
 import * as DurableDeferred from "./DurableDeferred.ts"
 import { makeHashDigest } from "./internal/crypto.ts"
@@ -19,16 +39,19 @@ import type { WorkflowEngine, WorkflowInstance } from "./WorkflowEngine.ts"
 const TypeId = "~effect/workflow/Activity"
 
 /**
+ * Durable workflow activity that behaves as an `Effect` and records its name,
+ * result schemas, annotations, and encoded execution form for the workflow
+ * engine.
+ *
+ * @category models
  * @since 4.0.0
- * @category Models
  */
 export interface Activity<
   Success extends Schema.Top = Schema.Void,
   Error extends Schema.Top = Schema.Never,
   R = never
 > extends
-  Effect.Yieldable<
-    Activity<Success, Error, R>,
+  Effect.Effect<
     Success["Type"],
     Error["Type"],
     Success["DecodingServices"] | Error["DecodingServices"] | R | WorkflowEngine | WorkflowInstance
@@ -39,6 +62,14 @@ export interface Activity<
   readonly successSchema: Success
   readonly errorSchema: Error
   readonly exitSchema: Schema.Exit<Success, Error, Schema.Defect>
+  readonly annotations: Context.Context<never>
+  annotate<I, S>(
+    key: Context.Key<I, S>,
+    value: S
+  ): Activity<Success, Error, R>
+  annotateMerge<I>(
+    annotations: Context.Context<I>
+  ): Activity<Success, Error, R>
   readonly execute: Effect.Effect<
     Success["Type"],
     Error["Type"],
@@ -66,18 +97,25 @@ export interface Activity<
 }
 
 /**
+ * Type-erased activity shape for APIs that only need the activity identity,
+ * name, annotations, and encoded execution.
+ *
+ * @category models
  * @since 4.0.0
- * @category Models
  */
 export interface Any {
   readonly [TypeId]: typeof TypeId
   readonly name: string
   readonly executeEncoded: Effect.Effect<any, any, any>
+  readonly annotations: Context.Context<never>
 }
 
 /**
+ * Type-erased activity shape that also exposes success and error schemas for
+ * derived workflow APIs.
+ *
+ * @category models
  * @since 4.0.0
- * @category Models
  */
 export interface AnyWithProps {
   readonly [TypeId]: typeof TypeId
@@ -88,8 +126,11 @@ export interface AnyWithProps {
 }
 
 /**
+ * Creates a workflow activity from an effect, using the provided schemas to
+ * encode successes and failures for durable execution.
+ *
+ * @category constructors
  * @since 4.0.0
- * @category Constructors
  */
 export const make = <
   R,
@@ -101,6 +142,7 @@ export const make = <
   readonly error?: Error | undefined
   readonly execute: Effect.Effect<Success["Type"], Error["Type"], R>
   readonly interruptRetryPolicy?: Schedule.Schedule<any, Cause.Cause<unknown>> | undefined
+  readonly annotations?: Context.Context<never> | undefined
 }): Activity<Success, Error, Exclude<R, WorkflowInstance | WorkflowEngine | Scope>> => {
   const successSchema = options.success ?? (Schema.Void as any as Success)
   const errorSchema = options.error ?? (Schema.Never as any as Error)
@@ -113,21 +155,35 @@ export const make = <
     options.interruptRetryPolicy
   )(options.execute)
   const self: Activity<Success, Error, Exclude<R, WorkflowInstance | WorkflowEngine>> = {
-    ...PipeInspectableProto,
-    ...YieldableProto,
+    ...Effectable.Prototype<Activity<Success, Error, R>>({
+      label: "Activity",
+      evaluate(_) {
+        return execute
+      }
+    }),
     [TypeId]: TypeId,
     name: options.name,
     successSchema,
     errorSchema,
     exitSchema: Schema.Exit(successSchemaJson, errorSchemaJson, Schema.Defect),
+    annotations: options.annotations ?? Context.empty(),
+    annotate(tag: Context.Key<any, any>, value: any) {
+      return make({
+        ...options,
+        annotations: Context.add(self.annotations, tag, value)
+      })
+    },
+    annotateMerge(context: Context.Context<any>) {
+      return make({
+        ...options,
+        annotations: Context.merge(self.annotations, context)
+      })
+    },
     execute: executeWithoutInterrupt,
     executeEncoded: Effect.matchEffect(executeWithoutInterrupt, {
       onFailure: (error) => Effect.flatMap(Effect.orDie(Schema.encodeEffect(errorSchemaJson)(error)), Effect.fail),
       onSuccess: (value) => Effect.orDie(Schema.encodeEffect(successSchemaJson)(value))
-    }),
-    asEffect() {
-      return execute
-    }
+    })
   } as any
   execute = makeExecute(self)
   return self
@@ -155,8 +211,11 @@ const retryOnInterrupt = (
   )
 
 /**
+ * Retries an effect with `Effect.retry` while updating `CurrentAttempt` for
+ * each attempt.
+ *
+ * @category error handling
  * @since 4.0.0
- * @category Error handling
  */
 export const retry: {
   <E, O extends Types.NoExcessProperties<Omit<Effect.Retry.Options<E>, "schedule">, O>>(
@@ -176,17 +235,23 @@ export const retry: {
 )
 
 /**
- * @since 4.0.0
+ * Context reference containing the current activity retry attempt, defaulting
+ * to `1`.
+ *
  * @category Attempts
+ * @since 4.0.0
  */
-export const CurrentAttempt = ServiceMap.Reference<number>(
+export const CurrentAttempt = Context.Reference<number>(
   "effect/workflow/Activity/CurrentAttempt",
   { defaultValue: () => 1 }
 )
 
 /**
- * @since 4.0.0
+ * Computes a deterministic activity idempotency key from the current workflow
+ * execution ID, the supplied name, and optionally the current attempt.
+ *
  * @category Idempotency
+ * @since 4.0.0
  */
 export const idempotencyKey: (
   name: string,
@@ -207,8 +272,11 @@ export const idempotencyKey: (
 })
 
 /**
+ * Runs a non-empty collection of activities as a durable race and returns the
+ * first completed success or failure using unioned success and error schemas.
+ *
+ * @category racing
  * @since 4.0.0
- * @category Racing
  */
 export const raceAll = <const Activities extends NonEmptyReadonlyArray<Any>>(
   name: string,
@@ -230,17 +298,17 @@ export const raceAll = <const Activities extends NonEmptyReadonlyArray<Any>>(
     error: Schema.Union(
       activities.map((activity) => (activity as any).errorSchema)
     ),
-    effects: activities.map((activity) => (activity as any).asEffect()) as any
+    effects: activities.map((activity) => (activity as any)) as any
   }) as any
 
 // -----------------------------------------------------------------------------
 // internal
 // -----------------------------------------------------------------------------
 
-const EngineTag = ServiceMap.Service<WorkflowEngine, WorkflowEngine["Service"]>(
+const EngineTag = Context.Service<WorkflowEngine, WorkflowEngine["Service"]>(
   "effect/workflow/WorkflowEngine" satisfies typeof WorkflowEngine.key
 )
-const InstanceTag = ServiceMap.Service<WorkflowInstance, WorkflowInstance["Service"]>(
+const InstanceTag = Context.Service<WorkflowInstance, WorkflowInstance["Service"]>(
   "effect/workflow/WorkflowEngine/WorkflowInstance" satisfies typeof WorkflowInstance.key
 )
 

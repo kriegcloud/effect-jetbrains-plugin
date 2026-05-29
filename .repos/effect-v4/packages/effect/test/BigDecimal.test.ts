@@ -64,12 +64,24 @@ describe("BigDecimal", () => {
     assertEquals(BigDecimal.sum($("123.456"), $("-123.456")), $("0"))
   })
 
+  it("sumAll", () => {
+    assertEquals(BigDecimal.sumAll([]), $("0"))
+    assertEquals(BigDecimal.sumAll([$("2"), $("3"), $("4")]), $("9"))
+    assertEquals(BigDecimal.sumAll([$("1.5"), $("-1.5")]), $("0"))
+  })
+
   it("multiply", () => {
     assertEquals(BigDecimal.multiply($("3"), $("2")), $("6"))
     assertEquals(BigDecimal.multiply($("3"), $("0")), $("0"))
     assertEquals(BigDecimal.multiply($("3"), $("-1")), $("-3"))
     assertEquals(BigDecimal.multiply($("3"), $("0.5")), $("1.5"))
     assertEquals(BigDecimal.multiply($("3"), $("-2.5")), $("-7.5"))
+  })
+
+  it("multiplyAll", () => {
+    assertEquals(BigDecimal.multiplyAll([]), $("1"))
+    assertEquals(BigDecimal.multiplyAll([$("2"), $("3"), $("4")]), $("24"))
+    assertEquals(BigDecimal.multiplyAll([$("2"), $("0"), $("4")]), $("0"))
   })
 
   it("subtract", () => {
@@ -341,7 +353,7 @@ describe("BigDecimal", () => {
     assertNone(BigDecimal.fromNumber(Infinity))
   })
 
-  it("unsafeToNumber", () => {
+  it("toNumberUnsafe", () => {
     strictEqual(BigDecimal.toNumberUnsafe($("123.456")), 123.456)
   })
 
@@ -390,7 +402,7 @@ describe("BigDecimal", () => {
     assertEquals(BigDecimal.round($("-0.12345678987654321"), { mode: "ceil", scale: 13 }), $("-0.1234567898765"))
   })
 
-  it("round: floor)", () => {
+  it("round: floor", () => {
     assertEquals(BigDecimal.floor($("145"), -1), $("140"))
     assertEquals(BigDecimal.floor(-1)($("145")), $("140"))
     assertEquals(BigDecimal.floor($("-14.5")), $("-15"))

@@ -1,8 +1,44 @@
 /**
+ * Client-side runtime for typed RPC calls.
+ *
+ * This module turns RPC definitions from an `RpcGroup` into callable client
+ * methods. Each method encodes its payload, sends a request through the active
+ * transport, and routes the matching server response back to the waiting
+ * `Effect` or `Stream`.
+ *
+ * **Mental model**
+ *
+ * `make` builds a schema-aware client on top of a client `Protocol`. The
+ * protocol owns the encoded transport boundary: HTTP sends one request per
+ * call, while socket and worker protocols keep receive loops alive for
+ * streaming, acknowledgements, interruption, and protocol-level failures.
+ * `makeNoSerialization` keeps the same request lifecycle when another layer has
+ * already decoded messages.
+ *
+ * **Common tasks**
+ *
+ * - Build a typed client with {@link make} and a provided protocol layer
+ * - Use {@link makeNoSerialization} for in-process or already-decoded channels
+ * - Provide HTTP, socket, or worker transports with {@link layerProtocolHttp},
+ *   {@link layerProtocolSocket}, or {@link layerProtocolWorker}
+ * - Add request headers with {@link withHeaders} or per-call options
+ *
+ * **Gotchas**
+ *
+ * HTTP does not support client acknowledgements, so streaming back pressure is
+ * only available on protocols that keep a live channel. Streaming RPCs return
+ * `Stream`s by default; enabling `asQueue` returns a scoped queue whose buffer
+ * size is controlled by `streamBufferSize`. Payloads, exits, stream chunks, and
+ * middleware errors are encoded and decoded through RPC schemas, so any schema
+ * services required by those codecs remain in the generated method
+ * environment. Client middleware can rewrite or short-circuit requests and adds
+ * its client error type to the call signature.
+ *
  * @since 4.0.0
  */
 import type { NonEmptyReadonlyArray } from "../../Array.ts"
 import * as Cause from "../../Cause.ts"
+import * as Context from "../../Context.ts"
 import type * as Duration from "../../Duration.ts"
 import * as Effect from "../../Effect.ts"
 import * as Exit from "../../Exit.ts"
@@ -17,7 +53,6 @@ import * as Result from "../../Result.ts"
 import * as Schedule from "../../Schedule.ts"
 import * as Schema from "../../Schema.ts"
 import * as Scope from "../../Scope.ts"
-import * as ServiceMap from "../../ServiceMap.ts"
 import * as Stream from "../../Stream.ts"
 import type * as Struct from "../../Struct.ts"
 import type { Span } from "../../Tracer.ts"
@@ -39,22 +74,31 @@ import type * as RpcMiddleware from "./RpcMiddleware.ts"
 import * as RpcSchema from "./RpcSchema.ts"
 import * as RpcSerialization from "./RpcSerialization.ts"
 import * as RpcWorker from "./RpcWorker.ts"
-import { withRun } from "./Utils.ts"
+import { withRunClient } from "./Utils.ts"
 
 /**
- * @since 4.0.0
+ * The object-shaped client generated from a union of RPC definitions, with one
+ * method per RPC tag.
+ *
  * @category client
+ * @since 4.0.0
  */
 export type RpcClient<Rpcs extends Rpc.Any, E = never> = Struct.Simplify<RpcClient.From<Rpcs, E>>
 
 /**
+ * Type-level helpers for deriving RPC client call signatures from RPC
+ * definitions.
+ *
  * @since 4.0.0
- * @category client
  */
 export declare namespace RpcClient {
   /**
-   * @since 4.0.0
+   * Builds an object client type from an RPC union, mapping each RPC tag to a
+   * method that accepts the RPC payload and returns either an `Effect` or
+   * `Stream` based on the RPC success schema.
+   *
    * @category client
+   * @since 4.0.0
    */
   export type From<Rpcs extends Rpc.Any, E = never> = {
     readonly [Current in Rpcs as Current["_tag"]]: <
@@ -66,11 +110,11 @@ export declare namespace RpcClient {
           readonly asQueue?: AsQueue | undefined
           readonly streamBufferSize?: number | undefined
           readonly headers?: Headers.Input | undefined
-          readonly context?: ServiceMap.ServiceMap<never> | undefined
+          readonly context?: Context.Context<never> | undefined
         } :
         {
           readonly headers?: Headers.Input | undefined
-          readonly context?: ServiceMap.ServiceMap<never> | undefined
+          readonly context?: Context.Context<never> | undefined
           readonly discard?: Discard | undefined
         }
     ) => Current extends Rpc.Rpc<
@@ -115,8 +159,11 @@ export declare namespace RpcClient {
   }
 
   /**
-   * @since 4.0.0
+   * Builds a flattened RPC client function that accepts an RPC tag and payload,
+   * returning the corresponding `Effect` or `Stream` for that RPC.
+   *
    * @category client
+   * @since 4.0.0
    */
   export type Flat<Rpcs extends Rpc.Any, E = never> = <
     const Tag extends Rpcs["_tag"],
@@ -129,11 +176,11 @@ export declare namespace RpcClient {
         readonly asQueue?: AsQueue | undefined
         readonly streamBufferSize?: number | undefined
         readonly headers?: Headers.Input | undefined
-        readonly context?: ServiceMap.ServiceMap<never> | undefined
+        readonly context?: Context.Context<never> | undefined
       } :
       {
         readonly headers?: Headers.Input | undefined
-        readonly context?: ServiceMap.ServiceMap<never> | undefined
+        readonly context?: Context.Context<never> | undefined
         readonly discard?: Discard | undefined
       }
   ) => Rpc.ExtractTag<Rpcs, Tag> extends Rpc.Rpc<
@@ -175,16 +222,23 @@ export declare namespace RpcClient {
 }
 
 /**
- * @since 4.0.0
+ * Derives the object-shaped RPC client type for all RPCs contained in an
+ * `RpcGroup`.
+ *
  * @category client
+ * @since 4.0.0
  */
 export type FromGroup<Group, E = never> = RpcClient<RpcGroup.Rpcs<Group>, E>
 
 let requestIdCounter = BigInt(0)
 
 /**
- * @since 4.0.0
+ * Creates an RPC client for an already-decoded message channel, returning the
+ * client API together with a `write` function for delivering server messages
+ * back to the client.
+ *
  * @category client
+ * @since 4.0.0
  */
 export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extends boolean = false>(
   group: RpcGroup.RpcGroup<Rpcs>,
@@ -192,7 +246,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
     readonly onFromClient: (
       options: {
         readonly message: FromClient<Rpcs>
-        readonly context: ServiceMap.ServiceMap<never>
+        readonly context: Context.Context<never>
         readonly discard: boolean
       }
     ) => Effect.Effect<void, E>
@@ -216,7 +270,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
     readonly onFromClient: (
       options: {
         readonly message: FromClient<Rpcs>
-        readonly context: ServiceMap.ServiceMap<never>
+        readonly context: Context.Context<never>
         readonly discard: boolean
       }
     ) => Effect.Effect<void, E>
@@ -233,20 +287,20 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
   const disableTracing = options?.disableTracing ?? false
   const generateRequestId = options?.generateRequestId ?? (() => requestIdCounter++ as RequestId)
 
-  const services = yield* Effect.services<Rpc.MiddlewareClient<Rpcs> | Scope.Scope>()
-  const scope = ServiceMap.get(services, Scope.Scope)
+  const services = yield* Effect.context<Rpc.MiddlewareClient<Rpcs> | Scope.Scope>()
+  const scope = Context.get(services, Scope.Scope)
 
   type ClientEntry = {
     readonly _tag: "Effect"
     readonly rpc: Rpc.AnyWithProps
-    readonly context: ServiceMap.ServiceMap<never>
+    readonly context: Context.Context<never>
     resume: (_: Exit.Exit<any, any>) => void
   } | {
     readonly _tag: "Queue"
     readonly rpc: Rpc.AnyWithProps
     readonly queue: Queue.Queue<any, any>
     readonly scope: Scope.Scope
-    readonly context: ServiceMap.ServiceMap<never>
+    readonly context: Context.Context<never>
   }
   const entries = new Map<RequestId, ClientEntry>()
 
@@ -279,18 +333,18 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
       readonly asQueue?: boolean | undefined
       readonly streamBufferSize?: number | undefined
       readonly headers?: Headers.Input | undefined
-      readonly context?: ServiceMap.ServiceMap<never> | undefined
+      readonly context?: Context.Context<never> | undefined
       readonly discard?: boolean | undefined
     }) => {
       const headers = opts?.headers ? Headers.fromInput(opts.headers) : Headers.empty
-      const context = opts?.context ?? ServiceMap.empty()
+      const context = opts?.context ?? Context.empty()
       if (!isStream) {
         const onRequest = (span: Span | undefined) =>
           onEffectRequest(
             rpc,
             middleware,
             span,
-            rpc.payloadSchema.makeUnsafe(payload),
+            rpc.payloadSchema.make(payload),
             headers,
             context,
             opts?.discard ?? false
@@ -304,7 +358,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
       const queue = onStreamRequest(
         rpc,
         middleware,
-        rpc.payloadSchema.makeUnsafe(payload),
+        rpc.payloadSchema.make(payload),
         headers,
         opts?.streamBufferSize ?? 16,
         context
@@ -323,7 +377,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
     span: Span | undefined,
     payload: any,
     headers: Headers.Headers,
-    context: ServiceMap.ServiceMap<never>,
+    context: Context.Context<never>,
     discard: boolean
   ) =>
     Effect.withFiber<any, any, any>((parentFiber) => {
@@ -375,7 +429,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
           entries.set(id, entry)
           fiber = send.pipe(
             span ? Effect.withParentSpan(span, { captureStackTrace: false }) : identity,
-            Effect.runForkWith(parentFiber.services)
+            Effect.runForkWith(parentFiber.context)
           )
           fiber.addObserver((exit) => {
             if (exit._tag === "Failure") {
@@ -402,7 +456,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
     payload: any,
     headers: Headers.Headers,
     streamBufferSize: number,
-    context: ServiceMap.ServiceMap<never>
+    context: Context.Context<never>
   ) {
     if (isShutdown) {
       return yield* Effect.interrupt
@@ -414,7 +468,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
     const fiber = Fiber.getCurrent()!
     const id = generateRequestId()
 
-    const scope = ServiceMap.getUnsafe(fiber.services, Scope.Scope)
+    const scope = Context.getUnsafe(fiber.context, Scope.Scope)
     yield* Scope.addFinalizerExit(
       scope,
       (exit) => {
@@ -508,7 +562,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
   const sendInterrupt = (
     requestId: RequestId,
     interruptors: ReadonlyArray<number>,
-    context: ServiceMap.ServiceMap<never>
+    context: Context.Context<never>
   ): Effect.Effect<void> =>
     Effect.callback<void>((resume) => {
       const parentFiber = Fiber.getCurrent()!
@@ -518,7 +572,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
         discard: false
       }).pipe(
         Effect.timeout(1000),
-        Effect.runForkWith(parentFiber.services)
+        Effect.runForkWith(parentFiber.context)
       )
       fiber.addObserver(() => {
         resume(Effect.void)
@@ -587,9 +641,14 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
   return { client, write } as const
 })
 
+let clientIdCounter = 0
+
 /**
- * @since 4.0.0
+ * Creates a schema-aware RPC client for a group using the current client
+ * `Protocol`, encoding requests and decoding server responses.
+ *
  * @category client
+ * @since 4.0.0
  */
 export const make: <Rpcs extends Rpc.Any, const Flatten extends boolean = false>(
   group: RpcGroup.RpcGroup<Rpcs>,
@@ -614,11 +673,12 @@ export const make: <Rpcs extends Rpc.Any, const Flatten extends boolean = false>
     readonly flatten?: Flatten | undefined
   } | undefined
 ) {
+  const clientId = clientIdCounter++
   const { run, send, supportsAck, supportsTransferables } = yield* Protocol
 
   type ClientEntry = {
     readonly rpc: Rpc.AnyWithProps
-    readonly context: ServiceMap.ServiceMap<never>
+    readonly context: Context.Context<never>
     readonly schemas: RpcSchemas
   }
   const entries = new Map<RequestId, ClientEntry>()
@@ -636,16 +696,16 @@ export const make: <Rpcs extends Rpc.Any, const Flatten extends boolean = false>
 
           const entry: ClientEntry = {
             rpc,
-            context: collector ? ServiceMap.add(fiber.services, Transferable.Collector, collector) : fiber.services,
+            context: collector ? Context.add(fiber.context, Transferable.Collector, collector) : fiber.context,
             schemas: rpcSchemas(rpc)
           }
           entries.set(message.id, entry)
 
           return entry.schemas.encodePayload(message.payload).pipe(
-            Effect.provideServices(entry.context),
+            Effect.provideContext(entry.context),
             Effect.orDie,
             Effect.flatMap((payload) =>
-              send({
+              send(clientId, {
                 ...message,
                 id: String(message.id),
                 payload,
@@ -657,7 +717,7 @@ export const make: <Rpcs extends Rpc.Any, const Flatten extends boolean = false>
         case "Ack": {
           const entry = entries.get(message.requestId)
           if (!entry) return Effect.void
-          return send({
+          return send(clientId, {
             _tag: "Ack",
             requestId: String(message.requestId)
           }) as Effect.Effect<void, RpcClientError>
@@ -666,7 +726,7 @@ export const make: <Rpcs extends Rpc.Any, const Flatten extends boolean = false>
           const entry = entries.get(message.requestId)
           if (!entry) return Effect.void
           entries.delete(message.requestId)
-          return send({
+          return send(clientId, {
             _tag: "Interrupt",
             requestId: String(message.requestId)
           }) as Effect.Effect<void, RpcClientError>
@@ -678,14 +738,14 @@ export const make: <Rpcs extends Rpc.Any, const Flatten extends boolean = false>
     }
   })
 
-  yield* run((message) => {
+  yield* run(clientId, (message) => {
     switch (message._tag) {
       case "Chunk": {
         const requestId = RequestId(message.requestId)
         const entry = entries.get(requestId)
         if (!entry || Option.isNone(entry.schemas.decodeChunk)) return Effect.void
         return entry.schemas.decodeChunk.value(message.values).pipe(
-          Effect.provideServices(entry.context),
+          Effect.provideContext(entry.context),
           Effect.orDie,
           Effect.flatMap((chunk) =>
             write({ _tag: "Chunk", clientId: 0, requestId: RequestId(message.requestId), values: chunk })
@@ -706,7 +766,7 @@ export const make: <Rpcs extends Rpc.Any, const Flatten extends boolean = false>
         if (!entry) return Effect.void
         entries.delete(requestId)
         return entry.schemas.decodeExit(message.exit).pipe(
-          Effect.provideServices(entry.context),
+          Effect.provideContext(entry.context),
           Effect.orDie,
           Effect.matchCauseEffect({
             onSuccess: (exit) => write({ _tag: "Exit", clientId: 0, requestId, exit }),
@@ -764,16 +824,27 @@ const rpcSchemas = (rpc: Rpc.AnyWithProps) => {
 }
 
 /**
- * @since 4.0.0
+ * Fiber reference containing headers that are merged into outgoing RPC
+ * client requests.
+ *
+ * **When to use**
+ *
+ * Use to set request headers that should be automatically merged into outgoing
+ * RPC client messages.
+ *
  * @category headers
+ * @since 4.0.0
  */
-export const CurrentHeaders = ServiceMap.Reference<Headers.Headers>("effect/rpc/RpcClient/CurrentHeaders", {
+export const CurrentHeaders = Context.Reference<Headers.Headers>("effect/rpc/RpcClient/CurrentHeaders", {
   defaultValue: () => Headers.empty
 })
 
 /**
- * @since 4.0.0
+ * Runs an effect with additional RPC client headers, merging them with the
+ * current `CurrentHeaders` value for outgoing requests.
+ *
  * @category headers
+ * @since 4.0.0
  */
 export const withHeaders: {
   (headers: Headers.Input): <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
@@ -785,14 +856,24 @@ export const withHeaders: {
 )
 
 /**
+ * Defines the service interface for an RPC client transport, responsible for running the
+ * receive loop and sending encoded client messages.
+ *
+ * **When to use**
+ *
+ * Use to provide the transport boundary for RPC clients over HTTP, WebSocket,
+ * workers, sockets, or custom protocols.
+ *
+ * @category protocols
  * @since 4.0.0
- * @category protocol
  */
-export class Protocol extends ServiceMap.Service<Protocol, {
+export class Protocol extends Context.Service<Protocol, {
   readonly run: (
+    clientId: number,
     f: (data: FromServerEncoded) => Effect.Effect<void>
   ) => Effect.Effect<never>
   readonly send: (
+    clientId: number,
     request: FromClientEncoded,
     transferables?: ReadonlyArray<globalThis.Transferable>
   ) => Effect.Effect<void, RpcClientError>
@@ -800,14 +881,19 @@ export class Protocol extends ServiceMap.Service<Protocol, {
   readonly supportsTransferables: boolean
 }>()("effect/rpc/RpcClient/Protocol") {
   /**
+   * Creates a client protocol service from the supplied RPC request runner.
+   *
    * @since 4.0.0
    */
-  static make = withRun<Protocol["Service"]>()
+  static make = withRunClient
 }
 
 /**
+ * Creates a client `Protocol` that sends each RPC request through the supplied
+ * `HttpClient` and decodes responses with the current `RpcSerialization`.
+ *
+ * @category protocols
  * @since 4.0.0
- * @category protocol
  */
 export const makeProtocolHttp = (client: HttpClient.HttpClient): Effect.Effect<
   Protocol["Service"],
@@ -817,10 +903,20 @@ export const makeProtocolHttp = (client: HttpClient.HttpClient): Effect.Effect<
   Protocol.make(Effect.fnUntraced(function*(writeResponse) {
     const serialization = yield* RpcSerialization.RpcSerialization
     const isFramed = serialization.includesFraming
+    const httpClientError = (cause: any) =>
+      new RpcClientError({
+        reason: HttpClientErrorSchema.fromHttpClientError(cause)
+      })
+    const protocolDefect = (message: string, cause: unknown) =>
+      new RpcClientError({
+        reason: new RpcClientDefect({ message, cause })
+      })
+    const emptyResponseError = (request: FromClientEncoded) =>
+      protocolDefect("Received empty HTTP response from RPC server", request)
 
-    const send = (request: FromClientEncoded): Effect.Effect<void, RpcClientError> => {
+    const send = Effect.fnUntraced(function*(clientId: number, request: FromClientEncoded) {
       if (request._tag !== "Request") {
-        return Effect.void
+        return
       }
 
       const parser = serialization.makeUnsafe()
@@ -830,49 +926,51 @@ export const makeProtocolHttp = (client: HttpClient.HttpClient): Effect.Effect<
         HttpBody.text(encoded, serialization.contentType) :
         HttpBody.uint8Array(encoded, serialization.contentType)
 
+      const response = yield* client.post("", { body }).pipe(Effect.mapError(httpClientError))
+
       if (!isFramed) {
-        return client.post("", { body }).pipe(
-          Effect.flatMap((r) => r.text),
-          Effect.mapError((cause) =>
-            new RpcClientError({
-              reason: HttpClientErrorSchema.fromHttpClientError(cause)
-            })
-          ),
-          Effect.flatMap((text) => {
-            const u = parser.decode(text)
-            if (!Array.isArray(u)) {
-              return Effect.die(`Expected an array of responses, but got: ${u}`)
-            }
-            let i = 0
-            return Effect.whileLoop({
-              while: () => i < u.length,
-              body: () => writeResponse(u[i++]),
-              step: constVoid
-            })
-          })
-        )
+        const text = yield* response.text.pipe(Effect.mapError(httpClientError))
+        const responses = yield* Effect.try({
+          try: () => parser.decode(text),
+          catch: (cause) => protocolDefect("Error decoding HTTP response", cause)
+        })
+        if (!Array.isArray(responses)) {
+          return yield* protocolDefect("Expected an array of responses", responses)
+        }
+        if (responses.length === 0) {
+          return yield* emptyResponseError(request)
+        }
+        let i = 0
+        return yield* Effect.whileLoop({
+          while: () => i < responses.length,
+          body: () => writeResponse(clientId, responses[i++]),
+          step: constVoid
+        })
       }
 
-      return client.post("", { body }).pipe(
-        Effect.flatMap((r) =>
-          Stream.runForEachArray(r.stream, (chunk) => {
-            const responses = chunk.flatMap(parser.decode) as Array<FromServerEncoded>
+      let hasResponse = false
+      yield* Stream.runForEachArray(response.stream, (chunk) =>
+        Effect.try({
+          try: () => chunk.flatMap(parser.decode) as Array<FromServerEncoded>,
+          catch: (cause) => protocolDefect("Error decoding HTTP response", cause)
+        }).pipe(
+          Effect.flatMap((responses) => {
             if (responses.length === 0) return Effect.void
+            hasResponse = true
             let i = 0
             return Effect.whileLoop({
               while: () => i < responses.length,
-              body: () => writeResponse(responses[i++]),
+              body: () => writeResponse(clientId, responses[i++]),
               step: constVoid
             })
           })
-        ),
-        Effect.mapError((cause) =>
-          new RpcClientError({
-            reason: HttpClientErrorSchema.fromHttpClientError(cause)
-          })
+        )).pipe(
+          Effect.mapError((cause) => cause instanceof RpcClientError ? cause : httpClientError(cause))
         )
-      )
-    }
+      if (!hasResponse) {
+        return yield* emptyResponseError(request)
+      }
+    })
 
     return {
       send,
@@ -882,8 +980,11 @@ export const makeProtocolHttp = (client: HttpClient.HttpClient): Effect.Effect<
   }))
 
 /**
+ * Provides a client `Protocol` backed by `HttpClient`, targeting the configured
+ * URL and optionally transforming the client before use.
+ *
+ * @category protocols
  * @since 4.0.0
- * @category protocol
  */
 export const layerProtocolHttp = (options: {
   readonly url: string
@@ -891,7 +992,7 @@ export const layerProtocolHttp = (options: {
 }): Layer.Layer<Protocol, never, RpcSerialization.RpcSerialization | HttpClient.HttpClient> =>
   Layer.effect(Protocol)(
     Effect.flatMap(
-      HttpClient.HttpClient.asEffect(),
+      HttpClient.HttpClient,
       (client) => {
         client = HttpClient.mapRequest(client, HttpClientRequest.prependUrl(options.url))
         return makeProtocolHttp(options.transformClient ? options.transformClient(client) : client)
@@ -900,8 +1001,12 @@ export const layerProtocolHttp = (options: {
   )
 
 /**
+ * Creates a client `Protocol` over the current `Socket`, using the current
+ * `RpcSerialization`, connection hooks, ping timeouts, and the configured retry
+ * policy.
+ *
+ * @category protocols
  * @since 4.0.0
- * @category protocol
  */
 export const makeProtocolSocket = (options?: {
   readonly retryTransientErrors?: boolean | undefined
@@ -911,9 +1016,11 @@ export const makeProtocolSocket = (options?: {
   never,
   Scope.Scope | RpcSerialization.RpcSerialization | Socket.Socket
 > =>
-  Protocol.make(Effect.fnUntraced(function*(writeResponse) {
+  Protocol.make(Effect.fnUntraced(function*(writeResponse, clientIds) {
     const socket = yield* Socket.Socket
     const serialization = yield* RpcSerialization.RpcSerialization
+    const hooks = yield* Effect.serviceOption(ConnectionHooks)
+    const requestClientMap = new Map<string, number>()
 
     const write = yield* socket.writer
 
@@ -921,9 +1028,13 @@ export const makeProtocolSocket = (options?: {
 
     const pinger = yield* makePinger(write(parser.encode(constPing)!))
     let currentError: RpcClientError | undefined
-    const clearCurrentError = Effect.sync(() => {
+    const onOpen = Effect.suspend(() => {
       currentError = undefined
+      return Option.isSome(hooks) ? hooks.value.onConnect : Effect.void
     })
+
+    const broadcast = (response: FromServerEncoded) =>
+      Effect.forEach(clientIds, (clientId) => writeResponse(clientId, response))
 
     yield* Effect.suspend(() => {
       parser = serialization.makeUnsafe()
@@ -939,13 +1050,23 @@ export const makeProtocolSocket = (options?: {
               const response = responses[i++]
               if (response._tag === "Pong") {
                 pinger.onPong()
+                return Effect.void
               }
-              return writeResponse(response)
+              if ("requestId" in response) {
+                const clientId = requestClientMap.get(response.requestId)
+                if (clientId !== undefined) {
+                  if (response._tag === "Exit") {
+                    requestClientMap.delete(response.requestId)
+                  }
+                  return writeResponse(clientId, response)
+                }
+              }
+              return broadcast(response)
             },
             step: constVoid
           })
         } catch (defect) {
-          return writeResponse({
+          return broadcast({
             _tag: "ClientProtocolError",
             error: new RpcClientError({
               reason: new RpcClientDefect({
@@ -955,7 +1076,7 @@ export const makeProtocolSocket = (options?: {
             })
           })
         }
-      }, { onOpen: clearCurrentError }).pipe(
+      }, { onOpen }).pipe(
         Effect.raceFirst(Effect.flatMap(
           pinger.timeout,
           () =>
@@ -973,6 +1094,7 @@ export const makeProtocolSocket = (options?: {
       Effect.flatMap(() =>
         Effect.fail(new Socket.SocketError({ reason: new Socket.SocketCloseError({ code: 1000 }) }))
       ),
+      Option.isSome(hooks) ? Effect.ensuring(hooks.value.onDisconnect) : identity,
       Effect.tapCause((cause) => {
         const error = Cause.findError(cause)
         const hasError = Result.isSuccess(error)
@@ -988,7 +1110,7 @@ export const makeProtocolSocket = (options?: {
             cause: Cause.squash(cause)
           })
         })
-        return writeResponse({
+        return broadcast({
           _tag: "ClientProtocolError",
           error: currentError
         })
@@ -1002,9 +1124,12 @@ export const makeProtocolSocket = (options?: {
     )
 
     return {
-      send(request) {
+      send(clientId, request) {
         if (currentError) {
           return Effect.fail(currentError)
+        }
+        if (request._tag === "Request") {
+          requestClientMap.set(request.id, clientId)
         }
         const encoded = parser.encode(request)
         if (encoded === undefined) return Effect.void
@@ -1044,8 +1169,11 @@ const makePinger = Effect.fnUntraced(function*<A, E, R>(writePing: Effect.Effect
 })
 
 /**
+ * Provides a client `Protocol` backed by the current `Socket` and
+ * `RpcSerialization` services.
+ *
+ * @category protocols
  * @since 4.0.0
- * @category protocol
  */
 export const layerProtocolSocket = (options?: {
   readonly retryTransientErrors?: boolean | undefined
@@ -1056,8 +1184,11 @@ export const layerProtocolSocket = (options?: {
 > => Layer.effect(Protocol)(makeProtocolSocket(options))
 
 /**
+ * Creates a client `Protocol` backed by a pool of workers, routing RPC requests
+ * to workers and supporting transferable values when the platform does.
+ *
+ * @category protocols
  * @since 4.0.0
- * @category protocol
  */
 export const makeProtocolWorker = (
   options: {
@@ -1076,16 +1207,21 @@ export const makeProtocolWorker = (
   WorkerError,
   Scope.Scope | Worker.WorkerPlatform | Worker.Spawner
 > =>
-  Protocol.make(Effect.fnUntraced(function*(writeResponse) {
+  Protocol.make(Effect.fnUntraced(function*(writeResponse, clientIds) {
     const worker = yield* Worker.WorkerPlatform
     const scope = yield* Effect.scope
     let workerId = 0
     const initialMessage = yield* Effect.serviceOption(RpcWorker.InitialMessage)
+    const hooks = yield* Effect.serviceOption(ConnectionHooks)
 
     const entries = new Map<string, {
+      readonly clientId: number
       readonly worker: Worker.Worker<FromServerEncoded, FromClientEncoded | RpcWorker.InitialMessage.Encoded>
       readonly latch: Latch.Latch
     }>()
+
+    const broadcast = (response: FromServerEncoded) =>
+      Effect.forEach(clientIds, (clientId) => writeResponse(clientId, response))
 
     const acquire = Effect.gen(function*() {
       const id = workerId++
@@ -1097,16 +1233,21 @@ export const makeProtocolWorker = (
           if (entry) {
             entries.delete(response.requestId)
             entry.latch.openUnsafe()
-            return writeResponse(response)
+            return writeResponse(entry.clientId, response)
           }
         } else if (response._tag === "Defect") {
           for (const [requestId, entry] of entries) {
             entries.delete(requestId)
             entry.latch.openUnsafe()
           }
-          return writeResponse(response)
+          return broadcast(response)
+        } else if ("requestId" in response) {
+          const entry = entries.get(response.requestId)
+          if (entry) {
+            return writeResponse(entry.clientId, response)
+          }
         }
-        return writeResponse(response)
+        return broadcast(response)
       }, {
         onSpawn: Option.isSome(initialMessage) ?
           Effect.flatMap(
@@ -1117,7 +1258,7 @@ export const makeProtocolWorker = (
       }).pipe(
         Effect.tapCause((cause) => {
           const error = Cause.findError(cause)
-          return writeResponse({
+          return broadcast({
             _tag: "ClientProtocolError",
             error: new RpcClientError({
               reason: Result.isSuccess(error) ? error.success.reason : new RpcClientDefect({
@@ -1165,13 +1306,17 @@ export const makeProtocolWorker = (
       })
     )
 
-    const send = (request: FromClientEncoded, transferables?: ReadonlyArray<globalThis.Transferable>) => {
+    const send = (
+      clientId: number,
+      request: FromClientEncoded,
+      transferables?: ReadonlyArray<globalThis.Transferable>
+    ) => {
       switch (request._tag) {
         case "Request": {
           return Pool.get(pool).pipe(
             Effect.flatMap((worker) => {
               const latch = Latch.makeUnsafe(false)
-              entries.set(request.id, { worker, latch })
+              entries.set(request.id, { clientId, worker, latch })
               return Effect.flatMap(worker.send(request, transferables), () => latch.await)
             }),
             Effect.scoped,
@@ -1195,6 +1340,7 @@ export const makeProtocolWorker = (
     }
 
     yield* Effect.scoped(Pool.get(pool))
+    if (Option.isSome(hooks)) yield* hooks.value.onConnect
 
     return {
       send,
@@ -1204,8 +1350,11 @@ export const makeProtocolWorker = (
   }))
 
 /**
+ * Provides a client `Protocol` backed by a worker pool using the current worker
+ * platform and spawner services.
+ *
+ * @category protocols
  * @since 4.0.0
- * @category protocol
  */
 export const layerProtocolWorker: (
   options: {
@@ -1224,6 +1373,23 @@ export const layerProtocolWorker: (
   WorkerError,
   Worker.WorkerPlatform | Worker.Spawner
 > = flow(makeProtocolWorker, Layer.effect(Protocol))
+
+/**
+ * Represents optional client protocol hooks that run when a transport connects
+ * and disconnects.
+ *
+ * **When to use**
+ *
+ * Use to run setup or cleanup effects when an RPC client transport opens or
+ * closes.
+ *
+ * @category connection hooks
+ * @since 4.0.0
+ */
+export class ConnectionHooks extends Context.Service<ConnectionHooks, {
+  readonly onConnect: Effect.Effect<void>
+  readonly onDisconnect: Effect.Effect<void>
+}>()("effect/rpc/RpcClient/ConnectionHooks") {}
 
 // internal
 

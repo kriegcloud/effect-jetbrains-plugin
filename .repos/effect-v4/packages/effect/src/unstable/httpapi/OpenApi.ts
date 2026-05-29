@@ -1,8 +1,50 @@
 /**
+ * OpenAPI 3.1 generation for declarative `HttpApi` contracts.
+ *
+ * This module reflects an `HttpApi` into an OpenAPI document and provides the
+ * annotations used to shape the generated output. The result can be served from
+ * `HttpApiBuilder.layer`, rendered by Swagger UI or Scalar, passed to client
+ * generators, or published through API gateway and documentation pipelines.
+ *
+ * **Mental model**
+ *
+ * {@link fromApi} walks the API's groups and endpoints and emits OpenAPI tags,
+ * paths, operations, parameters, request bodies, responses, security schemes,
+ * and component schemas. Endpoint and schema metadata determine the HTTP
+ * surface; annotations such as {@link Title}, {@link Description},
+ * {@link Summary}, {@link Version}, {@link Servers}, {@link License},
+ * {@link ExternalDocs}, {@link Identifier}, {@link Deprecated}, and
+ * {@link Format} fill in OpenAPI-specific fields.
+ *
+ * **Common tasks**
+ *
+ * Use {@link fromApi} to generate the complete specification. Use
+ * {@link annotations} to attach several OpenAPI annotations at once. Use
+ * {@link Exclude} to omit a group or endpoint, {@link Override} to shallowly
+ * merge extra fields into a generated object, and {@link Transform} when the
+ * generated API, tag, or operation needs a programmatic rewrite.
+ *
+ * **Gotchas**
+ *
+ * Schema identifiers are used as component names; additional schemas must have
+ * identifiers, and invalid OpenAPI component keys are rejected during
+ * generation. `HttpApiSchema` encodings choose media types for JSON,
+ * form-url-encoded, text, binary, and multipart payloads. No-content schemas
+ * emit responses without bodies, request and response unions are grouped by
+ * status code and content type, and `:id` route segments are rendered as `{id}`
+ * path parameters.
+ *
+ * **See also**
+ *
+ * `HttpApi` for API composition, `HttpApiEndpoint` for endpoint metadata,
+ * `HttpApiSchema` for HTTP status and encoding annotations, and
+ * `HttpApiBuilder` for serving the generated document with an HTTP router.
+ *
  * @since 4.0.0
  */
 import * as Arr from "../../Array.ts"
 import type { NonEmptyArray } from "../../Array.ts"
+import * as Context from "../../Context.ts"
 import { constFalse } from "../../Function.ts"
 import * as JsonPatch from "../../JsonPatch.ts"
 import { escapeToken } from "../../JsonPointer.ts"
@@ -11,7 +53,6 @@ import * as Option from "../../Option.ts"
 import * as Schema from "../../Schema.ts"
 import * as AST from "../../SchemaAST.ts"
 import * as SchemaRepresentation from "../../SchemaRepresentation.ts"
-import * as ServiceMap from "../../ServiceMap.ts"
 import * as HttpMethod from "../http/HttpMethod.ts"
 import * as HttpApi from "./HttpApi.ts"
 import * as HttpApiEndpoint from "./HttpApiEndpoint.ts"
@@ -21,109 +62,142 @@ import * as HttpApiSchema from "./HttpApiSchema.ts"
 import type { HttpApiSecurity } from "./HttpApiSecurity.ts"
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for overriding generated identifiers, including operation ids.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export class Identifier extends ServiceMap.Service<Identifier, string>()("effect/httpapi/OpenApi/Identifier") {}
+export class Identifier extends Context.Service<Identifier, string>()("effect/httpapi/OpenApi/Identifier") {}
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for setting the API title or group tag name.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export class Title extends ServiceMap.Service<Title, string>()("effect/httpapi/OpenApi/Title") {}
+export class Title extends Context.Service<Title, string>()("effect/httpapi/OpenApi/Title") {}
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for setting the generated API version.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export class Version extends ServiceMap.Service<Version, string>()("effect/httpapi/OpenApi/Version") {}
+export class Version extends Context.Service<Version, string>()("effect/httpapi/OpenApi/Version") {}
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for setting generated descriptions on APIs, groups, endpoints, or security schemes.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export class Description extends ServiceMap.Service<Description, string>()("effect/httpapi/OpenApi/Description") {}
+export class Description extends Context.Service<Description, string>()("effect/httpapi/OpenApi/Description") {}
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for setting the generated API license metadata.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export class License extends ServiceMap.Service<License, OpenAPISpecLicense>()("effect/httpapi/OpenApi/License") {}
+export class License extends Context.Service<License, OpenAPISpecLicense>()("effect/httpapi/OpenApi/License") {}
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for adding external documentation metadata to groups or endpoints.
+ *
  * @category annotations
+ * @since 4.0.0
  */
 export class ExternalDocs
-  extends ServiceMap.Service<ExternalDocs, OpenAPISpecExternalDocs>()("effect/httpapi/OpenApi/ExternalDocs")
+  extends Context.Service<ExternalDocs, OpenAPISpecExternalDocs>()("effect/httpapi/OpenApi/ExternalDocs")
 {}
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for setting the generated API server list.
+ *
  * @category annotations
+ * @since 4.0.0
  */
 export class Servers
-  extends ServiceMap.Service<Servers, ReadonlyArray<OpenAPISpecServer>>()("effect/httpapi/OpenApi/Servers")
+  extends Context.Service<Servers, ReadonlyArray<OpenAPISpecServer>>()("effect/httpapi/OpenApi/Servers")
 {}
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for setting the format metadata, such as a bearer token format on security schemes.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export class Format extends ServiceMap.Service<Format, string>()("effect/httpapi/OpenApi/Format") {}
+export class Format extends Context.Service<Format, string>()("effect/httpapi/OpenApi/Format") {}
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for setting generated summary text.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export class Summary extends ServiceMap.Service<Summary, string>()("effect/httpapi/OpenApi/Summary") {}
+export class Summary extends Context.Service<Summary, string>()("effect/httpapi/OpenApi/Summary") {}
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for marking a generated endpoint operation as deprecated.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export class Deprecated extends ServiceMap.Service<Deprecated, boolean>()("effect/httpapi/OpenApi/Deprecated") {}
+export class Deprecated extends Context.Service<Deprecated, boolean>()("effect/httpapi/OpenApi/Deprecated") {}
 
 /**
- * @since 4.0.0
+ * OpenAPI annotation for shallowly merging additional fields into a generated OpenAPI object.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export class Override
-  extends ServiceMap.Service<Override, Record<string, unknown>>()("effect/httpapi/OpenApi/Override")
-{}
+export class Override extends Context.Service<Override, Record<string, unknown>>()("effect/httpapi/OpenApi/Override") {}
 
 /**
- * @since 4.0.0
+ * Annotation that excludes an annotated group or endpoint from the generated
+ * OpenAPI specification.
+ *
+ * **When to use**
+ *
+ * Use to hide internal, experimental, or otherwise undocumented HTTP API groups
+ * and endpoints from generated OpenAPI output.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export const Exclude = ServiceMap.Reference<boolean>("effect/httpapi/OpenApi/Exclude", {
+export const Exclude = Context.Reference<boolean>("effect/httpapi/OpenApi/Exclude", {
   defaultValue: constFalse
 })
 
 /**
- * Transforms the generated OpenAPI specification
+ * OpenAPI annotation for transforming a generated OpenAPI object.
  *
- * @since 4.0.0
+ * **Details**
+ *
+ * The function is applied during generation to the annotated API, group tag, or
+ * endpoint operation.
+ *
  * @category annotations
+ * @since 4.0.0
  */
-export class Transform extends ServiceMap.Service<
+export class Transform extends Context.Service<
   Transform,
   (openApiSpec: Record<string, any>) => Record<string, any>
 >()("effect/httpapi/OpenApi/Transform") {}
 
-const servicesPartial = <Tags extends Record<string, ServiceMap.Key<any, any> | ServiceMap.Key<never, any>>>(
+const servicesPartial = <Tags extends Record<string, Context.Key<any, any> | Context.Key<never, any>>>(
   tags: Tags
 ): (
   options: {
-    readonly [K in keyof Tags]?: ServiceMap.Service.Shape<Tags[K]> | undefined
+    readonly [K in keyof Tags]?: Context.Service.Shape<Tags[K]> | undefined
   }
-) => ServiceMap.ServiceMap<never> => {
+) => Context.Context<never> => {
   const entries = Object.entries(tags)
   return (options) => {
-    let context = ServiceMap.empty()
+    let context = Context.empty()
     for (const [key, tag] of entries) {
       if (options[key] !== undefined) {
-        context = ServiceMap.add(context, tag as any, options[key]!)
+        context = Context.add(context, tag as any, options[key]!)
       }
     }
     return context
@@ -131,8 +205,10 @@ const servicesPartial = <Tags extends Record<string, ServiceMap.Key<any, any> | 
 }
 
 /**
- * @since 4.0.0
+ * Builds a `Context` containing OpenAPI annotations from the supplied options.
+ *
  * @category annotations
+ * @since 4.0.0
  */
 export const annotations: (
   options: {
@@ -150,7 +226,7 @@ export const annotations: (
     readonly exclude?: boolean | undefined
     readonly transform?: ((openApiSpec: Record<string, any>) => Record<string, any>) | undefined
   }
-) => ServiceMap.ServiceMap<never> = servicesPartial({
+) => Context.Context<never> = servicesPartial({
   identifier: Identifier,
   title: Title,
   version: Version,
@@ -174,11 +250,11 @@ const apiCache = new WeakMap<HttpApi.Any, OpenAPISpec>()
  * callback function to it. If the tag is not found, the function does nothing.
  */
 function processAnnotation<Services, S, I>(
-  ctx: ServiceMap.ServiceMap<Services>,
-  annotation: ServiceMap.Key<I, S>,
+  ctx: Context.Context<Services>,
+  annotation: Context.Key<I, S>,
   f: (s: S) => void
 ) {
-  const o = ServiceMap.getOption(ctx, annotation)
+  const o = Context.getOption(ctx, annotation)
   if (Option.isSome(o)) {
     f(o.value)
   }
@@ -201,21 +277,11 @@ function processAnnotation<Services, S, I>(
  * and overrides. Cached results are used for better performance when the same
  * `HttpApi` instance is processed multiple times.
  *
- * **Options**
- *
- * - `additionalProperties`: Controls how additional properties are handled while resolving the JSON schema. Possible values include:
- *   - `false`: Disallow additional properties (default)
- *   - `true`: Allow additional properties
- *   - `JsonSchema`: Use the provided JSON Schema for additional properties
- *
  * @category constructors
  * @since 4.0.0
  */
 export function fromApi<Id extends string, Groups extends HttpApiGroup.Any>(
-  api: HttpApi.HttpApi<Id, Groups>,
-  options?: {
-    readonly additionalProperties?: boolean | JsonSchema.JsonSchema | undefined
-  } | undefined
+  api: HttpApi.HttpApi<Id, Groups>
 ): OpenAPISpec {
   const cached = apiCache.get(api)
   if (cached !== undefined) {
@@ -269,11 +335,11 @@ export function fromApi<Id extends string, Groups extends HttpApiGroup.Any>(
 
   HttpApi.reflect(api, {
     onGroup({ group }) {
-      if (ServiceMap.get(group.annotations, Exclude)) {
+      if (Context.get(group.annotations, Exclude)) {
         return
       }
       let tag: OpenAPISpecTag = {
-        name: ServiceMap.getOrElse(group.annotations, Title, () => group.identifier)
+        name: Context.getOrElse(group.annotations, Title, () => group.identifier)
       }
       processAnnotation(group.annotations, Description, (description) => {
         tag.description = description
@@ -291,12 +357,12 @@ export function fromApi<Id extends string, Groups extends HttpApiGroup.Any>(
       spec.tags.push(tag)
     },
     onEndpoint({ endpoint, group, mergedAnnotations, middleware }) {
-      if (ServiceMap.get(mergedAnnotations, Exclude)) {
+      if (Context.get(mergedAnnotations, Exclude)) {
         return
       }
       let op: OpenAPISpecOperation = {
-        tags: [ServiceMap.getOrElse(group.annotations, Title, () => group.identifier)],
-        operationId: ServiceMap.getOrElse(
+        tags: [Context.getOrElse(group.annotations, Title, () => group.identifier)],
+        operationId: Context.getOrElse(
           endpoint.annotations,
           Identifier,
           () => group.topLevel ? endpoint.name : `${group.identifier}.${endpoint.name}`
@@ -486,9 +552,7 @@ export function fromApi<Id extends string, Groups extends HttpApiGroup.Any>(
       Arr.map(pathOps, (op) => op.ast)
     )
     const jsonSchemaMultiDocument = JsonSchema.toMultiDocumentOpenApi3_1(
-      SchemaRepresentation.toJsonSchemaMultiDocument(multiDocument, {
-        additionalProperties: options?.additionalProperties
-      })
+      SchemaRepresentation.toJsonSchemaMultiDocument(multiDocument)
     )
     const patchOps: Array<JsonPatch.JsonPatchOperation> = pathOps.map((op, i) => {
       const oppath = escapePath(op.path)
@@ -538,7 +602,7 @@ type ResponseBodies = Map<
 >
 
 function extractResponseBodies(
-  schemas: readonly [Schema.Top, ...Array<Schema.Top>],
+  schemas: Array<Schema.Top>,
   getStatus: (ast: AST.AST) => number,
   getDescription: (ast: AST.AST) => string | undefined
 ): ResponseBodies {
@@ -666,15 +730,15 @@ const makeSecurityScheme = (security: HttpApiSecurity): OpenAPISecurityScheme =>
         scheme: "basic"
       }
     }
-    case "Bearer": {
-      const format = ServiceMap.getOption(security.annotations, Format).pipe(
+    case "Http": {
+      const format = Context.getOption(security.annotations, Format).pipe(
         Option.map((format) => ({ bearerFormat: format })),
         Option.getOrUndefined
       )
       return {
         ...meta,
         type: "http",
-        scheme: "bearer",
+        scheme: security.scheme,
         ...format
       }
     }
@@ -708,6 +772,8 @@ export interface OpenAPISpec {
 }
 
 /**
+ * OpenAPI `info` object generated by `fromApi`.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -720,6 +786,8 @@ export interface OpenAPISpecInfo {
 }
 
 /**
+ * OpenAPI tag object generated for an HTTP API group.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -730,6 +798,8 @@ export interface OpenAPISpecTag {
 }
 
 /**
+ * OpenAPI external documentation metadata.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -739,15 +809,20 @@ export interface OpenAPISpecExternalDocs {
 }
 
 /**
+ * OpenAPI license metadata used in the generated `info` object.
+ *
  * @category models
  * @since 4.0.0
  */
 export interface OpenAPISpecLicense {
   name: string
   url?: string
+  [key: string]: unknown
 }
 
 /**
+ * OpenAPI server object used in the generated `servers` array.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -758,6 +833,8 @@ export interface OpenAPISpecServer {
 }
 
 /**
+ * OpenAPI variable definition for templated server URLs.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -768,12 +845,16 @@ export interface OpenAPISpecServerVariable {
 }
 
 /**
+ * Generated OpenAPI `paths` object, keyed by route path.
+ *
  * @category models
  * @since 4.0.0
  */
 export type OpenAPISpecPaths = Record<string, OpenAPISpecPathItem>
 
 /**
+ * Lowercase HTTP method names used as keys in generated OpenAPI path items.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -788,6 +869,8 @@ export type OpenAPISpecMethodName =
   | "trace"
 
 /**
+ * Generated OpenAPI path item mapping HTTP methods to operations for a single route path.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -796,6 +879,8 @@ export type OpenAPISpecPathItem = {
 }
 
 /**
+ * Generated OpenAPI parameter object for path, query, header, or cookie parameters.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -808,12 +893,16 @@ export interface OpenAPISpecParameter {
 }
 
 /**
+ * Generated OpenAPI responses object, keyed by HTTP status code.
+ *
  * @category models
  * @since 4.0.0
  */
 export type OpenAPISpecResponses = Record<number, OpenApiSpecResponse>
 
 /**
+ * Generated OpenAPI content object, keyed by media type.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -822,6 +911,8 @@ export type OpenApiSpecContent = {
 }
 
 /**
+ * Generated OpenAPI response object for an endpoint success or error schema.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -831,6 +922,8 @@ export interface OpenApiSpecResponse {
 }
 
 /**
+ * Generated OpenAPI media type object containing the JSON Schema for a request or response body.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -839,6 +932,8 @@ export interface OpenApiSpecMediaType {
 }
 
 /**
+ * Generated OpenAPI request body object for endpoint payloads.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -848,6 +943,8 @@ export interface OpenAPISpecRequestBody {
 }
 
 /**
+ * Generated OpenAPI components containing shared schemas and security schemes.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -857,6 +954,8 @@ export interface OpenAPIComponents {
 }
 
 /**
+ * Generated OpenAPI HTTP security scheme, such as bearer or basic authentication.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -869,6 +968,8 @@ export interface OpenAPIHTTPSecurityScheme {
 }
 
 /**
+ * Generated OpenAPI API key security scheme.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -880,6 +981,8 @@ export interface OpenAPIApiKeySecurityScheme {
 }
 
 /**
+ * Union of security scheme objects emitted in generated OpenAPI components.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -888,12 +991,16 @@ export type OpenAPISecurityScheme =
   | OpenAPIApiKeySecurityScheme
 
 /**
+ * Generated OpenAPI security requirement, keyed by security scheme name.
+ *
  * @category models
  * @since 4.0.0
  */
 export type OpenAPISecurityRequirement = Record<string, Array<string>>
 
 /**
+ * Generated OpenAPI operation object for an HTTP API endpoint.
+ *
  * @category models
  * @since 4.0.0
  */

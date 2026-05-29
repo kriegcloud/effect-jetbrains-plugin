@@ -77,10 +77,10 @@ import * as Arr from "./Array.ts"
 import * as Cause from "./Cause.ts"
 import type * as Combiner from "./Combiner.ts"
 import * as Effect from "./Effect.ts"
-import type * as Exit from "./Exit.ts"
+import * as Exit from "./Exit.ts"
 import { format, formatPropertyKey } from "./Formatter.ts"
 import { memoize } from "./Function.ts"
-import { effectIsExit } from "./internal/effect.ts"
+import { effectIsExit, iterateEager } from "./internal/effect.ts"
 import * as internalRecord from "./internal/record.ts"
 import * as InternalAnnotations from "./internal/schema/annotations.ts"
 import * as Option from "./Option.ts"
@@ -97,6 +97,8 @@ import * as Transformation from "./SchemaTransformation.ts"
 /**
  * Discriminated union of all AST node types.
  *
+ * **Details**
+ *
  * Every `Schema` has an `.ast` property of this type. Use the guard functions
  * ({@link isString}, {@link isObjects}, etc.) to narrow to a specific variant,
  * then access variant-specific fields.
@@ -107,9 +109,8 @@ import * as Transformation from "./SchemaTransformation.ts"
  *
  * @see {@link Base}
  * @see {@link isAST}
- *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export type AST =
   | Declaration
@@ -141,12 +142,13 @@ function makeGuard<T extends AST["_tag"]>(tag: T) {
 /**
  * Returns `true` if the value is an {@link AST} node (any variant).
  *
+ * **Details**
+ *
  * Uses the internal `TypeId` brand to distinguish AST nodes from arbitrary
  * objects.
  *
  * @see {@link AST}
- *
- * @category Guard
+ * @category guards
  * @since 4.0.0
  */
 export function isAST(u: unknown): u is AST {
@@ -156,15 +158,31 @@ export function isAST(u: unknown): u is AST {
 /**
  * Narrows an {@link AST} to {@link Declaration}.
  *
- * @category Guard
- * @since 4.0.0
+ * **When to use**
+ *
+ * Use to recognize declaration AST nodes before running declaration-specific
+ * handling.
+ *
+ * @see {@link Declaration} for the AST node type narrowed by this guard
+ *
+ * @category guards
+ * @since 3.10.0
  */
 export const isDeclaration = makeGuard("Declaration")
 
 /**
  * Narrows an {@link AST} to {@link Null}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to recognize an AST node that represents exactly the `null` literal when
+ * inspecting, traversing, or transforming schema ASTs.
+ *
+ * @see {@link Null} for the AST node type narrowed by this guard
+ * @see {@link null_ null} for the singleton `Null` AST instance
+ * @see {@link isLiteral} for exact primitive literal AST nodes
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isNull = makeGuard("Null")
@@ -172,7 +190,14 @@ export const isNull = makeGuard("Null")
 /**
  * Narrows an {@link AST} to {@link Undefined}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to identify AST nodes that represent exactly the JavaScript `undefined`
+ * value.
+ *
+ * @see {@link isVoid} for narrowing AST nodes that represent TypeScript `void` instead of exact `undefined`
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isUndefined = makeGuard("Undefined")
@@ -180,7 +205,14 @@ export const isUndefined = makeGuard("Undefined")
 /**
  * Narrows an {@link AST} to {@link Void}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to identify AST nodes that represent the TypeScript `void` type before
+ * handling `Void`-specific schema behavior.
+ *
+ * @see {@link isUndefined} for narrowing AST nodes that represent the literal `undefined` value instead of TypeScript `void`
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isVoid = makeGuard("Void")
@@ -188,7 +220,15 @@ export const isVoid = makeGuard("Void")
 /**
  * Narrows an {@link AST} to {@link Never}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to detect the AST node for a schema that can never match before handling
+ * other schema variants.
+ *
+ * @see {@link Never} for the AST node type narrowed by this guard
+ * @see {@link never} for the singleton `Never` AST instance
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isNever = makeGuard("Never")
@@ -196,7 +236,14 @@ export const isNever = makeGuard("Never")
 /**
  * Narrows an {@link AST} to {@link Unknown}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use when inspecting a schema AST and you need to handle the `Unknown` node
+ * variant specifically.
+ *
+ * @see {@link isAny} for the guard for the `Any` node, whose parsed result is typed as `any` rather than `unknown`
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isUnknown = makeGuard("Unknown")
@@ -204,7 +251,14 @@ export const isUnknown = makeGuard("Unknown")
 /**
  * Narrows an {@link AST} to {@link Any}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use when inspecting a schema AST and you need to handle the `Any` node
+ * variant specifically.
+ *
+ * @see {@link isUnknown} for the guard for the `Unknown` node, whose parsed result is typed as `unknown` rather than `any`
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isAny = makeGuard("Any")
@@ -212,7 +266,16 @@ export const isAny = makeGuard("Any")
 /**
  * Narrows an {@link AST} to {@link String}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to detect schema AST nodes that match any string value while inspecting or
+ * transforming an AST.
+ *
+ * @see {@link String} for the AST node class narrowed by this guard
+ * @see {@link string} for the singleton `String` AST instance
+ * @see {@link isLiteral} for exact primitive literal AST nodes, including exact string literals
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isString = makeGuard("String")
@@ -220,7 +283,12 @@ export const isString = makeGuard("String")
 /**
  * Narrows an {@link AST} to {@link Number}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to detect `Number` AST nodes while inspecting, traversing, or transforming
+ * schema ASTs.
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isNumber = makeGuard("Number")
@@ -228,7 +296,15 @@ export const isNumber = makeGuard("Number")
 /**
  * Narrows an {@link AST} to {@link Boolean}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to identify the `Boolean` AST variant while inspecting, traversing, or
+ * transforming schema definitions.
+ *
+ * @see {@link Boolean} for the AST node type matched by this guard
+ * @see {@link boolean} for the singleton instance to use when constructing a boolean AST directly
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isBoolean = makeGuard("Boolean")
@@ -236,7 +312,14 @@ export const isBoolean = makeGuard("Boolean")
 /**
  * Narrows an {@link AST} to {@link BigInt}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to identify bigint AST nodes while inspecting or transforming schema ASTs.
+ *
+ * @see {@link BigInt} for the AST node matched by this guard
+ * @see {@link bigInt} for the singleton instance; use `isBigInt` when narrowing an existing `AST` value
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isBigInt = makeGuard("BigInt")
@@ -244,7 +327,14 @@ export const isBigInt = makeGuard("BigInt")
 /**
  * Narrows an {@link AST} to {@link Symbol}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to narrow an `AST` node before handling the `Symbol` variant for schemas
+ * that accept any JavaScript symbol value.
+ *
+ * @see {@link isUniqueSymbol} for the sibling guard that narrows the `UniqueSymbol` variant for one exact symbol value
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isSymbol = makeGuard("Symbol")
@@ -252,31 +342,54 @@ export const isSymbol = makeGuard("Symbol")
 /**
  * Narrows an {@link AST} to {@link Literal}.
  *
- * @category Guard
- * @since 4.0.0
+ * **When to use**
+ *
+ * Use to recognize exact string, number, boolean, or bigint literal AST nodes.
+ *
+ * @see {@link Literal} for the AST node type narrowed by this guard
+ * @see {@link LiteralValue} for the values stored by literal nodes
+ *
+ * @category guards
+ * @since 3.10.0
  */
 export const isLiteral = makeGuard("Literal")
 
 /**
  * Narrows an {@link AST} to {@link UniqueSymbol}.
  *
- * @category Guard
- * @since 4.0.0
+ * @category guards
+ * @since 3.10.0
  */
 export const isUniqueSymbol = makeGuard("UniqueSymbol")
 
 /**
  * Narrows an {@link AST} to {@link ObjectKeyword}.
  *
- * @category Guard
- * @since 4.0.0
+ * **When to use**
+ *
+ * Use to identify the AST node for the TypeScript `object` keyword when
+ * inspecting or transforming a schema AST.
+ *
+ * @see {@link ObjectKeyword} for the AST node matched by this guard
+ * @see {@link objectKeyword} for the singleton `ObjectKeyword` AST instance
+ * @see {@link isObjects} for struct and record AST nodes
+ *
+ * @category guards
+ * @since 3.10.0
  */
 export const isObjectKeyword = makeGuard("ObjectKeyword")
 
 /**
  * Narrows an {@link AST} to {@link Enum}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to recognize enum AST nodes before reading enum cases or running
+ * enum-specific handling.
+ *
+ * @see {@link Enum} for the AST node type narrowed by this guard
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isEnum = makeGuard("Enum")
@@ -284,15 +397,22 @@ export const isEnum = makeGuard("Enum")
 /**
  * Narrows an {@link AST} to {@link TemplateLiteral}.
  *
- * @category Guard
- * @since 4.0.0
+ * @category guards
+ * @since 3.10.0
  */
 export const isTemplateLiteral = makeGuard("TemplateLiteral")
 
 /**
  * Narrows an {@link AST} to {@link Arrays}.
  *
- * @category Guard
+ * **When to use**
+ *
+ * Use to recognize array-like AST nodes before reading their element, rest, or
+ * mutability metadata.
+ *
+ * @see {@link Arrays} for the AST node type narrowed by this guard
+ *
+ * @category guards
  * @since 4.0.0
  */
 export const isArrays = makeGuard("Arrays")
@@ -300,7 +420,7 @@ export const isArrays = makeGuard("Arrays")
 /**
  * Narrows an {@link AST} to {@link Objects}.
  *
- * @category Guard
+ * @category guards
  * @since 4.0.0
  */
 export const isObjects = makeGuard("Objects")
@@ -308,23 +428,26 @@ export const isObjects = makeGuard("Objects")
 /**
  * Narrows an {@link AST} to {@link Union}.
  *
- * @category Guard
- * @since 4.0.0
+ * @category guards
+ * @since 3.10.0
  */
 export const isUnion = makeGuard("Union")
 
 /**
  * Narrows an {@link AST} to {@link Suspend}.
  *
- * @category Guard
- * @since 4.0.0
+ * @category guards
+ * @since 3.10.0
  */
 export const isSuspend = makeGuard("Suspend")
 
 /**
- * A single step in an {@link Encoding} chain, pairing a target {@link AST}
- * with a `Transformation` or `Middleware` that converts values between the
- * current node and the target.
+ * Represents a single step in an {@link Encoding} chain.
+ *
+ * **Details**
+ *
+ * A link pairs a target {@link AST} with a `Transformation` or `Middleware`
+ * that converts values between the current node and the target.
  *
  * - `to` — the AST node on the other side of this transformation step.
  * - `transformation` — the bidirectional conversion logic (decode/encode).
@@ -334,8 +457,7 @@ export const isSuspend = makeGuard("Suspend")
  *
  * @see {@link Encoding}
  * @see {@link decodeTo}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Link {
@@ -359,60 +481,65 @@ export class Link {
  * A non-empty chain of {@link Link} values representing the transformation
  * steps between a schema's decoded (type) form and its encoded (wire) form.
  *
+ * **Details**
+ *
  * Stored on {@link Base.encoding}. When `undefined`, the node has no
  * encoding transformation (type and encoded forms are identical).
  *
  * @see {@link Link}
  * @see {@link toEncoded}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export type Encoding = readonly [Link, ...Array<Link>]
 
 /**
- * Options that control parsing/validation behavior.
+ * Options that control schema parsing, validation, transformation, and output behavior.
  *
- * Pass to `Schema.decodeUnknown`, `Schema.encode`, etc. to customize error
- * reporting, excess property handling, and output key ordering.
+ * **Details**
  *
- * - `errors` — `"first"` (default) stops at the first error; `"all"`
- *   collects every error.
- * - `onExcessProperty` — `"ignore"` (default) strips unknown keys;
+ * Pass to `Schema.decodeUnknown`, `Schema.encode`, and related APIs to customize
+ * error reporting, excess property handling, output key ordering, check
+ * execution, and asynchronous parser concurrency.
+ *
+ * - `errors` — `"first"` (default) stops at the first error; `"all"` collects
+ *   every error.
+ * - `onExcessProperty` — `"ignore"` (default) strips unknown object keys;
  *   `"error"` fails; `"preserve"` keeps them.
  * - `propertyOrder` — `"none"` (default) lets the system choose key order;
  *   `"original"` preserves input key order.
+ * - `disableChecks` — skips validation checks while still applying defaults and
+ *   transformations.
+ * - `concurrency` — maximum number of async parse effects to run concurrently;
+ *   defaults to `1`, or use `"unbounded"`.
  *
- * @category model
- * @since 4.0.0
+ * @category options
+ * @since 3.10.0
  */
 export interface ParseOptions {
   /**
-   * The `errors` option allows you to receive all parsing errors when
-   * attempting to parse a value using a schema. By default only the first error
-   * is returned, but by setting the `errors` option to `"all"`, you can receive
-   * all errors that occurred during the parsing process. This can be useful for
-   * debugging or for providing more comprehensive error messages to the user.
+   * Controls how many parsing errors are reported.
    *
-   * default: "first"
+   * **Details**
+   *
+   * The default, `"first"`, stops at the first error. Set the option to `"all"`
+   * to collect every parsing error, which can help with debugging or with
+   * presenting more complete error messages to a user.
+   *
+   * @default "first"
    */
   readonly errors?: "first" | "all" | undefined
 
   /**
-   * When using a `Objects` to parse a value, by default any properties that
-   * are not specified in the schema will be stripped out from the output. This
-   * is because the `Objects` is expecting a specific shape for the parsed
-   * value, and any excess properties do not conform to that shape.
+   * Controls how object parsing handles keys that are not declared by the schema.
    *
-   * However, you can use the `onExcessProperty` option (default value:
-   * `"ignore"`) to trigger a parsing error. This can be particularly useful in
-   * cases where you need to detect and handle potential errors or unexpected
-   * values.
+   * **Details**
    *
-   * If you want to allow excess properties to remain, you can use
-   * `onExcessProperty` set to `"preserve"`.
+   * The default, `"ignore"`, strips unspecified properties from the output. Use
+   * `"error"` to fail when an excess property is present, or `"preserve"` to
+   * keep excess properties in the output.
    *
-   * default: "ignore"
+   * @default "ignore"
    */
   readonly onExcessProperty?: "ignore" | "error" | "preserve" | undefined
 
@@ -422,16 +549,20 @@ export interface ParseOptions {
    * important for the consuming processes or when maintaining the input order
    * enhances readability and usability.
    *
+   * **Details**
+   *
    * By default, the `propertyOrder` option is set to `"none"`. This means that
    * the internal system decides the order of keys to optimize parsing speed.
-   * The order of keys in this mode should not be considered stable, and it's
-   * recommended not to rely on key ordering as it may change in future updates
-   * without notice.
    *
    * Setting `propertyOrder` to `"original"` ensures that the keys are ordered
    * as they appear in the input during the decoding/encoding process.
    *
-   * default: "none"
+   * **Gotchas**
+   *
+   * The key order for `"none"` should not be considered stable and may change
+   * in future updates without notice.
+   *
+   * @default "none"
    */
   readonly propertyOrder?: "none" | "original" | undefined
 
@@ -440,13 +571,22 @@ export interface ParseOptions {
    * transformations.
    */
   readonly disableChecks?: boolean | undefined
+
+  /**
+   * The maximum number of async effects to run concurrently.
+   *
+   * @default 1
+   */
+  readonly concurrency?: number | "unbounded" | undefined
 }
 
 /** @internal */
 export const defaultParseOptions: ParseOptions = {}
 
 /**
- * Per-property metadata attached to AST nodes via {@link Base.context}.
+ * Represents per-property metadata attached to AST nodes via {@link Base.context}.
+ *
+ * **Details**
  *
  * Tracks whether a property key is optional, mutable, has a constructor
  * default, or carries key-level annotations. Typically set by helpers like
@@ -461,8 +601,7 @@ export const defaultParseOptions: ParseOptions = {}
  *
  * @see {@link optionalKey}
  * @see {@link isOptional}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Context {
@@ -490,14 +629,15 @@ export class Context {
  * Non-empty array of validation {@link Check} values attached to an AST node
  * via {@link Base.checks}.
  *
+ * **Details**
+ *
  * Checks are run after basic type matching succeeds. They represent
  * refinements like `minLength`, `pattern`, `int`, etc.
  *
  * @see {@link Check}
  * @see {@link Filter}
  * @see {@link FilterGroup}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export type Checks = readonly [Check<any>, ...Array<Check<any>>]
@@ -505,7 +645,9 @@ export type Checks = readonly [Check<any>, ...Array<Check<any>>]
 const TypeId = "~effect/Schema"
 
 /**
- * Abstract base class for all {@link AST} node variants.
+ * Represents the abstract base class for all {@link AST} node variants.
+ *
+ * **Details**
  *
  * Every AST node extends `Base` and inherits these fields:
  *
@@ -519,8 +661,7 @@ const TypeId = "~effect/Schema"
  * Subclasses add a `_tag` discriminant and variant-specific data.
  *
  * @see {@link AST}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export abstract class Base {
@@ -550,17 +691,20 @@ export abstract class Base {
 /**
  * AST node for user-defined opaque types with custom parsing logic.
  *
+ * **When to use**
+ *
  * Use when none of the built-in AST nodes fit. The `run` function receives
  * `typeParameters` and returns a parser that validates/transforms raw input.
+ *
+ * **Details**
  *
  * - `typeParameters` — inner schemas this declaration is parameterized over
  *   (e.g. the element type for a custom collection).
  * - `run` — factory producing the actual parse function.
  *
  * @see {@link isDeclaration}
- *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class Declaration extends Base {
   readonly _tag = "Declaration"
@@ -609,12 +753,13 @@ export class Declaration extends Base {
 /**
  * AST node matching the `null` literal value.
  *
+ * **Details**
+ *
  * Parsing succeeds only when the input is exactly `null`.
  *
- * @see {@link null}
+ * @see {@link null_ null}
  * @see {@link isNull}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Null extends Base {
@@ -632,8 +777,14 @@ export class Null extends Base {
 const null_ = new Null()
 export {
   /**
-   * Singleton {@link Null} AST instance.
+   * Provides the singleton {@link Null} AST instance.
    *
+   * **When to use**
+   *
+   * Use when you need the shared AST node for exact null values while inspecting
+   * or constructing schema ASTs.
+   *
+   * @category constants
    * @since 4.0.0
    */
   null_ as null
@@ -642,12 +793,13 @@ export {
 /**
  * AST node matching the `undefined` value.
  *
+ * **Details**
+ *
  * Parsing succeeds only when the input is exactly `undefined`.
  *
  * @see {@link undefined}
  * @see {@link isUndefined}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Undefined extends Base {
@@ -677,8 +829,14 @@ const undefinedToNull = new Link(
 const undefined_ = new Undefined()
 export {
   /**
-   * Singleton {@link Undefined} AST instance.
+   * Provides the singleton {@link Undefined} AST instance.
    *
+   * **When to use**
+   *
+   * Use when you need the shared AST node for exact undefined values while
+   * inspecting or constructing schema ASTs.
+   *
+   * @category constants
    * @since 4.0.0
    */
   undefined_ as undefined
@@ -687,13 +845,14 @@ export {
 /**
  * AST node matching the `void` type (accepts `undefined` at runtime).
  *
+ * **Details**
+ *
  * Behaves like {@link Undefined} for parsing but represents the TypeScript
  * `void` type semantically.
  *
- * @see {@link void}
+ * @see {@link void_ void}
  * @see {@link isVoid}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Void extends Base {
@@ -715,8 +874,18 @@ export class Void extends Base {
 const void_ = new Void()
 export {
   /**
-   * Singleton {@link Void} AST instance.
+   * Provides the singleton {@link Void} AST instance.
    *
+   * **When to use**
+   *
+   * Use when constructing or comparing AST nodes that represent the TypeScript
+   * `void` type and accept `undefined` at runtime.
+   *
+   * @see {@link Void} for the AST node class
+   * @see {@link undefined} for the sibling AST singleton that matches exactly `undefined`
+   * @see {@link isVoid} for narrowing an AST to a `Void` node
+   *
+   * @category constructors
    * @since 4.0.0
    */
   void_ as void
@@ -725,13 +894,14 @@ export {
 /**
  * AST node representing the `never` type — no value matches.
  *
+ * **Details**
+ *
  * Parsing always fails. Useful as a placeholder in unions or as the result
  * of narrowing that eliminates all options.
  *
  * @see {@link never}
  * @see {@link isNever}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Never extends Base {
@@ -747,8 +917,17 @@ export class Never extends Base {
 }
 
 /**
- * Singleton {@link Never} AST instance.
+ * Provides the singleton {@link Never} AST instance.
  *
+ * **When to use**
+ *
+ * Use to reuse the canonical bottom-type AST node when constructing,
+ * comparing, or returning ASTs.
+ *
+ * @see {@link Never} for the AST node class
+ * @see {@link isNever} for narrowing an AST to a `Never` node
+ *
+ * @category constructors
  * @since 4.0.0
  */
 export const never = new Never()
@@ -759,7 +938,7 @@ export const never = new Never()
  * @see {@link any}
  * @see {@link isAny}
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Any extends Base {
@@ -775,8 +954,16 @@ export class Any extends Base {
 }
 
 /**
- * Singleton {@link Any} AST instance.
+ * Provides the singleton {@link Any} AST instance.
  *
+ * **When to use**
+ *
+ * Use when you need the singleton AST node for the TypeScript `any` type and
+ * intentionally want parsing to accept every input value.
+ *
+ * @see {@link unknown} for the sibling AST singleton that also accepts every value while preserving the safer `unknown` type
+ *
+ * @category constructors
  * @since 4.0.0
  */
 export const any = new Any()
@@ -784,13 +971,14 @@ export const any = new Any()
 /**
  * AST node representing the `unknown` type — every value matches.
  *
+ * **Details**
+ *
  * Unlike {@link Any}, this is type-safe: the parsed result is typed as
  * `unknown` rather than `any`.
  *
  * @see {@link unknown}
  * @see {@link isUnknown}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Unknown extends Base {
@@ -806,8 +994,16 @@ export class Unknown extends Base {
 }
 
 /**
- * Singleton {@link Unknown} AST instance.
+ * Provides the singleton {@link Unknown} AST instance.
  *
+ * **When to use**
+ *
+ * Use when you need the reusable AST singleton for a schema node that accepts
+ * every value while keeping parsed values opaque.
+ *
+ * @see {@link any} for the singleton that accepts every value as `any`
+ *
+ * @category constructors
  * @since 4.0.0
  */
 export const unknown = new Unknown()
@@ -819,8 +1015,8 @@ export const unknown = new Unknown()
  * @see {@link objectKeyword}
  * @see {@link isObjectKeyword}
  *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class ObjectKeyword extends Base {
   readonly _tag = "ObjectKeyword"
@@ -835,21 +1031,31 @@ export class ObjectKeyword extends Base {
 }
 
 /**
- * Singleton {@link ObjectKeyword} AST instance.
+ * Provides the singleton {@link ObjectKeyword} AST instance.
  *
- * @since 4.0.0
+ * **When to use**
+ *
+ * Use to reuse the canonical AST node for the TypeScript `object` keyword when
+ * building or comparing `SchemaAST` values directly.
+ *
+ * @see {@link ObjectKeyword} for the AST node class
+ * @see {@link isObjectKeyword} for narrowing an AST to an `ObjectKeyword` node
+ *
+ * @category constructors
+ * @since 3.10.0
  */
 export const objectKeyword = new ObjectKeyword()
 
 /**
  * AST node representing a TypeScript `enum`.
  *
+ * **Details**
+ *
  * Holds `enums` as an array of `[name, value]` pairs where values are
  * `string | number`. Parsing succeeds when the input matches any enum value.
  *
  * @see {@link isEnum}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Enum extends Base {
@@ -923,14 +1129,15 @@ function isTemplateLiteralPart(ast: AST): ast is TemplateLiteralPart {
  * AST node representing a TypeScript template literal type
  * (e.g. `` `user_${string}` ``).
  *
+ * **Details**
+ *
  * `parts` is an array of AST nodes; each part contributes to the
  * template literal pattern. A regex is derived from the parts to validate
  * strings at runtime.
  *
  * @see {@link isTemplateLiteral}
- *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class TemplateLiteral extends Base {
   readonly _tag = "TemplateLiteral"
@@ -997,13 +1204,14 @@ export class TemplateLiteral extends Base {
 /**
  * AST node matching a specific `unique symbol` value.
  *
+ * **Details**
+ *
  * Parsing succeeds only when the input is reference-equal to the stored
  * `symbol`.
  *
  * @see {@link isUniqueSymbol}
- *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class UniqueSymbol extends Base {
   readonly _tag = "UniqueSymbol"
@@ -1038,14 +1246,16 @@ export class UniqueSymbol extends Base {
  *
  * @see {@link Literal}
  *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export type LiteralValue = string | number | boolean | bigint
 
 /**
  * AST node matching an exact primitive value (string, number, boolean, or
  * bigint).
+ *
+ * **Details**
  *
  * Parsing succeeds only when the input is strictly equal (`===`) to the
  * stored `literal`. Numeric literals must be finite — `Infinity`, `-Infinity`,
@@ -1062,9 +1272,8 @@ export type LiteralValue = string | number | boolean | bigint
  *
  * @see {@link LiteralValue}
  * @see {@link isLiteral}
- *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class Literal extends Base {
   readonly _tag = "Literal"
@@ -1120,7 +1329,7 @@ function literalToString(ast: Literal): Literal {
  * @see {@link string}
  * @see {@link isString}
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class String extends Base {
@@ -1136,8 +1345,16 @@ export class String extends Base {
 }
 
 /**
- * Singleton {@link String} AST instance.
+ * Provides the singleton {@link String} AST instance.
  *
+ * **When to use**
+ *
+ * Use as the shared `SchemaAST` node for unconstrained JavaScript strings.
+ *
+ * @see {@link String} for the AST node class
+ * @see {@link isString} for narrowing an AST to a string node
+ *
+ * @category constructors
  * @since 4.0.0
  */
 export const string = new String()
@@ -1146,7 +1363,10 @@ export const string = new String()
  * AST node matching any `number` value (including `NaN`, `Infinity`,
  * `-Infinity`).
  *
+ * **Details**
+ *
  * Default JSON serialization:
+ *
  * - Finite numbers are serialized as JSON numbers.
  * - `Infinity`, `-Infinity`, and `NaN` are serialized as JSON strings.
  *
@@ -1155,8 +1375,7 @@ export const string = new String()
  *
  * @see {@link number}
  * @see {@link isNumber}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Number extends Base {
@@ -1198,8 +1417,17 @@ function hasCheck(checks: ReadonlyArray<Check<unknown>>, tag: string): boolean {
 }
 
 /**
- * Singleton {@link Number} AST instance.
+ * Provides the singleton {@link Number} AST instance.
  *
+ * **When to use**
+ *
+ * Use when you need the canonical `SchemaAST` node for schemas that accept any
+ * JavaScript number value.
+ *
+ * @see {@link Number} for the AST node class and serialization behavior
+ * @see {@link Literal} for exact finite numeric literal AST nodes
+ *
+ * @category constructors
  * @since 4.0.0
  */
 export const number = new Number()
@@ -1210,7 +1438,7 @@ export const number = new Number()
  * @see {@link boolean}
  * @see {@link isBoolean}
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Boolean extends Base {
@@ -1226,8 +1454,17 @@ export class Boolean extends Base {
 }
 
 /**
- * Singleton {@link Boolean} AST instance.
+ * Provides the singleton {@link Boolean} AST instance.
  *
+ * **When to use**
+ *
+ * Use to reuse the standard AST node that accepts either `true` or `false` when
+ * constructing schema ASTs directly.
+ *
+ * @see {@link Boolean} for the AST node class
+ * @see {@link Literal} for exact boolean literal AST nodes
+ *
+ * @category constructors
  * @since 4.0.0
  */
 export const boolean = new Boolean()
@@ -1235,13 +1472,19 @@ export const boolean = new Boolean()
 /**
  * AST node matching any `symbol` value.
  *
+ * **When to use**
+ *
+ * Use when defining or inspecting the AST node class for schemas that match any
+ * JavaScript symbol value.
+ *
+ * **Details**
+ *
  * When serialized to a string-based codec, symbols are converted via
  * `Symbol.keyFor` and must be registered with `Symbol.for`.
  *
  * @see {@link symbol}
  * @see {@link isSymbol}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Symbol extends Base {
@@ -1261,8 +1504,21 @@ export class Symbol extends Base {
 }
 
 /**
- * Singleton {@link Symbol} AST instance.
+ * Provides the singleton {@link Symbol} AST instance.
  *
+ * **When to use**
+ *
+ * Use to reuse the singleton AST node for schemas that match any JavaScript
+ * symbol value.
+ *
+ * **Gotchas**
+ *
+ * String-based codecs can encode only symbols registered with `Symbol.for`,
+ * because the implementation uses `Symbol.keyFor`.
+ *
+ * @see {@link UniqueSymbol} for an AST node that matches one specific symbol
+ *
+ * @category constructors
  * @since 4.0.0
  */
 export const symbol = new Symbol()
@@ -1270,13 +1526,14 @@ export const symbol = new Symbol()
 /**
  * AST node matching any `bigint` value.
  *
+ * **Details**
+ *
  * When serialized to a string-based codec, bigints are converted to/from
  * their decimal string representation.
  *
  * @see {@link bigInt}
  * @see {@link isBigInt}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class BigInt extends Base {
@@ -1296,14 +1553,25 @@ export class BigInt extends Base {
 }
 
 /**
- * Singleton {@link BigInt} AST instance.
+ * Provides the singleton {@link BigInt} AST instance.
  *
+ * **When to use**
+ *
+ * Use to reuse the canonical `BigInt` AST node when constructing, inspecting,
+ * or transforming schemas at the AST level.
+ *
+ * @see {@link BigInt} for the AST node class and string-codec behavior
+ * @see {@link isBigInt} for narrowing an AST to a `BigInt` node
+ *
+ * @category constructors
  * @since 4.0.0
  */
 export const bigInt = new BigInt()
 
 /**
  * AST node for array-like types — both tuples and arrays.
+ *
+ * **Details**
  *
  * - `elements` — positional element types (tuple elements). An element is
  *   optional if its {@link Context.isOptional} is `true`.
@@ -1312,6 +1580,8 @@ export const bigInt = new BigInt()
  *   entries are trailing positional elements after the spread.
  * - `isMutable` — whether the resulting array is `readonly` (`false`) or
  *   mutable (`true`).
+ *
+ * **Gotchas**
  *
  * Construction enforces TypeScript ordering rules: a required element
  * cannot follow an optional one, and an optional element cannot follow a
@@ -1333,8 +1603,7 @@ export const bigInt = new BigInt()
  *
  * @see {@link isArrays}
  * @see {@link Objects}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Arrays extends Base {
@@ -1375,6 +1644,19 @@ export class Arrays extends Base {
     const elements = ast.elements.map((ast) => ({ ast, parser: recur(ast) }))
     const rest = ast.rest.map((ast) => ({ ast, parser: recur(ast) }))
     const elementLen = elements.length
+
+    const [head, ...tail] = rest
+    const tailLen = tail.length
+
+    function getParser(tailThreshold: number, index: number): { readonly ast: AST; readonly parser: Parser.Parser } {
+      if (index < elementLen) {
+        return elements[index]
+      } else if (index >= tailThreshold) {
+        return tail[index - tailThreshold]
+      }
+      return head
+    }
+
     return Effect.fnUntracedEager(function*(oinput, options) {
       if (oinput._tag === "None") {
         return oinput
@@ -1386,132 +1668,42 @@ export class Arrays extends Base {
         return yield* Effect.fail(new Issue.InvalidType(ast, oinput))
       }
 
-      const output: Array<unknown> = []
-      let issues: Arr.NonEmptyArray<Issue.Issue> | undefined
-      const errorsAllOption = options.errors === "all"
-
-      let i = 0
-      // ---------------------------------------------
-      // handle elements
-      // ---------------------------------------------
-      for (; i < elementLen; i++) {
-        const e = elements[i]
-        const value = i < input.length ? Option.some(input[i]) : Option.none()
-        const eff = e.parser(value, options)
-        const exit = effectIsExit(eff) ? eff : yield* Effect.exit(eff)
-        if (exit._tag === "Failure") {
-          const issueElement = Cause.findError(exit.cause)
-          if (Result.isFailure(issueElement)) {
-            return yield* exit
-          }
-          const issue = new Issue.Pointer([i], issueElement.success)
-          if (errorsAllOption) {
-            if (issues) issues.push(issue)
-            else issues = [issue]
-          } else {
-            return yield* Effect.fail(new Issue.Composite(ast, oinput, [issue]))
-          }
-        } else if (exit.value._tag === "Some") {
-          output[i] = exit.value.value
-        } else if (!isOptional(e.ast)) {
-          const issue = new Issue.Pointer([i], new Issue.MissingKey(e.ast.context?.annotations))
-          if (errorsAllOption) {
-            if (issues) issues.push(issue)
-            else issues = [issue]
-          } else {
-            return yield* Effect.fail(new Issue.Composite(ast, oinput, [issue]))
-          }
-        }
-      }
-      // ---------------------------------------------
-      // handle rest element
-      // ---------------------------------------------
       const len = input.length
-      if (ast.rest.length > 0) {
-        const [head, ...tail] = rest
-        const keyAnnotations = head.ast.context?.annotations
-        for (; i < len - tail.length; i++) {
-          const eff = head.parser(Option.some(input[i]), options)
-          const exit = effectIsExit(eff) ? eff : yield* Effect.exit(eff)
-          if (exit._tag === "Failure") {
-            const issueRest = Cause.findError(exit.cause)
-            if (Result.isFailure(issueRest)) {
-              return yield* exit
-            }
-            const issue = new Issue.Pointer([i], issueRest.success)
-            if (errorsAllOption) {
-              if (issues) issues.push(issue)
-              else issues = [issue]
-            } else {
-              return yield* Effect.fail(new Issue.Composite(ast, oinput, [issue]))
-            }
-          } else if (exit.value._tag === "Some") {
-            output[i] = exit.value.value
-          } else {
-            const issue = new Issue.Pointer([i], new Issue.MissingKey(keyAnnotations))
-            if (errorsAllOption) {
-              if (issues) issues.push(issue)
-              else issues = [issue]
-            } else {
-              return yield* Effect.fail(new Issue.Composite(ast, oinput, [issue]))
-            }
-          }
-        }
-        // ---------------------------------------------
-        // handle post rest elements
-        // ---------------------------------------------
-        for (let j = 0; j < tail.length; j++) {
-          const index = i + j
-          if (len < index) {
-            continue
-          } else {
-            const tailj = tail[j]
-            const keyAnnotations = tailj.ast.context?.annotations
-            const eff = tailj.parser(Option.some(input[index]), options)
-            const exit = effectIsExit(eff) ? eff : yield* Effect.exit(eff)
-            if (exit._tag === "Failure") {
-              const issueRest = Cause.findError(exit.cause)
-              if (Result.isFailure(issueRest)) {
-                return yield* exit
-              }
-              const issue = new Issue.Pointer([index], issueRest.success)
-              if (errorsAllOption) {
-                if (issues) issues.push(issue)
-                else issues = [issue]
-              } else {
-                return yield* Effect.fail(new Issue.Composite(ast, oinput, [issue]))
-              }
-            } else if (exit.value._tag === "Some") {
-              output[index] = exit.value.value
-            } else {
-              const issue = new Issue.Pointer([index], new Issue.MissingKey(keyAnnotations))
-              if (errorsAllOption) {
-                if (issues) issues.push(issue)
-                else issues = [issue]
-              } else {
-                return yield* Effect.fail(new Issue.Composite(ast, oinput, [issue]))
-              }
-            }
-          }
-        }
-      } else {
-        // ---------------------------------------------
-        // handle excess indexes
-        // ---------------------------------------------
+      const state = {
+        ast,
+        getParser,
+        oinput,
+        len,
+        tailThreshold: resolveTailThreshold(len, elementLen, tailLen),
+        output: new globalThis.Array(len),
+        issues: undefined as Arr.NonEmptyArray<Issue.Issue> | undefined,
+        options
+      }
+      const concurrency = resolveConcurrency(options?.concurrency)
+      const eff = parseArray(state, input, {
+        concurrency: concurrency?.concurrency,
+        end: ast.rest.length === 0 ? elementLen : Math.max(len, elementLen + tailLen)
+      })
+      if (eff) yield* eff
+
+      // ---------------------------------------------
+      // handle excess indexes
+      // ---------------------------------------------
+      if (ast.rest.length === 0 && len > elementLen) {
         for (let i = elementLen; i <= len - 1; i++) {
           const issue = new Issue.Pointer([i], new Issue.UnexpectedKey(ast, input[i]))
-          if (errorsAllOption) {
-            if (issues) issues.push(issue)
-            else issues = [issue]
+          if (options.errors === "all") {
+            if (state.issues) state.issues.push(issue)
+            else state.issues = [issue]
           } else {
             return yield* Effect.fail(new Issue.Composite(ast, oinput, [issue]))
           }
         }
       }
-      if (issues) {
-        return yield* Effect.fail(new Issue.Composite(ast, oinput, issues))
+      if (state.issues) {
+        return yield* Effect.fail(new Issue.Composite(ast, oinput, state.issues))
       }
-      return Option.some(output)
+      return Option.some(state.output)
     })
   }
   /** @internal */
@@ -1525,6 +1717,74 @@ export class Arrays extends Base {
   /** @internal */
   getExpected(): string {
     return "array"
+  }
+}
+const parseArray = iterateEager<{
+  readonly ast: AST
+  readonly oinput: Option.Option<unknown>
+  readonly len: number
+  readonly getParser: (tailThreshold: number, index: number) => { readonly ast: AST; readonly parser: Parser.Parser }
+  readonly tailThreshold: number
+  readonly options: ParseOptions
+  readonly output: Array<unknown>
+  issues: Array<Issue.Issue> | undefined
+}, unknown>()({
+  onItem(s, item, i) {
+    const value = i < s.len ? Option.some(item) : Option.none()
+    return s.getParser(s.tailThreshold, i).parser(value, s.options)
+  },
+  step(s, _, exit, i) {
+    if (exit._tag === "Failure") {
+      return wrapPropertyKeyIssue(s, s.ast, i, exit)
+    } else if (exit.value._tag === "Some") {
+      s.output[i] = exit.value.value
+    } else {
+      const p = s.getParser(s.tailThreshold, i)
+      if (isOptional(p.ast)) return
+      const issue = new Issue.Pointer([i], new Issue.MissingKey(p.ast.context?.annotations))
+      if (s.options.errors === "all") {
+        if (s.issues) s.issues.push(issue)
+        else s.issues = [issue]
+      } else {
+        return Exit.fail(new Issue.Composite(s.ast, s.oinput, [issue]))
+      }
+    }
+  }
+})
+
+function resolveTailThreshold(
+  inputLen: number,
+  elementLen: number,
+  tailLen: number
+) {
+  return Math.max(elementLen, inputLen - tailLen)
+}
+
+const resolveConcurrency = (value: number | "unbounded" | undefined) => {
+  value = value === "unbounded" ? Infinity : value ?? 1
+  return value > 1 ? { concurrency: value } : undefined
+}
+
+const wrapPropertyKeyIssue = (
+  s: {
+    readonly oinput: Option.Option<unknown>
+    readonly options: ParseOptions
+    issues: Array<Issue.Issue> | undefined
+  },
+  ast: AST,
+  key: PropertyKey,
+  exit: Exit.Failure<any, Issue.Issue>
+) => {
+  const issueResult = Cause.findError(exit.cause)
+  if (Result.isFailure(issueResult)) {
+    return exit
+  }
+  const issue = new Issue.Pointer([key], issueResult.success)
+  if (s.options.errors === "all") {
+    if (s.issues) s.issues.push(issue)
+    else s.issues = [issue]
+  } else {
+    return Exit.fail(new Issue.Composite(ast, s.oinput, [issue]))
   }
 }
 
@@ -1564,16 +1824,17 @@ export function getIndexSignatureKeys(
 }
 
 /**
- * A named property within an {@link Objects} node.
+ * Represents a named property within an {@link Objects} node.
+ *
+ * **Details**
  *
  * Pairs a `name` (any `PropertyKey`) with a `type` ({@link AST}). The
  * property's optionality and mutability are determined by the `type`'s
  * {@link Context}.
  *
  * @see {@link Objects}
- *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class PropertySignature {
   readonly name: PropertyKey
@@ -1589,7 +1850,9 @@ export class PropertySignature {
 }
 
 /**
- * Bidirectional merge strategy for index signature key-value pairs.
+ * Represents a bidirectional merge strategy for index signature key-value pairs.
+ *
+ * **Details**
  *
  * Used by {@link IndexSignature} when the same key appears multiple times
  * (e.g. from `Schema.extend` or overlapping records). Provides separate
@@ -1597,8 +1860,7 @@ export class PropertySignature {
  * merged.
  *
  * @see {@link IndexSignature}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class KeyValueCombiner {
@@ -1619,21 +1881,24 @@ export class KeyValueCombiner {
 }
 
 /**
- * An index signature entry within an {@link Objects} node.
+ * Represents an index signature entry within an {@link Objects} node.
+ *
+ * **Details**
  *
  * - `parameter` — the key type AST (e.g. {@link String} for `string` keys,
  *   {@link TemplateLiteral} for patterned keys).
  * - `type` — the value type AST.
  * - `merge` — optional {@link KeyValueCombiner} for handling duplicate keys.
  *
+ * **Gotchas**
+ *
  * Using `Schema.optionalKey` on the value type is not allowed for index
  * signatures (throws at construction); use `Schema.optional` instead.
  *
  * @see {@link Objects}
  * @see {@link PropertySignature}
- *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class IndexSignature {
   readonly parameter: AST
@@ -1655,14 +1920,19 @@ export class IndexSignature {
 }
 
 /**
- * AST node for object-like types — both structs and records.
+ * AST node for object-like schemas, including structs and records.
+ *
+ * **Details**
  *
  * - `propertySignatures` — named properties with their types (struct fields).
  * - `indexSignatures` — index signature entries (record patterns), each with
- *   a `parameter` AST (the key type) and a `type` AST (the value type).
+ *   a `parameter` AST for matching keys and a `type` AST for values.
  *
- * An `Objects` with no properties and no index signatures acts as a bare
- * `object | array` type check (accepts any non-nullish value).
+ * An `Objects` node with no properties and no index signatures performs only a
+ * non-nullish check: it accepts any value except `null` and `undefined`,
+ * including primitive values.
+ *
+ * **Gotchas**
  *
  * Duplicate property names throw at construction time.
  *
@@ -1686,8 +1956,7 @@ export class IndexSignature {
  * @see {@link PropertySignature}
  * @see {@link IndexSignature}
  * @see {@link Arrays}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Objects extends Base {
@@ -1720,12 +1989,11 @@ export class Objects extends Base {
     const expectedKeys: Array<PropertyKey> = []
     const expectedKeysSet = new Set<PropertyKey>()
     const properties: Array<{
-      readonly ps: PropertySignature
+      readonly ps: PropertySignature | IndexSignature
       readonly parser: Parser.Parser
       readonly name: PropertyKey
       readonly type: AST
     }> = []
-    const propertyCount = ast.propertySignatures.length
     for (const ps of ast.propertySignatures) {
       expectedKeys.push(ps.name)
       expectedKeysSet.add(ps.name)
@@ -1743,6 +2011,54 @@ export class Objects extends Base {
     if (ast.propertySignatures.length === 0 && ast.indexSignatures.length === 0) {
       return fromRefinement(ast, Predicate.isNotNullish)
     }
+
+    const parseIndexes = indexCount > 0 ?
+      iterateEager<{
+        readonly oinput: Option.Option<unknown>
+        readonly input: Record<PropertyKey, unknown>
+        readonly options: ParseOptions
+        readonly out: Record<PropertyKey, unknown>
+        issues: Array<Issue.Issue> | undefined
+      }, [key: PropertyKey, is: IndexSignature]>()({
+        onItem: Effect.fnUntracedEager(function*(
+          s,
+          [key, is]
+        ) {
+          const parserKey = recur(indexSignatureParameterFromString(is.parameter))
+          const effKey = parserKey(Option.some(key), s.options)
+          const exitKey = (effectIsExit(effKey) ? effKey : yield* Effect.exit(effKey)) as Exit.Exit<
+            Option.Option<PropertyKey>,
+            Issue.Issue
+          >
+          if (exitKey._tag === "Failure") {
+            const eff = wrapPropertyKeyIssue(s, ast, key, exitKey)
+            if (eff) yield* eff
+            return
+          }
+
+          const value: Option.Option<unknown> = Option.some(s.input[key])
+          const parserValue = recur(is.type)
+          const effValue = parserValue(value, s.options)
+          const exitValue = effectIsExit(effValue) ? effValue : yield* Effect.exit(effValue)
+          if (exitValue._tag === "Failure") {
+            const eff = wrapPropertyKeyIssue(s, ast, key, exitValue)
+            if (eff) yield* eff
+            return
+          } else if (exitKey.value._tag === "Some" && exitValue.value._tag === "Some") {
+            const k2 = exitKey.value.value
+            const v2 = exitValue.value.value
+            if (is.merge && is.merge.decode && Object.hasOwn(s.out, k2)) {
+              const [k, v] = is.merge.decode.combine([k2, s.out[k2]], [k2, v2])
+              internalRecord.set(s.out, k, v)
+            } else {
+              internalRecord.set(s.out, k2, v2)
+            }
+          }
+        }),
+        step: (_s, _, exit: Exit.Exit<void, Issue.Issue>) => exit._tag === "Failure" ? exit : undefined
+      }) :
+      undefined
+
     return Effect.fnUntracedEager(function*(oinput, options) {
       if (oinput._tag === "None") {
         return oinput
@@ -1755,7 +2071,14 @@ export class Objects extends Base {
       }
 
       const out: Record<PropertyKey, unknown> = {}
-      let issues: Arr.NonEmptyArray<Issue.Issue> | undefined
+      const state = {
+        ast,
+        oinput,
+        input,
+        out,
+        issues: undefined as Arr.NonEmptyArray<Issue.Issue> | undefined,
+        options
+      }
       const errorsAllOption = options.errors === "all"
       const onExcessPropertyError = options.onExcessProperty === "error"
       const onExcessPropertyPreserve = options.onExcessProperty === "preserve"
@@ -1773,10 +2096,10 @@ export class Objects extends Base {
             if (onExcessPropertyError) {
               const issue = new Issue.Pointer([key], new Issue.UnexpectedKey(ast, input[key]))
               if (errorsAllOption) {
-                if (issues) {
-                  issues.push(issue)
+                if (state.issues) {
+                  state.issues.push(issue)
                 } else {
-                  issues = [issue]
+                  state.issues = [issue]
                 }
                 continue
               } else {
@@ -1790,111 +2113,33 @@ export class Objects extends Base {
         }
       }
 
+      const concurrency = resolveConcurrency(options?.concurrency)
+
       // ---------------------------------------------
       // handle property signatures
       // ---------------------------------------------
-      for (let i = 0; i < propertyCount; i++) {
-        const p = properties[i]
-        const value: Option.Option<unknown> = Object.hasOwn(input, p.name)
-          ? Option.some(input[p.name])
-          : Option.none()
-        const eff = p.parser(value, options)
-        const exit = effectIsExit(eff) ? eff : yield* Effect.exit(eff)
-        if (exit._tag === "Failure") {
-          const issueProp = Cause.findError(exit.cause)
-          if (Result.isFailure(issueProp)) {
-            return yield* exit
-          }
-          const issue = new Issue.Pointer([p.name], issueProp.success)
-          if (errorsAllOption) {
-            if (issues) issues.push(issue)
-            else issues = [issue]
-            continue
-          } else {
-            return yield* Effect.fail(new Issue.Composite(ast, oinput, [issue]))
-          }
-        } else if (exit.value._tag === "Some") {
-          internalRecord.set(out, p.name, exit.value.value)
-        } else if (!isOptional(p.type)) {
-          const issue = new Issue.Pointer([p.name], new Issue.MissingKey(p.type.context?.annotations))
-          if (errorsAllOption) {
-            if (issues) issues.push(issue)
-            else issues = [issue]
-            continue
-          } else {
-            return yield* Effect.fail(
-              new Issue.Composite(ast, oinput, [issue])
-            )
-          }
-        }
-      }
+      const eff = parseProperties(state, properties, concurrency)
+      if (eff) yield* eff
 
       // ---------------------------------------------
       // handle index signatures
       // ---------------------------------------------
-      if (indexCount > 0) {
+      if (parseIndexes) {
+        const keyPairs = Arr.empty<[PropertyKey, IndexSignature]>()
         for (let i = 0; i < indexCount; i++) {
           const is = ast.indexSignatures[i]
           const keys = getIndexSignatureKeys(input, is.parameter)
           for (let j = 0; j < keys.length; j++) {
             const key = keys[j]
-            const parserKey = recur(indexSignatureParameterFromString(is.parameter))
-            const effKey = parserKey(Option.some(key), options)
-            const exitKey = (effectIsExit(effKey) ? effKey : yield* Effect.exit(effKey)) as Exit.Exit<
-              Option.Option<PropertyKey>,
-              Issue.Issue
-            >
-            if (exitKey._tag === "Failure") {
-              const issueKey = Cause.findError(exitKey.cause)
-              if (Result.isFailure(issueKey)) {
-                return yield* exitKey
-              }
-              const issue = new Issue.Pointer([key], issueKey.success)
-              if (errorsAllOption) {
-                if (issues) issues.push(issue)
-                else issues = [issue]
-                continue
-              }
-              return yield* Effect.fail(
-                new Issue.Composite(ast, oinput, [issue])
-              )
-            }
-
-            const value: Option.Option<unknown> = Option.some(input[key])
-            const parserValue = recur(is.type)
-            const effValue = parserValue(value, options)
-            const exitValue = effectIsExit(effValue) ? effValue : yield* Effect.exit(effValue)
-            if (exitValue._tag === "Failure") {
-              const issueValue = Cause.findError(exitValue.cause)
-              if (Result.isFailure(issueValue)) {
-                return yield* exitValue
-              }
-              const issue = new Issue.Pointer([key], issueValue.success)
-              if (errorsAllOption) {
-                if (issues) issues.push(issue)
-                else issues = [issue]
-                continue
-              } else {
-                return yield* Effect.fail(
-                  new Issue.Composite(ast, oinput, [issue])
-                )
-              }
-            } else if (exitKey.value._tag === "Some" && exitValue.value._tag === "Some") {
-              const k2 = exitKey.value.value
-              const v2 = exitValue.value.value
-              if (is.merge && is.merge.decode && Object.hasOwn(out, k2)) {
-                const [k, v] = is.merge.decode.combine([k2, out[k2]], [k2, v2])
-                internalRecord.set(out, k, v)
-              } else {
-                internalRecord.set(out, k2, v2)
-              }
-            }
+            keyPairs.push([key, is])
           }
         }
+        const eff = parseIndexes(state, keyPairs, concurrency)
+        if (eff) yield* eff
       }
 
-      if (issues) {
-        return yield* Effect.fail(new Issue.Composite(ast, oinput, issues))
+      if (state.issues) {
+        return yield* Effect.fail(new Issue.Composite(ast, oinput, state.issues))
       }
       if (options.propertyOrder === "original") {
         // preserve input keys order
@@ -1946,6 +2191,56 @@ export class Objects extends Base {
     return "object"
   }
 }
+
+type ParsedProperty = {
+  readonly ps: PropertySignature | IndexSignature
+  readonly parser: Parser.Parser
+  readonly name: PropertyKey
+  readonly type: AST
+}
+
+const parseProperties = iterateEager<{
+  readonly ast: AST
+  readonly oinput: Option.Option<unknown>
+  readonly input: Record<PropertyKey, unknown>
+  readonly options: ParseOptions
+  readonly out: Record<PropertyKey, unknown>
+  issues: Array<Issue.Issue> | undefined
+}, ParsedProperty>()({
+  onItem(
+    s: {
+      readonly oinput: Option.Option<unknown>
+      readonly input: Record<PropertyKey, unknown>
+      readonly options: ParseOptions
+      readonly out: Record<PropertyKey, unknown>
+      issues: Array<Issue.Issue> | undefined
+    },
+    p
+  ) {
+    const value: Option.Option<unknown> = Object.hasOwn(s.input, p.name)
+      ? Option.some(s.input[p.name])
+      : Option.none()
+    return p.parser(value, s.options)
+  },
+  step(s, p, exit) {
+    if (exit._tag === "Failure") {
+      return wrapPropertyKeyIssue(s, s.ast, p.name, exit)
+    } else if (exit.value._tag === "Some") {
+      internalRecord.set(s.out, p.name, exit.value.value)
+    } else if (!isOptional(p.type)) {
+      const issue = new Issue.Pointer([p.name], new Issue.MissingKey(p.type.context?.annotations))
+      if (s.options.errors === "all") {
+        if (s.issues) s.issues.push(issue)
+        else s.issues = [issue]
+        return
+      } else {
+        return Exit.fail(
+          new Issue.Composite(s.ast, s.oinput, [issue])
+        )
+      }
+    }
+  }
+})
 
 function mergeChecks(checks: Checks | undefined, b: AST): Checks | undefined {
   if (!checks) {
@@ -2204,6 +2499,8 @@ export function getCandidates(input: any, types: ReadonlyArray<AST>): ReadonlyAr
 /**
  * AST node representing a union of schemas.
  *
+ * **Details**
+ *
  * - `types` — the member AST nodes.
  * - `mode` — `"anyOf"` succeeds on the first match (like TypeScript unions);
  *   `"oneOf"` requires exactly one member to match (fails if multiple do).
@@ -2227,9 +2524,8 @@ export function getCandidates(input: any, types: ReadonlyArray<AST>): ReadonlyAr
  * ```
  *
  * @see {@link isUnion}
- *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class Union<A extends AST = AST> extends Base {
   readonly _tag = "Union"
@@ -2252,54 +2548,33 @@ export class Union<A extends AST = AST> extends Base {
   getParser(recur: (ast: AST) => Parser.Parser): Parser.Parser {
     // oxlint-disable-next-line @typescript-eslint/no-this-alias
     const ast = this
-    return Effect.fnUntracedEager(function*(oinput, options) {
+
+    return (oinput, options) => {
       if (oinput._tag === "None") {
-        return oinput
+        return Effect.succeed(oinput)
       }
       const input = oinput.value
-      const oneOf = ast.mode === "oneOf"
       const candidates = getCandidates(input, ast.types)
-      let issues: Arr.NonEmptyArray<Issue.Issue> | undefined
 
-      const tracking: {
-        out: Option.Option<unknown> | undefined
-        successes: Array<AST>
-      } = {
+      const state = {
+        ast,
+        recur,
+        oinput,
+        input,
         out: undefined,
-        successes: []
+        successes: [],
+        issues: undefined as Arr.NonEmptyArray<Issue.Issue> | undefined,
+        options
       }
-      for (let i = 0; i < candidates.length; i++) {
-        const candidate = candidates[i]
-        const parser = recur(candidate)
-        const eff = parser(oinput, options)
-        const exit = effectIsExit(eff) ? eff : yield* Effect.exit(eff)
-        if (exit._tag === "Failure") {
-          const issueResult = Cause.findError(exit.cause)
-          if (Result.isFailure(issueResult)) {
-            return yield* exit
-          }
-          if (issues) issues.push(issueResult.success)
-          else issues = [issueResult.success]
-          continue
-        } else {
-          if (tracking.out && oneOf) {
-            tracking.successes.push(candidate)
-            return yield* Effect.fail(new Issue.OneOf(ast, input, tracking.successes))
-          }
-          tracking.out = exit.value
-          tracking.successes.push(candidate)
-          if (!oneOf) {
-            break
-          }
-        }
+      const concurrency = resolveConcurrency(options?.concurrency)
+      const eff = parseUnion(state, candidates, concurrency)
+      if (!eff) {
+        return state.out ? Effect.succeed(state.out) : Effect.fail(new Issue.AnyOf(ast, input, state.issues ?? []))
       }
-
-      if (tracking.out) {
-        return tracking.out
-      } else {
-        return yield* Effect.fail(new Issue.AnyOf(ast, input, issues ?? []))
-      }
-    })
+      return Effect.flatMap(eff, (_) => {
+        return state.out ? Effect.succeed(state.out) : Effect.fail(new Issue.AnyOf(ast, input, state.issues ?? []))
+      })
+    }
   }
   /** @internal */
   recur(recur: (ast: AST) => AST) {
@@ -2347,6 +2622,42 @@ export class Union<A extends AST = AST> extends Base {
   }
 }
 
+const parseUnion = iterateEager<{
+  readonly recur: (ast: AST) => Parser.Parser
+  readonly ast: Union
+  readonly oinput: Option.Option<unknown>
+  readonly input: unknown
+  readonly options: ParseOptions
+  out: Option.Option<unknown> | undefined
+  successes: Array<AST>
+  issues: Array<Issue.Issue> | undefined
+}, AST>()({
+  onItem(s, ast) {
+    const parser = s.recur(ast)
+    return parser(s.oinput, s.options)
+  },
+  step(s, candidate, exit) {
+    if (exit._tag === "Failure") {
+      const issueResult = Cause.findError(exit.cause)
+      if (Result.isFailure(issueResult)) {
+        return exit
+      }
+      if (s.issues) s.issues.push(issueResult.success)
+      else s.issues = [issueResult.success]
+    } else {
+      if (s.out && s.ast.mode === "oneOf") {
+        s.successes.push(candidate)
+        return Exit.fail(new Issue.OneOf(s.ast, s.input, s.successes))
+      }
+      s.out = exit.value
+      s.successes.push(candidate)
+      if (s.ast.mode === "anyOf") {
+        return Exit.void
+      }
+    }
+  }
+})
+
 const nonFiniteLiterals = new Union([
   new Literal("Infinity"),
   new Literal("-Infinity"),
@@ -2386,6 +2697,8 @@ export function memoizeThunk<A>(f: () => A): () => A {
 /**
  * AST node for lazy/recursive schemas.
  *
+ * **Details**
+ *
  * Wraps a thunk (`() => AST`) that is memoized on first call. Use this to
  * define recursive or mutually recursive schemas without infinite loops at
  * construction time.
@@ -2409,9 +2722,8 @@ export function memoizeThunk<A>(f: () => A): () => A {
  * ```
  *
  * @see {@link isSuspend}
- *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class Suspend extends Base {
   readonly _tag = "Suspend"
@@ -2446,7 +2758,9 @@ export class Suspend extends Base {
 // -----------------------------------------------------------------------------
 
 /**
- * A single validation check attached to an AST node.
+ * Represents a single validation check attached to an AST node.
+ *
+ * **Details**
  *
  * - `run` — the validation function. Returns `undefined` on success, or an
  *   `Issue` on failure.
@@ -2461,8 +2775,7 @@ export class Suspend extends Base {
  * @see {@link FilterGroup}
  * @see {@link Check}
  * @see {@link isPattern}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Filter<in E> extends Pipeable.Class {
@@ -2500,7 +2813,9 @@ export class Filter<in E> extends Pipeable.Class {
 }
 
 /**
- * A composite validation check grouping multiple {@link Check} values.
+ * Represents a composite validation check grouping multiple {@link Check} values.
+ *
+ * **Details**
  *
  * Created by calling `.and()` on a {@link Filter} or another `FilterGroup`.
  * All inner checks are run; failures from aborted filters still stop
@@ -2508,8 +2823,7 @@ export class Filter<in E> extends Pipeable.Class {
  *
  * @see {@link Filter}
  * @see {@link Check}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class FilterGroup<in E> extends Pipeable.Class {
@@ -2538,31 +2852,25 @@ export class FilterGroup<in E> extends Pipeable.Class {
  * A validation check — either a single {@link Filter} or a composite
  * {@link FilterGroup}.
  *
+ * **Details**
+ *
  * Stored in the {@link Checks} array on {@link Base.checks}.
  *
  * @see {@link Filter}
  * @see {@link FilterGroup}
- *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export type Check<T> = Filter<T> | FilterGroup<T>
 
 /** @internal */
 export function makeFilter<T>(
-  filter: (
-    input: T,
-    ast: AST,
-    options: ParseOptions
-  ) => undefined | boolean | string | Issue.Issue | {
-    readonly path: ReadonlyArray<PropertyKey>
-    readonly message: string
-  },
+  filter: (input: T, ast: AST, options: ParseOptions) => Schema.FilterOutput,
   annotations?: Schema.Annotations.Filter | undefined,
   aborted: boolean = false
 ): Filter<T> {
   return new Filter(
-    (input, ast, options) => Issue.make(input, filter(input, ast, options)),
+    (input, ast, options) => Issue.make(input, ast, filter(input, ast, options)),
     annotations,
     aborted
   )
@@ -2581,12 +2889,19 @@ export function makeFilterByGuard<T extends E, E>(
 }
 
 /**
- * Creates a {@link Filter} that validates strings against a regular expression.
+ * Creates a {@link Filter} that validates strings by running `RegExp.test`.
  *
- * - Returns a `Filter<string>` suitable for use with `Schema.filter` or
- *   attached directly to a `String` AST node via checks.
- * - The regex `source` is stored in annotations for serialization and
- *   arbitrary generation.
+ * **Details**
+ *
+ * The filter can be used with `Schema.filter` or attached directly to a
+ * `String` AST node through checks. The regular expression source is stored in
+ * annotations for serialization and arbitrary generation.
+ *
+ * **Gotchas**
+ *
+ * Use a non-global, non-sticky regular expression, or reset `lastIndex`
+ * yourself, because `RegExp.test` is stateful for expressions with the `g` or
+ * `y` flag.
  *
  * **Example** (Validating an email pattern)
  *
@@ -2597,7 +2912,7 @@ export function makeFilterByGuard<T extends E, E>(
  * ```
  *
  * @see {@link Filter}
- *
+ * @category constructors
  * @since 4.0.0
  */
 export function isPattern(regExp: globalThis.RegExp, annotations?: Schema.Annotations.Filter) {
@@ -2771,12 +3086,14 @@ export const optionalKeyLastLink = applyToLastLink(optionalKey)
  * Marks an AST node's property key as optional by setting
  * {@link Context.isOptional} to `true`.
  *
+ * **Details**
+ *
  * Also propagates the optional flag through the last link of the encoding
  * chain if present.
  *
  * @see {@link isOptional}
  * @see {@link Context}
- *
+ * @category transforming
  * @since 4.0.0
  */
 export function optionalKey<A extends AST>(ast: A): A {
@@ -2803,21 +3120,10 @@ export function mutableKey<A extends AST>(ast: A): A {
 /** @internal */
 export function withConstructorDefault<A extends AST>(
   ast: A,
-  /**
-   * The `input` parameters is `None` if the value is not present and
-   * `Some(undefined)` if the value is present but undefined
-   */
-  defaultValue: (input: Option.Option<undefined>) => Option.Option<unknown> | Effect.Effect<Option.Option<unknown>>
+  defaultValue: Effect.Effect<unknown, Issue.Issue>
 ): A {
   const transformation = new Transformation.Transformation(
-    new Getter.Getter((o) => {
-      if (Option.isNone(Option.filter(o, Predicate.isNotUndefined))) {
-        const oe = defaultValue(o as Option.Option<undefined>)
-        return Effect.isEffect(oe) ? oe : Effect.succeed(oe)
-      } else {
-        return Effect.succeed(o)
-      }
-    }),
+    Getter.withDefault(defaultValue),
     Getter.passthrough()
   )
   const encoding: Encoding = [new Link(unknown, transformation)]
@@ -2831,17 +3137,18 @@ export function withConstructorDefault<A extends AST>(
  * Attaches a `Transformation` to the `to` AST, making it decode from the
  * `from` AST and encode back to it.
  *
+ * **Details**
+ *
  * This is the low-level primitive behind `Schema.transform` and
  * `Schema.transformOrFail`. It appends a {@link Link} to the `to` node's
  * encoding chain.
  *
- * - Does not mutate either input.
  * - Returns a new AST with the same type as `to`.
  *
  * @see {@link Link}
  * @see {@link Encoding}
  * @see {@link flip}
- *
+ * @category transforming
  * @since 4.0.0
  */
 export function decodeTo<A extends AST>(
@@ -2907,12 +3214,14 @@ export function record(key: AST, value: AST, keyValueCombiner: KeyValueCombiner 
 /**
  * Returns `true` if the AST node represents an optional property.
  *
+ * **Details**
+ *
  * Checks `ast.context?.isOptional`. Defaults to `false` when no
  * {@link Context} is set.
  *
  * @see {@link optionalKey}
  * @see {@link Context}
- *
+ * @category predicates
  * @since 4.0.0
  */
 export function isOptional(ast: AST): boolean {
@@ -2928,10 +3237,11 @@ export function isMutable(ast: AST): boolean {
  * Strips all encoding transformations from an AST, returning the decoded
  * (type-level) representation.
  *
+ * **Details**
+ *
  * - Memoized: same input reference → same output reference.
  * - Recursively walks into composite nodes ({@link Arrays}, {@link Objects},
  *   {@link Union}, {@link Suspend}).
- * - Does not mutate the input.
  *
  * **Example** (Getting the type AST)
  *
@@ -2945,7 +3255,7 @@ export function isMutable(ast: AST): boolean {
  *
  * @see {@link toEncoded}
  * @see {@link flip}
- *
+ * @category transforming
  * @since 4.0.0
  */
 export const toType = memoize(<A extends AST>(ast: A): A => {
@@ -2960,11 +3270,12 @@ export const toType = memoize(<A extends AST>(ast: A): A => {
  * Returns the encoded (wire-format) AST by flipping and then stripping
  * encodings.
  *
+ * **Details**
+ *
  * Equivalent to `toType(flip(ast))`. This gives you the AST that describes
  * the shape of the serialized/encoded data.
  *
  * - Memoized: same input reference → same output reference.
- * - Does not mutate the input.
  *
  * **Example** (Getting the encoded AST)
  *
@@ -2978,7 +3289,7 @@ export const toType = memoize(<A extends AST>(ast: A): A => {
  *
  * @see {@link toType}
  * @see {@link flip}
- *
+ * @category transforming
  * @since 4.0.0
  */
 export const toEncoded = memoize((ast: AST): AST => {
@@ -3006,17 +3317,18 @@ function flipEncoding(ast: AST, encoding: Encoding): AST {
 /**
  * Swaps the decode and encode directions of an AST's {@link Encoding} chain.
  *
+ * **Details**
+ *
  * After flipping, what was decoding becomes encoding and vice versa. This is
  * the core operation behind `Schema.encode` — encoding a value is decoding
  * with a flipped AST.
  *
  * - Memoized: same input reference → same output reference.
  * - Recursively walks composite nodes.
- * - Does not mutate the input.
  *
  * @see {@link toType}
  * @see {@link toEncoded}
- *
+ * @category transforming
  * @since 4.0.0
  */
 export const flip = memoize((ast: AST): AST => {
@@ -3208,7 +3520,9 @@ export function isStringBigInt(annotations?: Schema.Annotations.Filter) {
 }
 
 /** @internal */
-export const bigIntString = appendChecks(string, [isStringBigInt()])
+export const bigIntString = appendChecks(string, [isStringBigInt({
+  expected: "a string representing a bigint"
+})])
 
 const bigIntToString = new Link(
   bigIntString,
@@ -3303,6 +3617,8 @@ export const STRUCTURAL_ANNOTATION_KEY = "~structural"
 /**
  * Returns all annotations from the AST node.
  *
+ * **Details**
+ *
  * If the node has {@link Checks}, returns annotations from the last check
  * (which is where user-supplied annotations end up after `.pipe(Schema.annotations(...))`).
  * Otherwise returns `Base.annotations` directly.
@@ -3321,7 +3637,7 @@ export const STRUCTURAL_ANNOTATION_KEY = "~structural"
  * @see {@link resolveIdentifier}
  * @see {@link resolveTitle}
  * @see {@link resolveDescription}
- *
+ * @category annotations
  * @since 4.0.0
  */
 export const resolve: (ast: AST) => Schema.Annotations.Annotations | undefined = InternalAnnotations.resolve
@@ -3329,11 +3645,13 @@ export const resolve: (ast: AST) => Schema.Annotations.Annotations | undefined =
 /**
  * Returns a single annotation value by key from the AST node.
  *
+ * **Details**
+ *
  * Like {@link resolve}, reads from the last check's annotations when checks
  * are present. Returns `undefined` if the key is not found.
  *
  * @see {@link resolve}
- *
+ * @category annotations
  * @since 4.0.0
  */
 export const resolveAt: <A>(key: string) => (ast: AST) => A | undefined = InternalAnnotations.resolveAt
@@ -3341,12 +3659,14 @@ export const resolveAt: <A>(key: string) => (ast: AST) => A | undefined = Intern
 /**
  * Returns the `identifier` annotation from the AST node, if set.
  *
+ * **Details**
+ *
  * The identifier is typically set by `Schema.annotations({ identifier: "..." })`
  * and is used for error messages and schema identification.
  *
  * @see {@link resolve}
  * @see {@link resolveTitle}
- *
+ * @category annotations
  * @since 4.0.0
  */
 export const resolveIdentifier: (ast: AST) => string | undefined = InternalAnnotations.resolveIdentifier
@@ -3358,6 +3678,7 @@ export const resolveIdentifier: (ast: AST) => string | undefined = InternalAnnot
  * @see {@link resolveIdentifier}
  * @see {@link resolveDescription}
  *
+ * @category annotations
  * @since 4.0.0
  */
 export const resolveTitle: (ast: AST) => string | undefined = InternalAnnotations.resolveTitle
@@ -3369,6 +3690,7 @@ export const resolveTitle: (ast: AST) => string | undefined = InternalAnnotation
  * @see {@link resolveTitle}
  * @see {@link resolveIdentifier}
  *
+ * @category annotations
  * @since 4.0.0
  */
 export const resolveDescription: (ast: AST) => string | undefined = InternalAnnotations.resolveDescription
@@ -3381,7 +3703,14 @@ export const resolveDescription: (ast: AST) => string | undefined = InternalAnno
  * @internal
  */
 export function isJson(u: unknown): u is Schema.Json {
-  const seen = new Set<unknown>()
+  // `onPath` is the current recursion stack: nodes between the root and the
+  // one being visited. A hit here means we looped back to an ancestor — a
+  // real cycle, not a DAG — so the value is not JSON.
+  const onPath = new Set<unknown>()
+  // `validated` memoizes subtrees we've already fully checked. Without it, a
+  // diamond-shaped DAG (same node reached through multiple parents) would be
+  // re-traversed once per parent, which is exponential in the nesting depth.
+  const validated = new Set<unknown>()
   return recur(u)
 
   function recur(u: unknown): boolean {
@@ -3394,14 +3723,23 @@ export function isJson(u: unknown): u is Schema.Json {
     if (typeof u !== "object" || u === undefined) {
       return false
     }
-    if (seen.has(u)) {
+    if (onPath.has(u)) {
       return false
     }
-    seen.add(u)
-    if (Array.isArray(u)) {
-      return u.every(recur)
+    if (validated.has(u)) {
+      return true
     }
-    return Object.keys(u).every((key) => recur((u as Record<string, unknown>)[key]))
+    onPath.add(u)
+    const ok = Array.isArray(u)
+      ? u.every(recur)
+      : Object.keys(u).every((key) => recur((u as Record<string, unknown>)[key]))
+    // Pop on exit so siblings reaching the same node via a different path
+    // don't see it as an ancestor (that would reject valid DAGs).
+    onPath.delete(u)
+    if (ok) {
+      validated.add(u)
+    }
+    return ok
   }
 }
 

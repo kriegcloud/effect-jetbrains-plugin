@@ -1,17 +1,56 @@
 /**
+ * Persistence and reply delivery for Effect Cluster mailboxes.
+ *
+ * `MessageStorage` is the boundary between cluster message delivery and the
+ * storage backend that keeps mailbox state recoverable. Implementations persist
+ * outgoing requests, control envelopes, stream replies, completion replies, and
+ * the indexes needed to find duplicate requests and unprocessed messages for a
+ * runner's assigned shards.
+ *
+ * **Mental model**
+ *
+ * Mailbox delivery has two kinds of state. Durable state lives in the storage
+ * implementation and is used to resume work after restarts or reassignment.
+ * Local state lives in the current process and connects persisted replies to
+ * registered reply handlers. The service combines both: storage methods record
+ * and query durable messages, while handler methods connect replies to the
+ * fibers waiting for them in the current runner.
+ *
+ * **Common tasks**
+ *
+ * - Provide the in-memory storage with {@link layerMemory} for local tests and
+ *   development
+ * - Provide {@link layerNoop} when persistence should be disabled
+ * - Build custom storage from decoded operations with {@link make}
+ * - Build custom storage from encoded operations with {@link makeEncoded}
+ * - Check {@link SaveResult} after saving a request to distinguish new work from
+ *   duplicate request ids
+ *
+ * **Gotchas**
+ *
+ * - Reply handlers are process-local; persisted replies may need to be loaded
+ *   again after a runner restart or shard reassignment.
+ * - Duplicate detection depends on stable request primary keys and persisted
+ *   request ids.
+ * - Storage backends should make save and reply writes transactional when
+ *   possible so recovery never observes partial mailbox state.
+ * - Runners should only process unprocessed messages for shards they currently
+ *   own.
+ *
  * @since 4.0.0
  */
 import * as Arr from "../../Array.ts"
 import { Clock } from "../../Clock.ts"
+import * as Context from "../../Context.ts"
 import * as Data from "../../Data.ts"
 import * as Effect from "../../Effect.ts"
 import * as Exit from "../../Exit.ts"
+import { constFalse, identity } from "../../Function.ts"
 import * as Latch from "../../Latch.ts"
 import * as Layer from "../../Layer.ts"
 import * as Option from "../../Option.ts"
 import type { Predicate } from "../../Predicate.ts"
 import * as Schema from "../../Schema.ts"
-import * as ServiceMap from "../../ServiceMap.ts"
 import type * as Rpc from "../rpc/Rpc.ts"
 import { EntityNotAssignedToRunner, MalformedMessage, type PersistenceError } from "./ClusterError.ts"
 import * as DeliverAt from "./DeliverAt.ts"
@@ -19,15 +58,23 @@ import type { EntityAddress } from "./EntityAddress.ts"
 import * as Envelope from "./Envelope.ts"
 import * as Message from "./Message.ts"
 import * as Reply from "./Reply.ts"
-import { ShardId } from "./ShardId.ts"
+import * as ShardId from "./ShardId.ts"
 import type { ShardingConfig } from "./ShardingConfig.ts"
 import * as Snowflake from "./Snowflake.ts"
 
 /**
- * @since 4.0.0
+ * Service for cluster mailbox persistence and reply delivery.
+ *
+ * **Details**
+ *
+ * It stores outgoing requests, control envelopes, and replies; reads unprocessed
+ * messages; manages reply handlers; and provides transaction wrapping for storage
+ * operations.
+ *
  * @category context
+ * @since 4.0.0
  */
-export class MessageStorage extends ServiceMap.Service<MessageStorage, {
+export class MessageStorage extends Context.Service<MessageStorage, {
   /**
    * Save the provided message and its associated metadata.
    */
@@ -57,8 +104,12 @@ export class MessageStorage extends ServiceMap.Service<MessageStorage, {
   /**
    * Retrieves the replies for the specified requests.
    *
+   * **Details**
+   *
+   * This returns:
+   *
    * - Un-acknowledged chunk replies
-   * - WithExit replies
+   * - `WithExit` replies
    */
   readonly repliesFor: <R extends Rpc.Any>(
     requests: Iterable<Message.OutgoingRequest<R>>
@@ -97,20 +148,21 @@ export class MessageStorage extends ServiceMap.Service<MessageStorage, {
   /**
    * Unregister the reply handlers for the specified ShardId.
    */
-  readonly unregisterShardReplyHandlers: (shardId: ShardId) => Effect.Effect<void>
+  readonly unregisterShardReplyHandlers: (shardId: ShardId.ShardId) => Effect.Effect<void>
 
   /**
    * Retrieves the unprocessed messages for the specified shards.
    *
+   * **Details**
+   *
    * A message is unprocessed when:
    *
-   * - Requests that have no WithExit replies
-   *   - Or they have no unacknowledged chunk replies
-   * - The latest AckChunk envelope
-   * - All Interrupt's for unprocessed requests
+   * - Requests that have no `WithExit` replies or no unacknowledged chunk replies
+   * - The latest `AckChunk` envelope
+   * - All `Interrupt` envelopes for unprocessed requests
    */
   readonly unprocessedMessages: (
-    shardIds: Iterable<ShardId>
+    shardIds: Iterable<ShardId.ShardId>
   ) => Effect.Effect<Array<Message.Incoming<any>>, PersistenceError>
 
   /**
@@ -124,7 +176,7 @@ export class MessageStorage extends ServiceMap.Service<MessageStorage, {
    * Reset the mailbox state for the provided shards.
    */
   readonly resetShards: (
-    shardIds: Iterable<ShardId>
+    shardIds: Iterable<ShardId.ShardId>
   ) => Effect.Effect<void, PersistenceError>
 
   /**
@@ -140,48 +192,84 @@ export class MessageStorage extends ServiceMap.Service<MessageStorage, {
   readonly clearAddress: (
     address: EntityAddress
   ) => Effect.Effect<void, PersistenceError>
+
+  /**
+   * Used to wrap requests with transactions.
+   */
+  readonly withTransaction: <A, E, R>(
+    effect: Effect.Effect<A, E, R>
+  ) => Effect.Effect<A, E, R>
 }>()("effect/cluster/MessageStorage") {}
 
 /**
- * @since 4.0.0
+ * Result of saving a request or envelope into message storage.
+ *
+ * **Details**
+ *
+ * A duplicate result carries the original request ID and the last reply already
+ * received for the duplicated request.
+ *
  * @category SaveResult
+ * @since 4.0.0
  */
 export type SaveResult<R extends Rpc.Any> = SaveResult.Success | SaveResult.Duplicate<R>
 
 /**
- * @since 4.0.0
+ * Constructors and matchers for decoded save results.
+ *
  * @category SaveResult
+ * @since 4.0.0
  */
 export const SaveResult = Data.taggedEnum<SaveResult.Constructor>()
 
 /**
- * @since 4.0.0
+ * Constructors and matchers for encoded save results returned by storage
+ * drivers.
+ *
  * @category SaveResult
+ * @since 4.0.0
  */
 export const SaveResultEncoded = Data.taggedEnum<SaveResult.Encoded>()
 
 /**
+ * Variants and helper types for `SaveResult`.
+ *
  * @since 4.0.0
- * @category SaveResult
  */
 export declare namespace SaveResult {
   /**
-   * @since 4.0.0
+   * Encoded storage-driver form of `SaveResult`.
+   *
+   * **Details**
+   *
+   * Duplicate results contain an encoded last received reply instead of a decoded
+   * reply.
+   *
    * @category SaveResult
+   * @since 4.0.0
    */
   export type Encoded = SaveResult.Success | SaveResult.DuplicateEncoded
 
   /**
-   * @since 4.0.0
+   * Variant indicating that the message was saved as a new storage entry.
+   *
    * @category SaveResult
+   * @since 4.0.0
    */
   export interface Success {
     readonly _tag: "Success"
   }
 
   /**
-   * @since 4.0.0
+   * Variant indicating that the request duplicates an existing stored request.
+   *
+   * **Details**
+   *
+   * It carries the original request ID and the latest decoded reply, when one is
+   * available.
+   *
    * @category SaveResult
+   * @since 4.0.0
    */
   export interface Duplicate<R extends Rpc.Any> {
     readonly _tag: "Duplicate"
@@ -190,8 +278,15 @@ export declare namespace SaveResult {
   }
 
   /**
-   * @since 4.0.0
+   * Encoded duplicate-save variant returned by lower-level storage drivers.
+   *
+   * **Details**
+   *
+   * It carries the original request ID and the latest encoded reply, when one is
+   * available.
+   *
    * @category SaveResult
+   * @since 4.0.0
    */
   export interface DuplicateEncoded {
     readonly _tag: "Duplicate"
@@ -200,8 +295,10 @@ export declare namespace SaveResult {
   }
 
   /**
-   * @since 4.0.0
+   * Generic tagged enum constructor type for `SaveResult`.
+   *
    * @category SaveResult
+   * @since 4.0.0
    */
   export interface Constructor extends Data.TaggedEnum.WithGenerics<1> {
     readonly taggedEnum: SaveResult<this["A"] extends Rpc.Any ? this["A"] : never>
@@ -209,8 +306,15 @@ export declare namespace SaveResult {
 }
 
 /**
- * @since 4.0.0
+ * Low-level storage-driver contract for encoded envelopes and replies.
+ *
+ * **Details**
+ *
+ * Implementations persist encoded messages, track primary keys and delayed
+ * delivery, read unprocessed messages, and provide transaction wrapping.
+ *
  * @category Encoded
+ * @since 4.0.0
  */
 export type Encoded = {
   /**
@@ -244,8 +348,12 @@ export type Encoded = {
   /**
    * Retrieves the replies for the specified requests.
    *
+   * **Details**
+   *
+   * This returns:
+   *
    * - Un-acknowledged chunk replies
-   * - WithExit replies
+   * - `WithExit` replies
    */
   readonly repliesFor: (requestIds: Arr.NonEmptyArray<string>) => Effect.Effect<
     Array<Reply.Encoded>,
@@ -263,12 +371,13 @@ export type Encoded = {
   /**
    * Retrieves the unprocessed messages for the given shards.
    *
+   * **Details**
+   *
    * A message is unprocessed when:
    *
-   * - Requests that have no WithExit replies
-   *   - Or they have no unacknowledged chunk replies
-   * - The latest AckChunk envelope
-   * - All Interrupt's for unprocessed requests
+   * - Requests that have no `WithExit` replies or no unacknowledged chunk replies
+   * - The latest `AckChunk` envelope
+   * - All `Interrupt` envelopes for unprocessed requests
    */
   readonly unprocessedMessages: (
     shardIds: Arr.NonEmptyArray<string>,
@@ -315,11 +424,25 @@ export type Encoded = {
   readonly resetShards: (
     shardIds: Arr.NonEmptyArray<string>
   ) => Effect.Effect<void, PersistenceError>
+
+  /**
+   * Used to wrap requests with transactions.
+   */
+  readonly withTransaction: <A, E, R>(
+    effect: Effect.Effect<A, E, R>
+  ) => Effect.Effect<A, E, R>
 }
 
 /**
- * @since 4.0.0
+ * Cursor options for reading encoded unprocessed messages across shard sets.
+ *
+ * **Details**
+ *
+ * The fields distinguish existing shards from newly assigned shards and carry the
+ * driver-specific pagination cursor.
+ *
  * @category Encoded
+ * @since 4.0.0
  */
 export type EncodedUnprocessedOptions<A> = {
   readonly existingShards: Array<number>
@@ -328,8 +451,15 @@ export type EncodedUnprocessedOptions<A> = {
 }
 
 /**
- * @since 4.0.0
+ * Cursor options for reading encoded replies across request sets.
+ *
+ * **Details**
+ *
+ * The fields distinguish existing requests from new requests and carry the
+ * driver-specific pagination cursor.
+ *
  * @category Encoded
+ * @since 4.0.0
  */
 export type EncodedRepliesOptions<A> = {
   readonly existingRequests: Array<string>
@@ -338,8 +468,15 @@ export type EncodedRepliesOptions<A> = {
 }
 
 /**
- * @since 4.0.0
+ * Wraps a concrete message storage implementation with reply-handler management.
+ *
+ * **Details**
+ *
+ * The returned service can register waiting reply handlers, notify them when
+ * replies are saved, and fail them when a request or shard is unregistered.
+ *
  * @category constructors
+ * @since 4.0.0
  */
 export const make = (
   storage: Omit<
@@ -440,8 +577,16 @@ export const make = (
   })
 
 /**
- * @since 4.0.0
+ * Builds a `MessageStorage` service from an encoded storage driver.
+ *
+ * **Details**
+ *
+ * The adapter handles envelope and reply encoding and decoding, primary-key
+ * generation, delayed delivery checks, duplicate decoding, and malformed-message
+ * defect replies.
+ *
  * @category constructors
+ * @since 4.0.0
  */
 export const makeEncoded: (encoded: Encoded) => Effect.Effect<
   MessageStorage["Service"],
@@ -468,7 +613,7 @@ export const makeEncoded: (encoded: Encoded) => Effect.Effect<
           const duplicate = result
           const schema = Reply.Reply(message.rpc)
           return Schema.decodeEffect(schema)(result.lastReceivedReply.value).pipe(
-            Effect.provideServices(message.services),
+            Effect.provideContext(message.context),
             MalformedMessage.refail,
             Effect.map((reply) =>
               SaveResult.Duplicate({
@@ -517,20 +662,22 @@ export const makeEncoded: (encoded: Encoded) => Effect.Effect<
       const primaryKey = Envelope.primaryKeyByAddress(options)
       return encoded.requestIdForPrimaryKey(primaryKey)
     },
-    unprocessedMessages: (shardIds) => {
+    unprocessedMessages(shardIds) {
+      const storage = this as MessageStorage["Service"]
       const shards = Array.from(shardIds, (id) => id.toString())
       if (!Arr.isArrayNonEmpty(shards)) return Effect.succeed([])
       return Effect.flatMap(
         Effect.suspend(() => encoded.unprocessedMessages(shards, clock.currentTimeMillisUnsafe())),
-        decodeMessages
+        (messages) => decodeMessages(storage, messages)
       )
     },
     unprocessedMessagesById(messageIds) {
+      const storage = this as MessageStorage["Service"]
       const ids = Array.from(messageIds)
       if (!Arr.isArrayNonEmpty(ids)) return Effect.succeed([])
       return Effect.flatMap(
         Effect.suspend(() => encoded.unprocessedMessagesById(ids, clock.currentTimeMillisUnsafe())),
-        decodeMessages
+        (messages) => decodeMessages(storage, messages)
       )
     },
     resetAddress: encoded.resetAddress,
@@ -539,10 +686,12 @@ export const makeEncoded: (encoded: Encoded) => Effect.Effect<
       const shards = Array.from(shardIds, (id) => id.toString())
       if (!Arr.isArrayNonEmpty(shards)) return Effect.void
       return encoded.resetShards(shards)
-    }
+    },
+    withTransaction: encoded.withTransaction
   })
 
   const decodeMessages = (
+    storage: MessageStorage["Service"],
     envelopes: Array<{
       readonly envelope: Envelope.Encoded
       readonly lastSentReply: Option.Option<Reply.Encoded>
@@ -611,7 +760,7 @@ export const makeEncoded: (encoded: Encoded) => Effect.Effect<
         if (!message) return Effect.void
         const schema = Reply.Reply(message.rpc)
         return Schema.decodeEffect(schema)(reply).pipe(
-          Effect.provideServices(message.services)
+          Effect.provideContext(message.context)
         ) as Effect.Effect<Reply.Reply<any>, Schema.SchemaError>
       }),
       (error) => {
@@ -644,8 +793,10 @@ export const makeEncoded: (encoded: Encoded) => Effect.Effect<
 })
 
 /**
+ * No-op `MessageStorage` service that does not persist messages or replies.
+ *
+ * @category constructors
  * @since 4.0.0
- * @category Constructors
  */
 export const noop: MessageStorage["Service"] = Effect.runSync(make({
   saveRequest: () => Effect.succeed(SaveResult.Success()),
@@ -659,12 +810,20 @@ export const noop: MessageStorage["Service"] = Effect.runSync(make({
   unprocessedMessagesById: () => Effect.succeed([]),
   resetAddress: () => Effect.void,
   clearAddress: () => Effect.void,
-  resetShards: () => Effect.void
+  resetShards: () => Effect.void,
+  withTransaction: identity
 }))
 
 /**
+ * In-memory storage entry for a request envelope.
+ *
+ * **Details**
+ *
+ * It stores the encoded envelope, last acknowledged chunk, accumulated replies,
+ * and optional delivery time.
+ *
+ * @category memory
  * @since 4.0.0
- * @category Memory
  */
 export type MemoryEntry = {
   readonly envelope: Envelope.Encoded
@@ -674,10 +833,28 @@ export type MemoryEntry = {
 }
 
 /**
+ * Provides a context reference used in tests to simulate a transaction.
+ *
+ * @category memory
  * @since 4.0.0
- * @category Memory
  */
-export class MemoryDriver extends ServiceMap.Service<MemoryDriver>()("effect/cluster/MessageStorage/MemoryDriver", {
+export const MemoryTransaction = Context.Reference<boolean>("effect/cluster/MessageStorage/MemoryTransaction", {
+  defaultValue: constFalse
+})
+
+/**
+ * Service that provides an in-memory message storage driver with inspectable backing state.
+ *
+ * **Details**
+ *
+ * It provides a `MessageStorage` service, the encoded driver implementation, and
+ * maps used to track requests, primary keys, unprocessed envelopes, reply IDs,
+ * and the journal.
+ *
+ * @category memory
+ * @since 4.0.0
+ */
+export class MemoryDriver extends Context.Service<MemoryDriver>()("effect/cluster/MessageStorage/MemoryDriver", {
   make: Effect.gen(function*() {
     const clock = yield* Clock
     const requests = new Map<string, MemoryEntry>()
@@ -813,7 +990,7 @@ export class MemoryDriver extends ServiceMap.Service<MemoryDriver>()("effect/clu
           }>()
           for (let index = 0; index < journal.length; index++) {
             const envelope = journal[index]
-            const shardId = ShardId.makeUnsafe(envelope.address.shardId)
+            const shardId = ShardId.make(envelope.address.shardId.group, envelope.address.shardId.id)
             if (!unprocessed.has(envelope as any) || !shardIds.includes(shardId.toString())) {
               continue
             }
@@ -859,7 +1036,8 @@ export class MemoryDriver extends ServiceMap.Service<MemoryDriver>()("effect/clu
             journal.splice(i, 1)
           }
         }),
-      resetShards: () => Effect.void
+      resetShards: () => Effect.void,
+      withTransaction: Effect.provideService(MemoryTransaction, true)
     }
 
     const storage = yield* makeEncoded(encoded)
@@ -877,6 +1055,8 @@ export class MemoryDriver extends ServiceMap.Service<MemoryDriver>()("effect/clu
   })
 }) {
   /**
+   * Layer that provides the in-memory message storage driver.
+   *
    * @since 4.0.0
    */
   static readonly layer: Layer.Layer<MemoryDriver> = Layer.effect(this)(this.make).pipe(
@@ -885,20 +1065,24 @@ export class MemoryDriver extends ServiceMap.Service<MemoryDriver>()("effect/clu
 }
 
 /**
- * @since 4.0.0
+ * Layer that provides the no-op `MessageStorage` service.
+ *
  * @category layers
+ * @since 4.0.0
  */
 export const layerNoop: Layer.Layer<MessageStorage> = Layer.succeed(MessageStorage, noop)
 
 /**
- * @since 4.0.0
+ * Layer that provides in-memory message storage and its backing `MemoryDriver`.
+ *
  * @category layers
+ * @since 4.0.0
  */
 export const layerMemory: Layer.Layer<
   MessageStorage | MemoryDriver,
   never,
   ShardingConfig
-> = Layer.effect(MessageStorage, Effect.map(MemoryDriver.asEffect(), (_) => _.storage)).pipe(
+> = Layer.effect(MessageStorage, Effect.map(MemoryDriver, (_) => _.storage)).pipe(
   Layer.provideMerge(MemoryDriver.layer)
 )
 

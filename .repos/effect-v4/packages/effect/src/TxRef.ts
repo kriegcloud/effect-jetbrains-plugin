@@ -1,10 +1,63 @@
 /**
- * TxRef is a transactional value, it can be read and modified within the body of a transaction.
+ * The `TxRef` module provides transactional references for coordinating mutable
+ * state with Effect transactions. A `TxRef<A>` stores a current value, but
+ * reads and writes inside `Effect.tx` are recorded in a transaction journal and
+ * committed together only when the outermost transaction succeeds.
  *
- * Accessed values are tracked by the transaction in order to detect conflicts and in order to
- * track changes, a transaction will retry whenever a conflict is detected or whenever the
- * transaction explicitely calls to `Effect.retryTransaction` and any of the accessed TxRef values
- * change.
+ * **Mental model**
+ *
+ * - {@link make} creates a reference whose value can participate in
+ *   optimistic transactions.
+ * - {@link get}, {@link set}, {@link update}, and {@link modify} read and
+ *   write the transaction journal when a transaction is active.
+ * - At commit time, the transaction checks whether any accessed reference was
+ *   changed by another transaction. If so, it retries with a fresh journal.
+ * - `Effect.txRetry` suspends the transaction until one of the `TxRef` values
+ *   read by the transaction changes.
+ *
+ * **Common tasks**
+ *
+ * - Create transactional state with {@link make}.
+ * - Read the current value with {@link get}.
+ * - Replace or transform the value with {@link set} and {@link update}.
+ * - Return a derived result while writing a new value with {@link modify}.
+ * - Wrap related reads and writes in one `Effect.tx` boundary so they commit or
+ *   roll back as a unit.
+ *
+ * **Example** (Committing multiple updates atomically)
+ *
+ * ```ts
+ * import { Effect, TxRef } from "effect"
+ *
+ * const transfer = Effect.gen(function*() {
+ *   const checking = yield* TxRef.make(100)
+ *   const savings = yield* TxRef.make(0)
+ *
+ *   yield* Effect.tx(Effect.gen(function*() {
+ *     const balance = yield* TxRef.get(checking)
+ *     if (balance < 30) {
+ *       return yield* Effect.fail("insufficient funds")
+ *     }
+ *     yield* TxRef.set(checking, balance - 30)
+ *     yield* TxRef.update(savings, (amount) => amount + 30)
+ *   }))
+ *
+ *   return {
+ *     checking: yield* TxRef.get(checking),
+ *     savings: yield* TxRef.get(savings)
+ *   }
+ * })
+ * ```
+ *
+ * **Gotchas**
+ *
+ * - Group related operations in the same `Effect.tx` call; separate
+ *   transactions can observe and commit intermediate states.
+ * - A transaction body can run more than once after a conflict or
+ *   `Effect.txRetry`, so keep externally visible effects outside the
+ *   transaction body or make them idempotent.
+ * - If a transaction fails, its journal is discarded and other fibers continue
+ *   to see the last committed values.
  *
  * @since 4.0.0
  */
@@ -19,14 +72,20 @@ const TypeId = "~effect/transactions/TxRef"
 /**
  * TxRef is a transactional value, it can be read and modified within the body of a transaction.
  *
+ * **When to use**
+ *
+ * Use to store mutable state that must be read and modified inside Effect
+ * transactions.
+ *
+ * **Details**
+ *
  * Accessed values are tracked by the transaction in order to detect conflicts and in order to
  * track changes, a transaction will retry whenever a conflict is detected or whenever the
- * transaction explicitely calls to `Effect.retryTransaction` and any of the accessed TxRef values
+ * transaction explicitely calls to `Effect.txRetry` and any of the accessed TxRef values
  * change.
  *
- * @since 4.0.0
- * @category Models
- * @example
+ * **Example** (Using a transactional reference)
+ *
  * ```ts
  * import { Effect, TxRef } from "effect"
  *
@@ -35,15 +94,18 @@ const TypeId = "~effect/transactions/TxRef"
  *   const ref: TxRef.TxRef<number> = yield* TxRef.make(0)
  *
  *   // Use within a transaction
- *   yield* Effect.transaction(Effect.gen(function*() {
+ *   yield* Effect.tx(Effect.gen(function*() {
  *     const current = yield* TxRef.get(ref)
  *     yield* TxRef.set(ref, current + 1)
  *   }))
  *
- *   const final = yield* Effect.transaction(TxRef.get(ref))
+ *   const final = yield* TxRef.get(ref)
  *   console.log(final) // 1
  * })
  * ```
+ *
+ * @category models
+ * @since 4.0.0
  */
 export interface TxRef<in out A> extends Pipeable {
   readonly [TypeId]: typeof TypeId
@@ -56,43 +118,46 @@ export interface TxRef<in out A> extends Pipeable {
 /**
  * Creates a new `TxRef` with the specified initial value.
  *
- * @since 4.0.0
- * @category Constructors
- * @example
+ * **When to use**
+ *
+ * Use to create a transactional reference inside an `Effect` workflow.
+ *
+ * **Example** (Creating transactional references)
+ *
  * ```ts
  * import { Effect, TxRef } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create a transactional reference with initial value
- *   const counter = yield* Effect.transaction(TxRef.make(0))
- *   const name = yield* Effect.transaction(TxRef.make("Alice"))
+ *   const counter = yield* TxRef.make(0)
+ *   const name = yield* TxRef.make("Alice")
  *
  *   // Use in transactions
- *   yield* Effect.transaction(Effect.gen(function*() {
+ *   yield* Effect.tx(Effect.gen(function*() {
  *     yield* TxRef.set(counter, 42)
  *     yield* TxRef.set(name, "Bob")
  *   }))
  *
- *   console.log(yield* Effect.transaction(TxRef.get(counter))) // 42
- *   console.log(yield* Effect.transaction(TxRef.get(name))) // "Bob"
+ *   console.log(yield* TxRef.get(counter)) // 42
+ *   console.log(yield* TxRef.get(name)) // "Bob"
  * })
  * ```
+ *
+ * @category constructors
+ * @since 2.0.0
  */
-export const make = <A>(initial: A) =>
-  Effect.withTxState((state) =>
-    Effect.sync(() => {
-      const ref = makeUnsafe(initial)
-      state.journal.set(ref, { version: ref.version, value: ref.value })
-      return ref
-    })
-  )
+export const make = <A>(initial: A) => Effect.sync(() => makeUnsafe(initial))
 
 /**
- * Creates a new `TxRef` with the specified initial value.
+ * Creates a new `TxRef` synchronously with the specified initial value.
  *
- * @since 4.0.0
- * @category Constructors
- * @example
+ * **When to use**
+ *
+ * Use to construct a transactional reference synchronously when it must be
+ * created outside an `Effect` workflow.
+ *
+ * **Example** (Creating transactional references unsafely)
+ *
  * ```ts
  * import { TxRef } from "effect"
  *
@@ -104,6 +169,9 @@ export const make = <A>(initial: A) =>
  * console.log(counter.value) // 0
  * console.log(config.value) // { timeout: 5000, retries: 3 }
  * ```
+ *
+ * @category constructors
+ * @since 4.0.0
  */
 export const makeUnsafe = <A>(initial: A): TxRef<A> => ({
   [TypeId]: TypeId,
@@ -118,9 +186,13 @@ export const makeUnsafe = <A>(initial: A): TxRef<A> => ({
 /**
  * Modifies the value of the `TxRef` using the provided function.
  *
- * @since 4.0.0
- * @category Combinators
- * @example
+ * **When to use**
+ *
+ * Use to update a transactional reference and return a computed result from the
+ * same transaction step.
+ *
+ * **Example** (Modifying transactional references)
+ *
  * ```ts
  * import { Effect, TxRef } from "effect"
  *
@@ -128,27 +200,25 @@ export const makeUnsafe = <A>(initial: A): TxRef<A> => ({
  *   const counter = yield* TxRef.make(0)
  *
  *   // Modify and return both old and new value
- *   const result = yield* Effect.transaction(
- *     TxRef.modify(counter, (current) => [current * 2, current + 1])
- *   )
+ *   const result = yield* TxRef.modify(counter, (current) => [current * 2, current + 1])
  *
  *   console.log(result) // 0 (the return value: current * 2)
- *   console.log(yield* Effect.transaction(TxRef.get(counter))) // 1 (the new value: current + 1)
+ *   console.log(yield* TxRef.get(counter)) // 1 (the new value: current + 1)
  * })
  * ```
+ *
+ * @category combinators
+ * @since 2.0.0
  */
 export const modify: {
-  <A, R>(
-    f: (current: NoInfer<A>) => [returnValue: R, newValue: A]
-  ): (self: TxRef<A>) => Effect.Effect<R, never, Effect.Transaction>
-  <A, R>(self: TxRef<A>, f: (current: A) => [returnValue: R, newValue: A]): Effect.Effect<R, never, Effect.Transaction>
-} = dual(
-  2,
-  <A, R>(
-    self: TxRef<A>,
-    f: (current: A) => [returnValue: R, newValue: A]
-  ): Effect.Effect<R, never, Effect.Transaction> =>
-    Effect.withTxState((state) =>
+  <A, R>(f: (current: NoInfer<A>) => [returnValue: R, newValue: A]): (self: TxRef<A>) => Effect.Effect<R>
+  <A, R>(self: TxRef<A>, f: (current: A) => [returnValue: R, newValue: A]): Effect.Effect<R>
+} = dual(2, <A, R>(
+  self: TxRef<A>,
+  f: (current: A) => [returnValue: R, newValue: A]
+): Effect.Effect<R> =>
+  Effect.Transaction.pipe(
+    Effect.flatMap((state) =>
       Effect.sync(() => {
         if (!state.journal.has(self)) {
           state.journal.set(self, { version: self.version, value: self.value })
@@ -158,15 +228,19 @@ export const modify: {
         current.value = next
         return returnValue
       })
-    )
-)
+    ),
+    Effect.tx
+  ))
 
 /**
  * Updates the value of the `TxRef` using the provided function.
  *
- * @since 4.0.0
- * @category Combinators
- * @example
+ * **When to use**
+ *
+ * Use to transform a transactional reference when no result value is needed.
+ *
+ * **Example** (Updating transactional references)
+ *
  * ```ts
  * import { Effect, TxRef } from "effect"
  *
@@ -174,29 +248,34 @@ export const modify: {
  *   const counter = yield* TxRef.make(10)
  *
  *   // Update the value using a function
- *   yield* Effect.transaction(
+ *   yield* Effect.tx(
  *     TxRef.update(counter, (current) => current * 2)
  *   )
  *
- *   console.log(yield* Effect.transaction(TxRef.get(counter))) // 20
+ *   console.log(yield* TxRef.get(counter)) // 20
  * })
  * ```
+ *
+ * @category combinators
+ * @since 2.0.0
  */
 export const update: {
-  <A>(f: (current: NoInfer<A>) => A): (self: TxRef<A>) => Effect.Effect<void, never, Effect.Transaction>
-  <A>(self: TxRef<A>, f: (current: A) => A): Effect.Effect<void, never, Effect.Transaction>
-} = dual(
-  2,
-  <A>(self: TxRef<A>, f: (current: A) => A): Effect.Effect<void, never, Effect.Transaction> =>
-    modify(self, (current) => [void 0, f(current)])
-)
+  <A>(f: (current: NoInfer<A>) => A): (self: TxRef<A>) => Effect.Effect<void>
+  <A>(self: TxRef<A>, f: (current: A) => A): Effect.Effect<void>
+} = dual(2, <A>(
+  self: TxRef<A>,
+  f: (current: A) => A
+): Effect.Effect<void> => modify(self, (current) => [void 0, f(current)]))
 
 /**
  * Reads the current value of the `TxRef`.
  *
- * @since 4.0.0
- * @category Combinators
- * @example
+ * **When to use**
+ *
+ * Use to read the current value of a transactional reference.
+ *
+ * **Example** (Reading transactional references)
+ *
  * ```ts
  * import { Effect, TxRef } from "effect"
  *
@@ -204,23 +283,28 @@ export const update: {
  *   const counter = yield* TxRef.make(42)
  *
  *   // Read the value within a transaction
- *   const value = yield* Effect.transaction(
+ *   const value = yield* Effect.tx(
  *     TxRef.get(counter)
  *   )
  *
  *   console.log(value) // 42
  * })
  * ```
+ *
+ * @category combinators
+ * @since 2.0.0
  */
-export const get = <A>(self: TxRef<A>): Effect.Effect<A, never, Effect.Transaction> =>
-  modify(self, (current) => [current, current])
+export const get = <A>(self: TxRef<A>): Effect.Effect<A> => modify(self, (current) => [current, current])
 
 /**
  * Sets the value of the `TxRef`.
  *
- * @since 4.0.0
- * @category Combinators
- * @example
+ * **When to use**
+ *
+ * Use to replace the value of a transactional reference.
+ *
+ * **Example** (Setting transactional references)
+ *
  * ```ts
  * import { Effect, TxRef } from "effect"
  *
@@ -228,15 +312,21 @@ export const get = <A>(self: TxRef<A>): Effect.Effect<A, never, Effect.Transacti
  *   const counter = yield* TxRef.make(0)
  *
  *   // Set a new value within a transaction
- *   yield* Effect.transaction(
+ *   yield* Effect.tx(
  *     TxRef.set(counter, 100)
  *   )
  *
- *   console.log(yield* Effect.transaction(TxRef.get(counter))) // 100
+ *   console.log(yield* TxRef.get(counter)) // 100
  * })
  * ```
+ *
+ * @category combinators
+ * @since 2.0.0
  */
 export const set: {
-  <A>(value: A): (self: TxRef<A>) => Effect.Effect<void, never, Effect.Transaction>
-  <A>(self: TxRef<A>, value: A): Effect.Effect<void, never, Effect.Transaction>
-} = dual(2, <A>(self: TxRef<A>, value: A): Effect.Effect<void, never, Effect.Transaction> => update(self, () => value))
+  <A>(value: A): (self: TxRef<A>) => Effect.Effect<void>
+  <A>(self: TxRef<A>, value: A): Effect.Effect<void>
+} = dual(2, <A>(
+  self: TxRef<A>,
+  value: A
+): Effect.Effect<void> => update(self, () => value))

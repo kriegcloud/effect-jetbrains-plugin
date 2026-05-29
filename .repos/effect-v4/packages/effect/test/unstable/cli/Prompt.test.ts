@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Layer, Path, Redacted } from "effect"
+import { Effect, Fiber, FileSystem, Layer, Path, Redacted } from "effect"
 import { TestConsole } from "effect/testing"
 import { Prompt } from "effect/unstable/cli"
 import * as MockTerminal from "./services/MockTerminal.ts"
@@ -44,7 +44,47 @@ const toFrames = (lines: ReadonlyArray<unknown>) =>
     .map((line) => stripAnsi(String(line)))
     .filter((line) => line.split(bell).join("").trim().length > 0)
 
+const toRawFrames = (lines: ReadonlyArray<unknown>) =>
+  lines
+    .map((line) => String(line))
+    .filter((line) => stripAnsi(line).split(bell).join("").trim().length > 0)
+
 const findFrame = (frames: ReadonlyArray<string>, text: string) => frames.find((frame) => frame.includes(text))
+
+describe("Prompt.integer", () => {
+  it.effect("submits the default value", () =>
+    Effect.gen(function*() {
+      const prompt = Prompt.integer({ message: "Count", default: 42 })
+
+      yield* MockTerminal.inputKey("enter")
+
+      const result = yield* Prompt.run(prompt)
+      assert.strictEqual(result, 42)
+    }).pipe(Effect.provide(TestLayer)))
+
+  it.effect("starts from the default value so it can be edited", () =>
+    Effect.gen(function*() {
+      const prompt = Prompt.integer({ message: "Count", default: 4 })
+
+      yield* MockTerminal.inputText("2")
+      yield* MockTerminal.inputKey("enter")
+
+      const result = yield* Prompt.run(prompt)
+      assert.strictEqual(result, 42)
+    }).pipe(Effect.provide(TestLayer)))
+
+  it.effect("clears the default value on ctrl-u", () =>
+    Effect.gen(function*() {
+      const prompt = Prompt.integer({ message: "Count", default: 42 })
+
+      yield* MockTerminal.inputKey("u", { ctrl: true })
+      yield* MockTerminal.inputText("7")
+      yield* MockTerminal.inputKey("enter")
+
+      const result = yield* Prompt.run(prompt)
+      assert.strictEqual(result, 7)
+    }).pipe(Effect.provide(TestLayer)))
+})
 
 describe("Prompt.float", () => {
   it.effect("renders appended input without literal parsed", () =>
@@ -383,6 +423,19 @@ describe("Prompt.file", () => {
     TerminalLayer
   )
 
+  it.effect("starts from the default value so it can be submitted", () =>
+    Effect.gen(function*() {
+      const prompt = Prompt.file({
+        message: "Pick file",
+        default: "/workspace/banana.txt"
+      })
+
+      yield* MockTerminal.inputKey("enter")
+
+      const result = yield* Prompt.run(prompt)
+      assert.strictEqual(result, "/workspace/banana.txt")
+    }).pipe(Effect.provide(FilePromptLayer)))
+
   it.effect("filters files as you type", () =>
     Effect.gen(function*() {
       const prompt = Prompt.file({
@@ -430,4 +483,38 @@ describe("Prompt.file", () => {
       assert.isFalse(narrowedFrame?.includes("basket.txt"))
       assert.isTrue(expandedFrame?.includes("basket.txt"))
     }).pipe(Effect.provide(FilePromptLayer)))
+})
+
+describe("Prompt.multiSelect", () => {
+  it.effect("underlines the active label", () =>
+    Effect.gen(function*() {
+      const prompt = Prompt.multiSelect({
+        message: "Pick items",
+        choices: [
+          { title: "Alpha", value: "alpha" },
+          { title: "Beta", value: "beta" },
+          { title: "Gamma", value: "gamma" }
+        ]
+      })
+
+      const fiber = yield* Prompt.run(prompt).pipe(Effect.forkChild)
+
+      yield* Effect.yieldNow
+      yield* MockTerminal.inputKey("down")
+      yield* MockTerminal.inputKey("down")
+      yield* MockTerminal.inputKey("down")
+      yield* Effect.yieldNow
+
+      const output = yield* TestConsole.logLines
+      const frames = toRawFrames(output)
+      const highlightedFrame = [...frames].reverse().find((frame) => frame.includes("Beta"))
+
+      assert.isTrue(highlightedFrame !== undefined)
+      assert.isTrue(highlightedFrame?.includes(`${escape}[4m${escape}[96mBeta${escape}[0m`))
+
+      yield* MockTerminal.inputKey("enter")
+
+      const result = yield* Fiber.join(fiber)
+      assert.deepStrictEqual(result, [])
+    }).pipe(Effect.provide(TestLayer)))
 })

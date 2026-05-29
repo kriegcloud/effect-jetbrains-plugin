@@ -1,6 +1,33 @@
 /**
- * A transactional priority queue. Elements are dequeued in order determined by the
- * provided `Order` instance. All operations participate in the STM transaction system.
+ * The `TxPriorityQueue` module provides a mutable priority queue whose state is
+ * stored in a transactional reference. Elements are kept in the order defined by
+ * the `Order` supplied at construction time, and dequeue operations return the
+ * first element according to that ordering.
+ *
+ * A `TxPriorityQueue<A>` is useful when multiple fibers coordinate through a
+ * shared queue and the queue operation needs to compose with other
+ * transactional state changes. Every operation returns an `Effect`; group
+ * several queue operations with `Effect.tx` when the whole sequence must commit
+ * or retry as one transaction.
+ *
+ * **Common tasks**
+ *
+ * - Create queues with {@link empty}, {@link fromIterable}, or {@link make}
+ * - Insert values with {@link offer} and {@link offerAll}
+ * - Read priority order with {@link peek}, {@link peekOption}, and
+ *   {@link toArray}
+ * - Remove values with {@link take}, {@link takeOption}, {@link takeAll}, and
+ *   {@link takeUpTo}
+ * - Keep or remove subsets with {@link retainIf} and {@link removeIf}
+ *
+ * **Gotchas**
+ *
+ * - `take` and `peek` retry when the queue is empty; use `takeOption` or
+ *   `peekOption` when empty queues should be represented as `Option.none`.
+ * - `Order.Number` is ascending, so lower numbers are dequeued first. Provide a
+ *   reversed order when larger values should have higher priority.
+ * - The queue preserves all values with equal priority; equal values are not
+ *   merged or deduplicated.
  *
  * @since 4.0.0
  */
@@ -24,11 +51,14 @@ const TypeId = "~effect/transactions/TxPriorityQueue"
 /**
  * A transactional priority queue backed by a sorted `Chunk`.
  *
+ * **Details**
+ *
  * Elements are stored in ascending order according to the `Order` provided at
  * construction time. `take` returns the smallest element, `peek` observes it
  * without removing.
  *
- * @example
+ * **Example** (Dequeuing values by priority)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -42,8 +72,8 @@ const TypeId = "~effect/transactions/TxPriorityQueue"
  * })
  * ```
  *
- * @since 4.0.0
  * @category models
+ * @since 4.0.0
  */
 export interface TxPriorityQueue<in out A> extends Inspectable, Pipeable {
   readonly [TypeId]: typeof TypeId
@@ -95,7 +125,8 @@ const insertSorted = <A>(chunk: Chunk<A>, value: A, ord: Order<A>): Chunk<A> => 
 /**
  * Creates an empty `TxPriorityQueue` with the given ordering.
  *
- * @example
+ * **Example** (Creating an empty priority queue)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -106,16 +137,17 @@ const insertSorted = <A>(chunk: Chunk<A>, value: A, ord: Order<A>): Chunk<A> => 
  * })
  * ```
  *
- * @since 4.0.0
  * @category constructors
+ * @since 2.0.0
  */
-export const empty = <A>(order: Order<A>): Effect.Effect<TxPriorityQueue<A>, never, Effect.Transaction> =>
+export const empty = <A>(order: Order<A>): Effect.Effect<TxPriorityQueue<A>> =>
   Effect.map(TxRef.make<Chunk<A>>(C.empty()), (ref) => makeTxPriorityQueue(ref, order))
 
 /**
  * Creates a `TxPriorityQueue` from an iterable of elements.
  *
- * @example
+ * **Example** (Creating a priority queue from an iterable)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -126,15 +158,15 @@ export const empty = <A>(order: Order<A>): Effect.Effect<TxPriorityQueue<A>, nev
  * })
  * ```
  *
- * @since 4.0.0
  * @category constructors
+ * @since 2.0.0
  */
 export const fromIterable: {
-  <A>(order: Order<A>): (iterable: Iterable<A>) => Effect.Effect<TxPriorityQueue<A>, never, Effect.Transaction>
-  <A>(order: Order<A>, iterable: Iterable<A>): Effect.Effect<TxPriorityQueue<A>, never, Effect.Transaction>
+  <A>(order: Order<A>): (iterable: Iterable<A>) => Effect.Effect<TxPriorityQueue<A>>
+  <A>(order: Order<A>, iterable: Iterable<A>): Effect.Effect<TxPriorityQueue<A>>
 } = dual(
   2,
-  <A>(order: Order<A>, iterable: Iterable<A>): Effect.Effect<TxPriorityQueue<A>, never, Effect.Transaction> => {
+  <A>(order: Order<A>, iterable: Iterable<A>): Effect.Effect<TxPriorityQueue<A>> => {
     const arr = Array.from(iterable).sort((a, b) => order(a, b))
     return Effect.map(
       TxRef.make<Chunk<A>>(C.fromIterable(arr)),
@@ -146,7 +178,8 @@ export const fromIterable: {
 /**
  * Creates a `TxPriorityQueue` from variadic elements.
  *
- * @example
+ * **Example** (Creating a priority queue from variadic values)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -157,17 +190,17 @@ export const fromIterable: {
  * })
  * ```
  *
- * @since 4.0.0
  * @category constructors
+ * @since 2.0.0
  */
-export const make =
-  <A>(order: Order<A>) => (...elements: Array<A>): Effect.Effect<TxPriorityQueue<A>, never, Effect.Transaction> =>
-    fromIterable(order, elements)
+export const make = <A>(order: Order<A>) => (...elements: Array<A>): Effect.Effect<TxPriorityQueue<A>> =>
+  fromIterable(order, elements)
 
 /**
  * Returns the number of elements in the queue.
  *
- * @example
+ * **Example** (Getting the queue size)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -178,16 +211,16 @@ export const make =
  * })
  * ```
  *
- * @since 4.0.0
  * @category getters
+ * @since 2.0.0
  */
-export const size = <A>(self: TxPriorityQueue<A>): Effect.Effect<number, never, Effect.Transaction> =>
-  Effect.map(TxRef.get(self.ref), C.size)
+export const size = <A>(self: TxPriorityQueue<A>): Effect.Effect<number> => Effect.map(TxRef.get(self.ref), C.size)
 
 /**
  * Returns `true` if the queue is empty.
  *
- * @example
+ * **Example** (Checking whether a queue is empty)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -198,16 +231,16 @@ export const size = <A>(self: TxPriorityQueue<A>): Effect.Effect<number, never, 
  * })
  * ```
  *
- * @since 4.0.0
  * @category getters
+ * @since 2.0.0
  */
-export const isEmpty = <A>(self: TxPriorityQueue<A>): Effect.Effect<boolean, never, Effect.Transaction> =>
-  Effect.map(size(self), (n) => n === 0)
+export const isEmpty = <A>(self: TxPriorityQueue<A>): Effect.Effect<boolean> => Effect.map(size(self), (n) => n === 0)
 
 /**
  * Returns `true` if the queue has at least one element.
  *
- * @example
+ * **Example** (Checking whether a queue has elements)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -218,17 +251,21 @@ export const isEmpty = <A>(self: TxPriorityQueue<A>): Effect.Effect<boolean, nev
  * })
  * ```
  *
- * @since 4.0.0
  * @category getters
+ * @since 2.0.0
  */
-export const isNonEmpty = <A>(self: TxPriorityQueue<A>): Effect.Effect<boolean, never, Effect.Transaction> =>
-  Effect.map(size(self), (n) => n > 0)
+export const isNonEmpty = <A>(self: TxPriorityQueue<A>): Effect.Effect<boolean> => Effect.map(size(self), (n) => n > 0)
 
 /**
- * Observes the smallest element without removing it. Retries if the queue is
- * empty.
+ * Observes the smallest element without removing it.
  *
- * @example
+ * **When to use**
+ *
+ * Use to inspect the next prioritized value and retry transactionally while
+ * the queue is empty.
+ *
+ * **Example** (Peeking at the next value)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -239,24 +276,29 @@ export const isNonEmpty = <A>(self: TxPriorityQueue<A>): Effect.Effect<boolean, 
  * })
  * ```
  *
- * @since 4.0.0
  * @category getters
+ * @since 2.0.0
  */
-export const peek = <A>(self: TxPriorityQueue<A>): Effect.Effect<A, never, Effect.Transaction> =>
+export const peek = <A>(self: TxPriorityQueue<A>): Effect.Effect<A> =>
   Effect.gen(function*() {
     const chunk = yield* TxRef.get(self.ref)
     const head = C.head(chunk)
     if (O.isNone(head)) {
-      return yield* Effect.retryTransaction
+      return yield* Effect.txRetry
     }
     return head.value
-  })
+  }).pipe(Effect.tx)
 
 /**
- * Observes the smallest element without removing it. Returns `None` if the
+ * Observes the smallest element without removing it, returning `None` when the
  * queue is empty.
  *
- * @example
+ * **When to use**
+ *
+ * Use to inspect the next prioritized value without retrying on an empty queue.
+ *
+ * **Example** (Peeking without retrying)
+ *
  * ```ts
  * import { Effect, Option, Order, TxPriorityQueue } from "effect"
  *
@@ -267,16 +309,17 @@ export const peek = <A>(self: TxPriorityQueue<A>): Effect.Effect<A, never, Effec
  * })
  * ```
  *
- * @since 4.0.0
  * @category getters
+ * @since 2.0.0
  */
-export const peekOption = <A>(self: TxPriorityQueue<A>): Effect.Effect<Option<A>, never, Effect.Transaction> =>
+export const peekOption = <A>(self: TxPriorityQueue<A>): Effect.Effect<Option<A>> =>
   Effect.map(TxRef.get(self.ref), C.head)
 
 /**
  * Inserts an element into the queue in sorted position.
  *
- * @example
+ * **Example** (Offering a value)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -289,22 +332,23 @@ export const peekOption = <A>(self: TxPriorityQueue<A>): Effect.Effect<Option<A>
  * })
  * ```
  *
- * @since 4.0.0
  * @category mutations
+ * @since 2.0.0
  */
 export const offer: {
-  <A>(value: A): (self: TxPriorityQueue<A>) => Effect.Effect<void, never, Effect.Transaction>
-  <A>(self: TxPriorityQueue<A>, value: A): Effect.Effect<void, never, Effect.Transaction>
+  <A>(value: A): (self: TxPriorityQueue<A>) => Effect.Effect<void>
+  <A>(self: TxPriorityQueue<A>, value: A): Effect.Effect<void>
 } = dual(
   2,
-  <A>(self: TxPriorityQueue<A>, value: A): Effect.Effect<void, never, Effect.Transaction> =>
+  <A>(self: TxPriorityQueue<A>, value: A): Effect.Effect<void> =>
     TxRef.update(self.ref, (chunk) => insertSorted(chunk, value, self.ord))
 )
 
 /**
  * Inserts all elements from an iterable into the queue.
  *
- * @example
+ * **Example** (Offering multiple values)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -316,15 +360,15 @@ export const offer: {
  * })
  * ```
  *
- * @since 4.0.0
  * @category mutations
+ * @since 2.0.0
  */
 export const offerAll: {
-  <A>(values: Iterable<A>): (self: TxPriorityQueue<A>) => Effect.Effect<void, never, Effect.Transaction>
-  <A>(self: TxPriorityQueue<A>, values: Iterable<A>): Effect.Effect<void, never, Effect.Transaction>
+  <A>(values: Iterable<A>): (self: TxPriorityQueue<A>) => Effect.Effect<void>
+  <A>(self: TxPriorityQueue<A>, values: Iterable<A>): Effect.Effect<void>
 } = dual(
   2,
-  <A>(self: TxPriorityQueue<A>, values: Iterable<A>): Effect.Effect<void, never, Effect.Transaction> =>
+  <A>(self: TxPriorityQueue<A>, values: Iterable<A>): Effect.Effect<void> =>
     TxRef.update(self.ref, (chunk) => {
       const arr = [...C.toArray(chunk), ...values].sort((a, b) => self.ord(a, b))
       return C.fromIterable(arr)
@@ -334,7 +378,8 @@ export const offerAll: {
 /**
  * Takes the smallest element from the queue. Retries if the queue is empty.
  *
- * @example
+ * **Example** (Taking the next value)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -345,24 +390,25 @@ export const offerAll: {
  * })
  * ```
  *
- * @since 4.0.0
  * @category mutations
+ * @since 2.0.0
  */
-export const take = <A>(self: TxPriorityQueue<A>): Effect.Effect<A, never, Effect.Transaction> =>
+export const take = <A>(self: TxPriorityQueue<A>): Effect.Effect<A> =>
   Effect.gen(function*() {
     const chunk = yield* TxRef.get(self.ref)
     const head = C.head(chunk)
     if (O.isNone(head)) {
-      return yield* Effect.retryTransaction
+      return yield* Effect.txRetry
     }
     yield* TxRef.set(self.ref, C.drop(chunk, 1))
     return head.value
-  })
+  }).pipe(Effect.tx)
 
 /**
  * Takes all elements from the queue, returning them in priority order.
  *
- * @example
+ * **Example** (Taking all values in priority order)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -373,10 +419,10 @@ export const take = <A>(self: TxPriorityQueue<A>): Effect.Effect<A, never, Effec
  * })
  * ```
  *
- * @since 4.0.0
  * @category mutations
+ * @since 2.0.0
  */
-export const takeAll = <A>(self: TxPriorityQueue<A>): Effect.Effect<Array<A>, never, Effect.Transaction> =>
+export const takeAll = <A>(self: TxPriorityQueue<A>): Effect.Effect<Array<A>> =>
   Effect.map(
     TxRef.modify(self.ref, (chunk) => [chunk, C.empty()]),
     C.toArray
@@ -385,7 +431,8 @@ export const takeAll = <A>(self: TxPriorityQueue<A>): Effect.Effect<Array<A>, ne
 /**
  * Tries to take the smallest element. Returns `None` if the queue is empty.
  *
- * @example
+ * **Example** (Taking without retrying)
+ *
  * ```ts
  * import { Effect, Option, Order, TxPriorityQueue } from "effect"
  *
@@ -396,10 +443,10 @@ export const takeAll = <A>(self: TxPriorityQueue<A>): Effect.Effect<Array<A>, ne
  * })
  * ```
  *
- * @since 4.0.0
  * @category mutations
+ * @since 2.0.0
  */
-export const takeOption = <A>(self: TxPriorityQueue<A>): Effect.Effect<Option<A>, never, Effect.Transaction> =>
+export const takeOption = <A>(self: TxPriorityQueue<A>): Effect.Effect<Option<A>> =>
   TxRef.modify(self.ref, (chunk) => {
     const head = C.head(chunk)
     if (O.isNone(head)) {
@@ -411,7 +458,8 @@ export const takeOption = <A>(self: TxPriorityQueue<A>): Effect.Effect<Option<A>
 /**
  * Takes up to `n` elements from the queue in priority order.
  *
- * @example
+ * **Example** (Taking up to a limit)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -422,15 +470,15 @@ export const takeOption = <A>(self: TxPriorityQueue<A>): Effect.Effect<Option<A>
  * })
  * ```
  *
- * @since 4.0.0
  * @category mutations
+ * @since 2.0.0
  */
 export const takeUpTo: {
-  (n: number): <A>(self: TxPriorityQueue<A>) => Effect.Effect<Array<A>, never, Effect.Transaction>
-  <A>(self: TxPriorityQueue<A>, n: number): Effect.Effect<Array<A>, never, Effect.Transaction>
+  (n: number): <A>(self: TxPriorityQueue<A>) => Effect.Effect<Array<A>>
+  <A>(self: TxPriorityQueue<A>, n: number): Effect.Effect<Array<A>>
 } = dual(
   2,
-  <A>(self: TxPriorityQueue<A>, n: number): Effect.Effect<Array<A>, never, Effect.Transaction> =>
+  <A>(self: TxPriorityQueue<A>, n: number): Effect.Effect<Array<A>> =>
     Effect.map(
       TxRef.modify(self.ref, (chunk) => {
         const taken = C.take(chunk, n)
@@ -444,7 +492,8 @@ export const takeUpTo: {
 /**
  * Removes elements matching the predicate.
  *
- * @example
+ * **Example** (Removing matching values)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -456,22 +505,23 @@ export const takeUpTo: {
  * })
  * ```
  *
- * @since 4.0.0
  * @category filtering
+ * @since 2.0.0
  */
 export const removeIf: {
-  <A>(predicate: Predicate<A>): (self: TxPriorityQueue<A>) => Effect.Effect<void, never, Effect.Transaction>
-  <A>(self: TxPriorityQueue<A>, predicate: Predicate<A>): Effect.Effect<void, never, Effect.Transaction>
+  <A>(predicate: Predicate<A>): (self: TxPriorityQueue<A>) => Effect.Effect<void>
+  <A>(self: TxPriorityQueue<A>, predicate: Predicate<A>): Effect.Effect<void>
 } = dual(
   2,
-  <A>(self: TxPriorityQueue<A>, predicate: Predicate<A>): Effect.Effect<void, never, Effect.Transaction> =>
+  <A>(self: TxPriorityQueue<A>, predicate: Predicate<A>): Effect.Effect<void> =>
     TxRef.update(self.ref, (chunk) => C.filter(chunk, (a) => !predicate(a)))
 )
 
 /**
- * Retains only elements matching the predicate.
+ * Keeps only elements matching the predicate.
  *
- * @example
+ * **Example** (Retaining matching values)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -483,22 +533,23 @@ export const removeIf: {
  * })
  * ```
  *
- * @since 4.0.0
  * @category filtering
+ * @since 2.0.0
  */
 export const retainIf: {
-  <A>(predicate: Predicate<A>): (self: TxPriorityQueue<A>) => Effect.Effect<void, never, Effect.Transaction>
-  <A>(self: TxPriorityQueue<A>, predicate: Predicate<A>): Effect.Effect<void, never, Effect.Transaction>
+  <A>(predicate: Predicate<A>): (self: TxPriorityQueue<A>) => Effect.Effect<void>
+  <A>(self: TxPriorityQueue<A>, predicate: Predicate<A>): Effect.Effect<void>
 } = dual(
   2,
-  <A>(self: TxPriorityQueue<A>, predicate: Predicate<A>): Effect.Effect<void, never, Effect.Transaction> =>
+  <A>(self: TxPriorityQueue<A>, predicate: Predicate<A>): Effect.Effect<void> =>
     TxRef.update(self.ref, (chunk) => C.filter(chunk, predicate))
 )
 
 /**
  * Returns all elements in priority order without removing them.
  *
- * @example
+ * **Example** (Reading values in priority order)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -509,16 +560,17 @@ export const retainIf: {
  * })
  * ```
  *
- * @since 4.0.0
- * @category conversions
+ * @category converting
+ * @since 2.0.0
  */
-export const toArray = <A>(self: TxPriorityQueue<A>): Effect.Effect<Array<A>, never, Effect.Transaction> =>
+export const toArray = <A>(self: TxPriorityQueue<A>): Effect.Effect<Array<A>> =>
   Effect.map(TxRef.get(self.ref), C.toArray)
 
 /**
  * Determines if the provided value is a `TxPriorityQueue`.
  *
- * @example
+ * **Example** (Checking for a TxPriorityQueue)
+ *
  * ```ts
  * import { Effect, Order, TxPriorityQueue } from "effect"
  *
@@ -529,7 +581,7 @@ export const toArray = <A>(self: TxPriorityQueue<A>): Effect.Effect<Array<A>, ne
  * })
  * ```
  *
- * @since 4.0.0
  * @category guards
+ * @since 4.0.0
  */
 export const isTxPriorityQueue = (u: unknown): u is TxPriorityQueue<unknown> => hasProperty(u, TypeId)

@@ -1,6 +1,53 @@
 /**
+ * The `Cache` module provides an effectful, mutable key-value cache for values
+ * computed by lookup effects. A `Cache<Key, A, E, R>` stores lookup exits for
+ * keys, shares concurrent misses for the same key, and manages entry lifetime
+ * with capacity limits and optional time-to-live policies.
+ *
+ * **Mental model**
+ *
+ * - {@link make} and {@link makeWith} create a cache from a lookup function and
+ *   a maximum capacity
+ * - {@link get} returns a cached value when present, or runs the lookup for a
+ *   missing or expired key
+ * - Concurrent misses for the same key share one pending lookup and all await
+ *   the same result
+ * - Successes and failures are both cached as `Exit` values until their entry
+ *   expires or is replaced
+ * - Entries can live forever, use a fixed TTL, or use a dynamic TTL based on
+ *   the lookup `Exit`
+ * - Capacity uses access order: reads move entries to the back and overflow
+ *   removes the oldest entries
+ *
+ * **Common tasks**
+ *
+ * - Create a cache: {@link make}, {@link makeWith}
+ * - Read values: {@link get}, {@link getOption}, {@link getSuccess}
+ * - Seed or overwrite values: {@link set}
+ * - Refresh values: {@link refresh}
+ * - Remove entries: {@link invalidate}, {@link invalidateWhen}, {@link invalidateAll}
+ * - Inspect contents: {@link has}, {@link size}, {@link keys}, {@link values}, {@link entries}
+ *
+ * **Gotchas**
+ *
+ * - {@link getOption} does not run the lookup, but it awaits pending entries
+ *   and fails when the existing entry is a failure
+ * - {@link getSuccess} returns `Option.none` for missing, expired, pending, or
+ *   failed entries
+ * - {@link size} may include expired entries until they are observed and removed
+ * - {@link values} and {@link entries} include only successfully resolved,
+ *   non-expired entries
+ * - Use `Data` or another `Equal`-compatible key type when keys should compare
+ *   structurally
+ *
+ * **See also**
+ *
+ * - {@link Duration} for configuring fixed or dynamic time-to-live values
+ * - {@link Effect} for the lookup effects used to compute cached values
+ *
  * @since 4.0.0
  */
+import * as Context from "./Context.ts"
 import * as Deferred from "./Deferred.ts"
 import * as Duration from "./Duration.ts"
 import type * as Effect from "./Effect.ts"
@@ -16,7 +63,6 @@ import * as Option from "./Option.ts"
 import type { Pipeable } from "./Pipeable.ts"
 import type { Predicate } from "./Predicate.ts"
 import * as Result from "./Result.ts"
-import * as ServiceMap from "./ServiceMap.ts"
 
 const TypeId = "~effect/Cache"
 
@@ -24,7 +70,8 @@ const TypeId = "~effect/Cache"
  * A cache interface that provides a mutable key-value store with automatic TTL management,
  * capacity limits, and lookup functions for cache misses.
  *
- * @example
+ * **Example** (Creating a basic cache)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -44,7 +91,8 @@ const TypeId = "~effect/Cache"
  * })
  * ```
  *
- * @example
+ * **Example** (Handling lookup failures)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -66,7 +114,8 @@ const TypeId = "~effect/Cache"
  * })
  * ```
  *
- * @example
+ * **Example** (Using complex keys with TTL)
+ *
  * ```ts
  * import { Cache, Data, Duration, Effect } from "effect"
  *
@@ -87,8 +136,8 @@ const TypeId = "~effect/Cache"
  * })
  * ```
  *
- * @since 4.0.0
- * @category Models
+ * @category models
+ * @since 2.0.0
  */
 export interface Cache<in out Key, in out A, in out E = never, out R = never> extends Pipeable {
   readonly [TypeId]: typeof TypeId
@@ -99,11 +148,23 @@ export interface Cache<in out Key, in out A, in out E = never, out R = never> ex
 }
 
 /**
- * Represents a cache entry containing a deferred value and optional expiration time.
- * This is used internally by the cache implementation to track cached values and their lifetimes.
+ * Represents a low-level cache entry containing a deferred lookup result and
+ * an optional expiration timestamp.
  *
+ * **When to use**
+ *
+ * Use when inspecting a `Cache`'s low-level map and you need the stored
+ * deferred lookup result or expiration timestamp for a key.
+ *
+ * **Details**
+ *
+ * An `expiresAt` value of `undefined` means the entry does not expire.
+ *
+ * @see {@link Cache} for the public cache API that manages entries through
+ * combinators
+ *
+ * @category models
  * @since 4.0.0
- * @category Models
  */
 export interface Entry<A, E> {
   expiresAt: number | undefined
@@ -113,62 +174,44 @@ export interface Entry<A, E> {
 /**
  * Creates a cache with dynamic time-to-live based on the result and key.
  *
+ * **When to use**
+ *
+ * Use when you need different cache entry lifetimes based on the lookup result
+ * or key characteristics.
+ *
+ * **Details**
+ *
  * The timeToLive function receives both the exit result and the key, allowing
  * for flexible TTL policies based on success/failure state and key characteristics.
  *
- * @example
- * ```ts
- * import { Cache, Effect, Exit } from "effect"
+ * **Example** (Using dynamic time to live)
  *
- * // Cache with different TTL for success vs failure
- * const program = Effect.gen(function*() {
- *   const cache = yield* Cache.makeWith<string, number, string>({
- *     capacity: 100,
- *     lookup: (key) =>
- *       key === "fail"
- *         ? Effect.fail("error")
- *         : Effect.succeed(key.length),
- *     timeToLive: (exit, key) => {
- *       if (Exit.isFailure(exit)) return "1 minute" // Short TTL for errors
- *       return key.startsWith("temp") ? "5 minutes" : "1 hour"
- *     }
- *   })
- *
- *   // Get values with different TTL policies
- *   const result1 = yield* Cache.get(cache, "hello")
- *   const result2 = yield* Cache.get(cache, "temp_data")
- *   console.log({ result1, result2 }) // { result1: 5, result2: 9 }
- * })
- * ```
- *
- * @example
  * ```ts
  * import { Cache, Effect, Exit } from "effect"
  *
  * // Cache with TTL based on computed value
  * const userCache = Effect.gen(function*() {
- *   const cache = yield* Cache.makeWith<
- *     number,
- *     { id: number; active: boolean },
- *     never
- *   >({
- *     capacity: 1000,
- *     lookup: (id) => Effect.succeed({ id, active: id % 2 === 0 }),
- *     timeToLive: (exit) => {
- *       if (Exit.isSuccess(exit)) {
- *         const user = exit.value
- *         return user.active ? "1 hour" : "5 minutes"
+ *   const cache = yield* Cache.makeWith(
+ *     (id: number) => Effect.succeed({ id, active: id % 2 === 0 }),
+ *     {
+ *       capacity: 1000,
+ *       timeToLive(exit) {
+ *         if (Exit.isSuccess(exit)) {
+ *           const user = exit.value
+ *           return user.active ? "1 hour" : "5 minutes"
+ *         }
+ *         return "30 seconds"
  *       }
- *       return "30 seconds"
  *     }
- *   })
+ *   )
  *
  *   return cache
  * })
  * ```
  *
- * @since 4.0.0
- * @category Constructors
+ * @see {@link make} for a simpler cache constructor with a fixed time-to-live for all entries
+ * @category constructors
+ * @since 2.0.0
  */
 export const makeWith = <
   Key,
@@ -176,8 +219,7 @@ export const makeWith = <
   E = never,
   R = never,
   ServiceMode extends "lookup" | "construction" = never
->(options: {
-  readonly lookup: (key: Key) => Effect.Effect<A, E, R>
+>(lookup: (key: Key) => Effect.Effect<A, E, R>, options: {
   readonly capacity: number
   readonly timeToLive?: ((exit: Exit.Exit<A, E>, key: Key) => Duration.Input) | undefined
   readonly requireServicesAt?: ServiceMode | undefined
@@ -186,12 +228,12 @@ export const makeWith = <
   never,
   "lookup" extends ServiceMode ? never : R
 > =>
-  effect.servicesWith((services: ServiceMap.ServiceMap<any>) => {
+  effect.contextWith((context: Context.Context<any>) => {
     const self = Object.create(Proto)
     self.lookup = (key: Key): Effect.Effect<A, E> =>
-      effect.updateServices(
-        options.lookup(key),
-        (input) => ServiceMap.merge(services, input)
+      effect.updateContext(
+        lookup(key),
+        (input) => Context.merge(context, input)
       )
     self.map = MutableHashMap.make()
     self.capacity = options.capacity
@@ -204,10 +246,13 @@ export const makeWith = <
 /**
  * Creates a cache with a fixed time-to-live for all entries.
  *
+ * **Details**
+ *
  * This is the basic cache constructor where all entries share the same TTL.
  * The lookup function will be called when a key is not found or has expired.
  *
- * @example
+ * **Example** (Creating a basic cache)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -224,12 +269,17 @@ export const makeWith = <
  * })
  * ```
  *
- * @example
+ * **Example** (Creating a cache with TTL)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
- * // Cache with TTL and async lookup
- * const fetchUserCache = Effect.gen(function*() {
+ * const program = Effect.gen(function*() {
+ *   const users = new Map([
+ *     [123, { name: "Ada", email: "ada@example.com" }],
+ *     [456, { name: "Grace", email: "grace@example.com" }]
+ *   ])
+ *
  *   const cache = yield* Cache.make<
  *     number,
  *     { name: string; email: string },
@@ -237,22 +287,25 @@ export const makeWith = <
  *   >({
  *     capacity: 500,
  *     lookup: (userId) =>
- *       Effect.tryPromise({
- *         try: () => fetch(`/api/users/${userId}`).then((r) => r.json()),
- *         catch: () => "Failed to fetch user"
+ *       Effect.suspend(() => {
+ *         const user = users.get(userId)
+ *         return user === undefined
+ *           ? Effect.fail(`User ${userId} not found`)
+ *           : Effect.succeed(user)
  *       }),
  *     timeToLive: "15 minutes"
  *   })
  *
- *   // First call fetches from API, second call returns cached result
  *   const user1 = yield* Cache.get(cache, 123)
- *   const user2 = yield* Cache.get(cache, 123) // From cache
- *   return { user1, user2 }
+ *   console.log(user1) // { name: "Ada", email: "ada@example.com" }
+ *
+ *   const user2 = yield* Cache.get(cache, 123)
+ *   console.log(user2) // { name: "Ada", email: "ada@example.com" }
  * })
  * ```
  *
- * @since 4.0.0
- * @category Constructors
+ * @category constructors
+ * @since 2.0.0
  */
 export const make = <
   Key,
@@ -272,7 +325,7 @@ export const make = <
   never,
   "lookup" extends ServiceMode ? never : R
 > =>
-  makeWith<Key, A, E, R, ServiceMode>({
+  makeWith<Key, A, E, R, ServiceMode>(options.lookup, {
     ...options,
     timeToLive: options.timeToLive ? () => options.timeToLive! : defaultTimeToLive
   })
@@ -292,12 +345,17 @@ const Proto = {
 const defaultTimeToLive = <A, E>(_: Exit.Exit<A, E>, _key: unknown): Duration.Duration => Duration.infinity
 
 /**
- * Retrieves the value associated with the specified key from the cache.
+ * Retrieves the value for a key, invoking the lookup function on a cache miss
+ * or expired entry.
  *
- * If the key is not present or has expired, it will invoke the lookup function
- * to construct the value, store it in the cache, and return it.
+ * **Details**
  *
- * @example
+ * Concurrent `get` calls for the same missing key share the same pending
+ * lookup. The cache stores the lookup `Exit`, so failed lookups are cached and
+ * will fail again until the entry expires, is invalidated, or is refreshed.
+ *
+ * **Example** (Getting cached values)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -319,7 +377,8 @@ const defaultTimeToLive = <A, E>(_: Exit.Exit<A, E>, _key: unknown): Duration.Du
  * })
  * ```
  *
- * @example
+ * **Example** (Handling lookup failures)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -343,7 +402,8 @@ const defaultTimeToLive = <A, E>(_: Exit.Exit<A, E>, _key: unknown): Duration.Du
  * })
  * ```
  *
- * @example
+ * **Example** (Sharing concurrent lookups)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -371,8 +431,8 @@ const defaultTimeToLive = <A, E>(_: Exit.Exit<A, E>, _key: unknown): Duration.Du
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const get: {
   <Key, A>(key: Key): <E, R>(self: Cache<Key, A, E, R>) => Effect.Effect<A, E, R>
@@ -429,14 +489,17 @@ const checkCapacity = <K, A, E, R>(self: Cache<K, A, E, R>) => {
 }
 
 /**
- * Retrieves the value associated with the specified key from the cache,
- * returning an `Option` that is `Some` if the key exists and has not expired,
- * or `None` if the key does not exist or has expired.
+ * Reads an existing cache entry without invoking the lookup function.
  *
- * Unlike `get`, this function will not invoke the lookup function if the key
- * is missing or expired.
+ * **Details**
  *
- * @example
+ * Returns `Option.none()` when the key is missing or expired, and `Option.some`
+ * when a cached lookup has succeeded. If the entry is still pending, waits for
+ * it to complete. If the cached or pending lookup fails, this effect fails with
+ * the same error.
+ *
+ * **Example** (Reading cached values without lookup)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -461,7 +524,8 @@ const checkCapacity = <K, A, E, R>(self: Cache<K, A, E, R>) => {
  * })
  * ```
  *
- * @example
+ * **Example** (Skipping expired entries)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  * import { TestClock } from "effect/testing"
@@ -490,7 +554,8 @@ const checkCapacity = <K, A, E, R>(self: Cache<K, A, E, R>) => {
  * })
  * ```
  *
- * @example
+ * **Example** (Waiting for pending lookups)
+ *
  * ```ts
  * import { Cache, Deferred, Effect, Fiber } from "effect"
  *
@@ -513,11 +578,14 @@ const checkCapacity = <K, A, E, R>(self: Cache<K, A, E, R>) => {
  *
  *   const result = yield* Fiber.join(optionFiber)
  *   console.log(result) // Option.some(42)
+ *
+ *   const value = yield* Fiber.join(getFiber)
+ *   console.log(value) // 42
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const getOption: {
   <Key, A>(key: Key): <E, R>(self: Cache<Key, A, E, R>) => Effect.Effect<Option.Option<A>, E>
@@ -554,8 +622,17 @@ const getImpl = <Key, A, E, R>(
  * Retrieves the value associated with the specified key from the cache, only if
  * it contains a resolved successful value.
  *
+ * **Details**
+ *
+ * This checks only an existing non-expired entry. It returns `Option.some` when
+ * the entry has already resolved successfully, and `Option.none` for missing,
+ * expired, failed, or still-pending entries.
+ *
+ * @see {@link get} for triggering or awaiting the cache lookup
+ * @see {@link getOption} for reading an existing entry as an optional effect
+ *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const getSuccess: {
   <Key, A, R>(key: Key): <E>(self: Cache<Key, A, E, R>) => Effect.Effect<Option.Option<A>>
@@ -576,7 +653,8 @@ export const getSuccess: {
  * Sets the value associated with the specified key in the cache. This will
  * overwrite any existing value for that key, skipping the lookup function.
  *
- * @example
+ * **Example** (Setting values directly)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -593,7 +671,8 @@ export const getSuccess: {
  * })
  * ```
  *
- * @example
+ * **Example** (Overwriting cached values)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -615,7 +694,8 @@ export const getSuccess: {
  * })
  * ```
  *
- * @example
+ * **Example** (Applying TTL to set values)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  * import { TestClock } from "effect/testing"
@@ -638,7 +718,8 @@ export const getSuccess: {
  * })
  * ```
  *
- * @example
+ * **Example** (Enforcing capacity when setting values)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -662,8 +743,8 @@ export const getSuccess: {
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const set: {
   <Key, A>(key: Key, value: A): <E, R>(self: Cache<Key, A, E, R>) => Effect.Effect<void>
@@ -692,9 +773,15 @@ export const set: {
 )
 
 /**
- * Checks if the cache contains an entry for the specified key.
+ * Checks whether the cache contains an entry for the specified key.
  *
- * @example
+ * **Details**
+ *
+ * This checks for an existing non-expired entry without invoking the cache
+ * lookup function. Expired entries are treated as absent.
+ *
+ * **Example** (Checking for cached keys)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -713,7 +800,8 @@ export const set: {
  * })
  * ```
  *
- * @example
+ * **Example** (Checking TTL expiration)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  * import { TestClock } from "effect/testing"
@@ -740,7 +828,8 @@ export const set: {
  * })
  * ```
  *
- * @example
+ * **Example** (Checking multiple keys)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -769,8 +858,8 @@ export const set: {
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const has: {
   <Key, A>(key: Key): <E, R>(self: Cache<Key, A, E, R>) => Effect.Effect<boolean>
@@ -787,7 +876,8 @@ export const has: {
 /**
  * Invalidates the entry associated with the specified key in the cache.
  *
- * @example
+ * **Example** (Invalidating cached entries)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -825,8 +915,8 @@ export const has: {
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const invalidate: {
   <Key, A>(key: Key): <E, R>(self: Cache<Key, A, E, R>) => Effect.Effect<void>
@@ -837,10 +927,11 @@ export const invalidate: {
   }))
 
 /**
- * Conditionally invalidates the entry associated with the specified key in the cache
- * if the predicate returns true for the cached value.
+ * Invalidates the entry associated with the specified key in the cache when the
+ * predicate returns true for the cached value.
  *
- * @example
+ * **Example** (Invalidating entries conditionally)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -897,8 +988,8 @@ export const invalidate: {
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const invalidateWhen: {
   <Key, A>(key: Key, f: Predicate<A>): <E, R>(self: Cache<Key, A, E, R>) => Effect.Effect<boolean>
@@ -927,10 +1018,13 @@ export const invalidateWhen: {
 /**
  * Forces a refresh of the value associated with the specified key in the cache.
  *
+ * **Details**
+ *
  * It will always invoke the lookup function to construct a new value,
  * overwriting any existing value for that key.
  *
- * @example
+ * **Example** (Refreshing cached values)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -960,7 +1054,8 @@ export const invalidateWhen: {
  * })
  * ```
  *
- * @example
+ * **Example** (Resetting TTL on refresh)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  * import { TestClock } from "effect/testing"
@@ -988,7 +1083,8 @@ export const invalidateWhen: {
  * })
  * ```
  *
- * @example
+ * **Example** (Refreshing missing keys)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -1008,8 +1104,8 @@ export const invalidateWhen: {
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const refresh: {
   <Key, A>(key: Key): <E, R>(self: Cache<Key, A, E, R>) => Effect.Effect<A, E, R>
@@ -1049,7 +1145,8 @@ export const refresh: {
 /**
  * Invalidates all entries in the cache.
  *
- * @example
+ * **Example** (Invalidating all entries)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -1079,8 +1176,8 @@ export const refresh: {
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const invalidateAll = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<void> =>
   effect.sync(() => {
@@ -1090,11 +1187,14 @@ export const invalidateAll = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.E
 /**
  * Retrieves the approximate number of entries in the cache.
  *
+ * **Details**
+ *
  * Note that expired entries are counted until they are accessed and removed.
  * The size reflects the current number of entries stored, not the number
  * of valid entries.
  *
- * @example
+ * **Example** (Reading cache size)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -1121,8 +1221,8 @@ export const invalidateAll = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.E
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const size = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<number> =>
   effect.sync(() => MutableHashMap.size(self.map))
@@ -1130,7 +1230,8 @@ export const size = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<num
 /**
  * Retrieves all active keys from the cache, automatically filtering out expired entries.
  *
- * @example
+ * **Example** (Reading active keys)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -1149,12 +1250,12 @@ export const size = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<num
  *   // Retrieve all active keys
  *   const keys = yield* Cache.keys(cache)
  *
- *   console.log(Array.from(keys)) // ["hello", "world", "cache"]
+ *   console.log(Array.from(keys).sort()) // ["cache", "hello", "world"]
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const keys = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<Iterable<Key>> =>
   core.withFiber((fiber) => {
@@ -1172,7 +1273,8 @@ export const keys = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<Ite
  * Retrieves all successfully cached values from the cache, excluding failed
  * lookups and expired entries.
  *
- * @example
+ * **Example** (Reading all cached values)
+ *
  * ```ts
  * import { Cache, Effect } from "effect"
  *
@@ -1195,8 +1297,8 @@ export const keys = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<Ite
  * })
  * ```
  *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const values = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<Iterable<A>> =>
   effect.map(entries(self), Iterable.map(([, value]) => value))
@@ -1206,8 +1308,15 @@ export const values = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<I
  * only returns entries with successfully resolved values, filtering out any
  * failed lookups or expired entries.
  *
+ * **Gotchas**
+ *
+ * Expired entries are removed from the cache while `entries` filters them out.
+ *
+ * @see {@link keys} for retrieving only cached keys
+ * @see {@link values} for retrieving only cached values
+ *
+ * @category combinators
  * @since 4.0.0
- * @category Combinators
  */
 export const entries = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<Iterable<[Key, A]>> =>
   core.withFiber((fiber) => {
