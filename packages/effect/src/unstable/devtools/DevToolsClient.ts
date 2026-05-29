@@ -1,7 +1,39 @@
 /**
+ * Low-level devtools client and tracer wiring over the current `Socket`.
+ *
+ * `DevToolsClient` speaks the devtools NDJSON protocol used by the unstable
+ * devtools integration. It sends span starts, span events, span completions,
+ * ping messages, and metric snapshots through a socket, then exposes tracer
+ * layers that forward telemetry while preserving the current tracer's behavior.
+ *
+ * **Mental model**
+ *
+ * {@link make} creates the scoped client service over the provided `Socket`;
+ * {@link makeTracer} wraps the current tracer and sends each span update
+ * through that client; {@link layerTracer} combines both steps for integrations
+ * that already have a socket transport. The higher-level `DevTools` module
+ * provides WebSocket defaults for applications.
+ *
+ * **Common tasks**
+ *
+ * - Build the client service directly with {@link make} or {@link layer}
+ * - Install only the forwarding tracer with {@link makeTracer}
+ * - Create the client and tracer together with {@link layerTracer}
+ * - Send custom span or span-event messages through `DevToolsClient.sendUnsafe`
+ *
+ * **Gotchas**
+ *
+ * - The client is scoped because it starts background fibers for the socket
+ *   stream and heartbeat.
+ * - `sendUnsafe` enqueues telemetry without back pressure and should stay on
+ *   the tracer hot path.
+ * - This module does not create a socket transport; provide `Socket` yourself
+ *   or use the higher-level `DevTools` module.
+ *
  * @since 4.0.0
  */
 import * as Cause from "../../Cause.ts"
+import * as Context from "../../Context.ts"
 import * as Deferred from "../../Deferred.ts"
 import * as Effect from "../../Effect.ts"
 import * as Fiber from "../../Fiber.ts"
@@ -10,7 +42,6 @@ import * as Metric from "../../Metric.ts"
 import * as Queue from "../../Queue.ts"
 import * as Schema from "../../Schema.ts"
 import type * as Scope from "../../Scope.ts"
-import * as ServiceMap from "../../ServiceMap.ts"
 import * as Stream from "../../Stream.ts"
 import * as Tracer from "../../Tracer.ts"
 import * as Ndjson from "../encoding/Ndjson.ts"
@@ -21,10 +52,13 @@ const RequestSchema = Schema.toCodecJson(DevToolsSchema.Request)
 const ResponseSchema = Schema.toCodecJson(DevToolsSchema.Response)
 
 /**
+ * Service for sending span and span-event telemetry to the Effect devtools
+ * connection.
+ *
+ * @category services
  * @since 4.0.0
- * @category tags
  */
-export class DevToolsClient extends ServiceMap.Service<
+export class DevToolsClient extends Context.Service<
   DevToolsClient,
   {
     readonly sendUnsafe: (
@@ -35,7 +69,7 @@ export class DevToolsClient extends ServiceMap.Service<
 
 const makeEffect = Effect.gen(function*() {
   const socket = yield* Socket.Socket
-  const services = yield* Effect.services<never>()
+  const services = yield* Effect.context<never>()
   const requests = yield* Queue.unbounded<DevToolsSchema.Request>()
   const connected = yield* Deferred.make<void>()
 
@@ -96,15 +130,37 @@ const makeEffect = Effect.gen(function*() {
 })
 
 const toMetricsSnapshot = (
-  services: ServiceMap.ServiceMap<never>
+  context: Context.Context<never>
 ): DevToolsSchema.MetricsSnapshot => ({
   _tag: "MetricsSnapshot",
-  metrics: Metric.snapshotUnsafe(services)
+  metrics: Metric.snapshotUnsafe(context)
 })
 
 /**
- * @since 4.0.0
+ * Creates a devtools client over the current `Socket`, speaking the devtools
+ * NDJSON protocol, sending periodic pings, and responding to metrics snapshot
+ * requests.
+ *
+ * **When to use**
+ *
+ * Use when you already have a `Socket` and need the low-level `DevToolsClient`
+ * service to exchange devtools telemetry directly.
+ *
+ * **Details**
+ *
+ * The effect requires `Scope` because it starts background fibers for the socket
+ * stream and heartbeat.
+ *
+ * **Gotchas**
+ *
+ * `make` creates only the client service; tracing is installed separately.
+ *
+ * @see {@link layer} for providing the client as a layer
+ * @see {@link makeTracer} for creating a tracer after a `DevToolsClient` is available
+ * @see {@link layerTracer} for creating the client from the current `Socket` and installing the tracer as a layer
+ *
  * @category constructors
+ * @since 4.0.0
  */
 export const make: Effect.Effect<
   DevToolsClient["Service"],
@@ -118,8 +174,30 @@ export const make: Effect.Effect<
 )
 
 /**
- * @since 4.0.0
+ * Layer that provides `DevToolsClient` using the current `Socket`.
+ *
+ * **When to use**
+ *
+ * Use to provide the low-level `DevToolsClient` service over an existing
+ * `Socket` for custom devtools integrations that send telemetry through the
+ * client directly.
+ *
+ * **Details**
+ *
+ * It delegates to `make`, so it speaks the devtools NDJSON protocol over the
+ * provided `Socket`, sends periodic pings, responds to metrics snapshot
+ * requests, and finalizes its background fibers when the layer scope closes.
+ *
+ * **Gotchas**
+ *
+ * This layer only provides the client. It does not install the devtools tracer
+ * by itself.
+ *
+ * @see {@link make} for constructing the client as a scoped effect instead of a layer
+ * @see {@link layerTracer} for a higher-level layer that creates the client and installs the devtools tracer
+ *
  * @category layers
+ * @since 4.0.0
  */
 export const layer: Layer.Layer<DevToolsClient, never, Socket.Socket> = Layer.effect(DevToolsClient, make)
 
@@ -157,8 +235,11 @@ const makeTracerEffect = Effect.gen(function*() {
 })
 
 /**
- * @since 4.0.0
+ * Creates a tracer that delegates to the current tracer while sending span
+ * starts, span events, and span ends to `DevToolsClient`.
+ *
  * @category constructors
+ * @since 4.0.0
  */
 export const makeTracer: Effect.Effect<Tracer.Tracer, never, DevToolsClient> = makeTracerEffect.pipe(
   Effect.annotateLogs({
@@ -168,8 +249,11 @@ export const makeTracer: Effect.Effect<Tracer.Tracer, never, DevToolsClient> = m
 )
 
 /**
- * @since 4.0.0
+ * Layer that creates a `DevToolsClient` from the current `Socket` and installs
+ * the devtools tracer.
+ *
  * @category layers
+ * @since 4.0.0
  */
 export const layerTracer: Layer.Layer<never, never, Socket.Socket> = Layer.effect(Tracer.Tracer, makeTracer).pipe(
   Layer.provide(layer)

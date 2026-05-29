@@ -339,7 +339,7 @@ describe("toCodecAnthropic", () => {
       await decoding.succeed({ "0": "a", "1": 1 }, ["a", 1])
     })
 
-    it("Tuple([String, Finite]) + description", async () => {
+    it("Tuple([String, Finite]) + description", () => {
       const schema = Schema.Tuple([Schema.String, Schema.Finite]).annotate({ description: "description" })
       assertJsonSchema(schema, {
         "type": "object",
@@ -464,8 +464,33 @@ describe("toCodecAnthropic", () => {
     })
   })
 
+  it("Class", () => {
+    class Person extends Schema.Class<Person>("Person")({
+      name: Schema.String
+    }) {}
+
+    assertJsonSchema(Person, {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"],
+      "additionalProperties": false,
+      "$defs": {
+        "Person": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" }
+          },
+          "required": ["name"],
+          "additionalProperties": false
+        }
+      }
+    })
+  })
+
   describe("Record", () => {
-    it("EmptyParams", async () => {
+    it("EmptyParams", () => {
       assertJsonSchema(Tool.EmptyParams, {
         "type": "object",
         "additionalProperties": false

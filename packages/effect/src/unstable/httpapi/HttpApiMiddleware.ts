@@ -1,12 +1,63 @@
 /**
+ * The `HttpApiMiddleware` module defines middleware service keys for
+ * declarative HTTP APIs. Middleware wraps endpoint execution on the server and,
+ * when required by an API, can also wrap requests made by generated clients.
+ *
+ * Middleware is where you put cross-cutting behavior that belongs to the API
+ * contract: authentication, authorization, request logging, tracing, rate
+ * limiting, request-scoped services, schema-error normalization, and client
+ * request decoration.
+ *
+ * **Mental model**
+ *
+ * - A middleware is declared with {@link Service}; the declaration is both a
+ *   `Context.Service` key and a typed description of the middleware contract.
+ * - Server implementations receive the endpoint response effect plus endpoint
+ *   and group metadata. Security middleware also receives decoded credentials
+ *   from the configured `HttpApiSecurity` scheme.
+ * - The service metadata records provided services, required services, declared
+ *   error schemas, client error types, security schemes, and whether generated
+ *   clients must install a matching client middleware.
+ * - Client middleware is published through the {@link ForClient} marker by
+ *   {@link layerClient} and participates in the generated client's request
+ *   pipeline.
+ *
+ * **Common tasks**
+ *
+ * - Declare middleware services with {@link Service}.
+ * - Detect security middleware with {@link isSecurity}.
+ * - Convert `HttpApiSchemaError` failures into declared API errors with
+ *   {@link layerSchemaErrorTransform}.
+ * - Install a generated-client middleware with {@link layerClient}.
+ *
+ * **Gotchas**
+ *
+ * - Middleware error declarations must be `Schema` values, or arrays of
+ *   `Schema` values, because builders and clients encode and decode them as
+ *   part of the endpoint error surface.
+ * - A security middleware must declare at least one security scheme. Ordinary
+ *   middleware does not receive credentials.
+ * - A schema-error transform must fail with an error covered by the middleware's
+ *   declared error schema.
+ * - `requiredForClient` adds a client-side requirement. Provide it with
+ *   {@link layerClient}; the layer captures its surrounding context.
+ *
+ * **See also**
+ *
+ * - {@link Service} for declaring middleware service keys.
+ * - {@link layerSchemaErrorTransform} for mapping schema failures.
+ * - {@link layerClient} for generated-client middleware.
+ *
  * @since 4.0.0
  */
+/** @effect-diagnostics floatingEffect:skip-file */
+/** @effect-diagnostics classSelfMismatch:off */
+import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
 import * as Layer from "../../Layer.ts"
 import { hasProperty } from "../../Predicate.ts"
-import * as Schema from "../../Schema.ts"
+import type * as Schema from "../../Schema.ts"
 import { Scope } from "../../Scope.ts"
-import * as ServiceMap from "../../ServiceMap.ts"
 import type { unhandled } from "../../Types.ts"
 import type * as HttpClientError from "../http/HttpClientError.ts"
 import type * as HttpClientRequest from "../http/HttpClientRequest.ts"
@@ -14,6 +65,7 @@ import type * as HttpClientResponse from "../http/HttpClientResponse.ts"
 import type * as HttpRouter from "../http/HttpRouter.ts"
 import type { HttpServerResponse } from "../http/HttpServerResponse.ts"
 import type * as HttpApiEndpoint from "./HttpApiEndpoint.ts"
+import { HttpApiSchemaError } from "./HttpApiError.ts"
 import type * as HttpApiGroup from "./HttpApiGroup.ts"
 import type * as HttpApiSecurity from "./HttpApiSecurity.ts"
 
@@ -22,8 +74,10 @@ const TypeId = "~effect/httpapi/HttpApiMiddleware"
 const SecurityTypeId = "~effect/httpapi/HttpApiMiddleware/Security"
 
 /**
- * @since 4.0.0
+ * Returns `true` when an HTTP API middleware service is security middleware.
+ *
  * @category guards
+ * @since 4.0.0
  */
 export const isSecurity = (u: AnyService): u is AnyServiceSecurity => hasProperty(u, SecurityTypeId)
 
@@ -34,8 +88,16 @@ type ErrorSchemaFromConstraint<E> = E extends ReadonlyArray<Schema.Top> ? E[numb
   : never
 
 /**
- * @since 4.0.0
+ * Server-side middleware function for an HTTP API endpoint.
+ *
+ * **Details**
+ *
+ * It receives the endpoint response effect and endpoint/group metadata, and returns
+ * a new response effect that may require additional services and fail with the
+ * middleware's declared error schema.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type HttpApiMiddleware<Provides, E extends ErrorConstraint, Requires> = (
   httpEffect: Effect.Effect<HttpServerResponse, unhandled, Provides>,
@@ -46,8 +108,15 @@ export type HttpApiMiddleware<Provides, E extends ErrorConstraint, Requires> = (
 ) => Effect.Effect<HttpServerResponse, unhandled | ErrorSchemaFromConstraint<E>["Type"], Requires | HttpRouter.Provided>
 
 /**
- * @since 4.0.0
+ * Server-side middleware implementations for one or more security schemes.
+ *
+ * **Details**
+ *
+ * Each property handles the credential decoded for that scheme and wraps the
+ * endpoint response effect with the middleware's declared requirements and errors.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type HttpApiMiddlewareSecurity<
   Security extends Record<string, HttpApiSecurity.HttpApiSecurity>,
@@ -70,8 +139,15 @@ export type HttpApiMiddlewareSecurity<
 }
 
 /**
- * @since 4.0.0
+ * Client-side middleware function for generated HTTP API clients.
+ *
+ * **Details**
+ *
+ * It receives endpoint/group metadata, the outgoing request, and a `next` function
+ * for continuing the request pipeline.
+ *
  * @category models
+ * @since 4.0.0
  */
 export interface HttpApiMiddlewareClient<_E, CE, R> {
   (options: {
@@ -85,8 +161,10 @@ export interface HttpApiMiddlewareClient<_E, CE, R> {
 }
 
 /**
- * @since 4.0.0
+ * Client-side service marker required when a middleware declares `requiredForClient`.
+ *
  * @category models
+ * @since 4.0.0
  */
 export interface ForClient<Id> {
   readonly _: unique symbol
@@ -94,10 +172,12 @@ export interface ForClient<Id> {
 }
 
 /**
- * @since 4.0.0
+ * Base service key shape for HTTP API middleware services, including provided services, declared error schemas, and client requirements.
+ *
  * @category models
+ * @since 4.0.0
  */
-export interface AnyService extends ServiceMap.Key<any, any> {
+export interface AnyService extends Context.Key<any, any> {
   readonly [TypeId]: typeof TypeId
   readonly provides: any
   readonly error: ReadonlySet<Schema.Top>
@@ -106,8 +186,10 @@ export interface AnyService extends ServiceMap.Key<any, any> {
 }
 
 /**
- * @since 4.0.0
+ * Middleware service key shape for security middleware, including the security schemes handled by the service.
+ *
  * @category models
+ * @since 4.0.0
  */
 export interface AnyServiceSecurity extends AnyService {
   readonly [SecurityTypeId]: typeof SecurityTypeId
@@ -115,8 +197,10 @@ export interface AnyServiceSecurity extends AnyService {
 }
 
 /**
- * @since 4.0.0
+ * Type-level identifier carried by middleware services to track provided services, required services, errors, client errors, and client requirements.
+ *
  * @category models
+ * @since 4.0.0
  */
 export interface AnyId {
   readonly [TypeId]: {
@@ -129,39 +213,51 @@ export interface AnyId {
 }
 
 /**
- * @since 4.0.0
+ * Extracts the services provided by a middleware identifier.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type Provides<A> = A extends { readonly [TypeId]: { readonly provides: infer P } } ? P : never
 
 /**
- * @since 4.0.0
+ * Extracts the services required to run a middleware implementation.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type Requires<A> = A extends { readonly [TypeId]: { readonly requires: infer R } } ? R : never
 
 /**
- * @since 4.0.0
+ * Applies a middleware's service changes to an existing requirement type by removing services it provides and adding services it requires.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type ApplyServices<A extends AnyId, R> = Exclude<R, Provides<A>> | Requires<A>
 
 /**
- * @since 4.0.0
+ * Extracts the schema or schema union used for errors declared by a middleware identifier.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type ErrorSchema<A> = A extends { readonly [TypeId]: { readonly error: infer E } } ? ErrorSchemaFromConstraint<E>
   : never
 
 /**
- * @since 4.0.0
+ * Extracts the decoded error type declared by a middleware identifier.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type Error<A> = ErrorSchema<A>["Type"]
 
 /**
- * @since 4.0.0
+ * Extracts the client-side error type for middleware that is required on generated clients.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type ClientError<A> = A extends {
   readonly [TypeId]: {
@@ -172,8 +268,10 @@ export type ClientError<A> = A extends {
   : never
 
 /**
- * @since 4.0.0
+ * Computes the client-side service marker required for middleware that must also run in generated clients.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type MiddlewareClient<A> = A extends {
   readonly [TypeId]: {
@@ -183,20 +281,31 @@ export type MiddlewareClient<A> = A extends {
   : never
 
 /**
- * @since 4.0.0
+ * Extracts the schema services required to encode errors declared by a middleware identifier.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type ErrorServicesEncode<A> = ErrorSchema<A>["EncodingServices"]
 
 /**
- * @since 4.0.0
+ * Extracts the schema services required to decode errors declared by a middleware identifier.
+ *
  * @category models
+ * @since 4.0.0
  */
 export type ErrorServicesDecode<A> = ErrorSchema<A>["DecodingServices"]
 
 /**
+ * Class type produced by `Service` for an HTTP API middleware service.
+ *
+ * **Details**
+ *
+ * It combines a `Context.Service` class with the middleware metadata used by
+ * endpoints, builders, and generated clients.
+ *
+ * @category schemas
  * @since 4.0.0
- * @category Schemas
  */
 export type ServiceClass<
   Self,
@@ -213,9 +322,9 @@ export type ServiceClass<
     ([Config["security"]] extends [never] ? HttpApiMiddleware<Config["provides"], Config["error"], Config["requires"]>
       : HttpApiMiddlewareSecurity<Config["security"], Config["provides"], Config["error"], Config["requires"]>)
 > =
-  & ServiceMap.Service<Self, Service>
+  & Context.Service<Self, Service>
   & {
-    new(_: never): ServiceMap.ServiceClass.Shape<Id, Service> & {
+    new(_: never): Context.ServiceClass.Shape<Id, Service> & {
       readonly [TypeId]: {
         readonly error: Config["error"]
         readonly requires: Config["requires"]
@@ -235,8 +344,16 @@ export type ServiceClass<
   })
 
 /**
+ * Creates a `Context.Service` class for an HTTP API middleware implementation.
+ *
+ * **When to use**
+ *
+ * Use when you use the optional configuration to declare required services, provided services,
+ * typed error schemas, security schemes, client errors, and whether generated
+ * clients must provide a matching client middleware.
+ *
+ * @category schemas
  * @since 4.0.0
- * @category Schemas
  */
 export const Service = <
   Self,
@@ -279,7 +396,7 @@ export const Service = <
   const creationError = new Err()
   Err.stackTraceLimit = limit
 
-  class Service extends ServiceMap.Service<Self, any>()(id) {}
+  class Service extends Context.Service<Self, any>()(id) {}
   const self = Service as any
   Object.defineProperty(Service, "stack", {
     get() {
@@ -305,7 +422,15 @@ function getError(error: ErrorConstraint | undefined): ReadonlySet<Schema.Top> {
 }
 
 /**
- * Implement a middleware Layer that transforms `SchemaError`'s.
+ * Creates a middleware layer that transforms `HttpApiSchemaError` failures.
+ *
+ * **Details**
+ *
+ * The middleware catches schema errors produced while running an endpoint and uses
+ * the supplied `transform` function to convert them into the middleware's declared
+ * error schema.
+ *
+ * **Example** (Mapping schema errors to custom errors)
  *
  * ```ts
  * import { Effect, Schema } from "effect"
@@ -326,17 +451,17 @@ function getError(error: ErrorConstraint | undefined): ReadonlySet<Schema.Top> {
  * )
  * ```
  *
- * @since 4.0.0
  * @category SchemaError transform
+ * @since 4.0.0
  */
 export const layerSchemaErrorTransform = <Id, E extends ErrorConstraint, Requires>(
-  service: ServiceMap.Service<Id, HttpApiMiddleware<never, E, Requires>>,
+  service: Context.Service<Id, HttpApiMiddleware<never, E, Requires>>,
   transform: (
-    error: Schema.SchemaError,
+    error: HttpApiSchemaError,
     context: { readonly endpoint: HttpApiEndpoint.AnyWithProps; readonly group: HttpApiGroup.AnyWithProps }
   ) => Effect.Effect<
     HttpServerResponse,
-    ErrorSchemaFromConstraint<E>["Type"] | Schema.SchemaError,
+    ErrorSchemaFromConstraint<E>["Type"] | HttpApiSchemaError,
     Requires | HttpRouter.Provided
   >
 ): Layer.Layer<Id> =>
@@ -347,18 +472,25 @@ export const layerSchemaErrorTransform = <Id, E extends ErrorConstraint, Require
         httpEffect,
         (e): Effect.Effect<
           HttpServerResponse,
-          unhandled | Schema.SchemaError | ErrorSchemaFromConstraint<E>["Type"],
+          unhandled | HttpApiSchemaError | ErrorSchemaFromConstraint<E>["Type"],
           Requires | HttpRouter.Provided
-        > => Schema.isSchemaError(e) ? transform(e, options) : Effect.fail(e)
+        > => HttpApiSchemaError.is(e) ? transform(e, options) : Effect.fail(e)
       )
   )
 
 /**
- * @since 4.0.0
+ * Provides a client-side middleware implementation for a middleware that is required by generated clients.
+ *
+ * **Details**
+ *
+ * The layer captures the surrounding services and makes the middleware available
+ * through the `ForClient` service marker used by HTTP API clients.
+ *
  * @category client
+ * @since 4.0.0
  */
 export const layerClient = <Id extends AnyId, S, R, EX = never, RX = never>(
-  tag: ServiceMap.Key<Id, S>,
+  tag: Context.Key<Id, S>,
   service:
     | HttpApiMiddlewareClient<Error<Id>, Id[typeof TypeId]["clientError"], R>
     | Effect.Effect<
@@ -367,18 +499,18 @@ export const layerClient = <Id extends AnyId, S, R, EX = never, RX = never>(
       RX
     >
 ): Layer.Layer<ForClient<Id>, EX, R | Exclude<RX, Scope>> =>
-  Layer.effectServices(Effect.gen(function*() {
-    const services = (yield* Effect.services<R | Scope>()).pipe(
-      ServiceMap.omit(Scope)
-    ) as ServiceMap.ServiceMap<R>
+  Layer.effectContext(Effect.gen(function*() {
+    const services = (yield* Effect.context<R | Scope>()).pipe(
+      Context.omit(Scope)
+    ) as Context.Context<R>
     const middleware = Effect.isEffect(service) ? yield* service : service
-    return ServiceMap.makeUnsafe(
+    return Context.makeUnsafe(
       new Map([[
         `${tag.key}/Client`,
         (options: any) =>
-          Effect.updateServices(
+          Effect.updateContext(
             middleware(options),
-            (requestContext) => ServiceMap.merge(services, requestContext)
+            (requestContext) => Context.merge(services, requestContext)
           )
       ]])
     )

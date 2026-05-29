@@ -1,7 +1,8 @@
-import { assert, describe, it } from "@effect/vitest"
+import { assert, describe, it, vi } from "@effect/vitest"
 import { assertExitFailure } from "@effect/vitest/utils"
 import {
   Cause,
+  Context,
   Data,
   Deferred,
   Duration,
@@ -17,14 +18,13 @@ import {
   Result,
   Schedule,
   Scope,
-  ServiceMap,
   TxRef
 } from "effect"
 import { constFalse, constTrue, pipe } from "effect/Function"
 import { TestClock } from "effect/testing"
 import { assertCauseFail } from "./utils/assert.ts"
 
-class ATag extends ServiceMap.Service<ATag, "A">()("ATag") {}
+class ATag extends Context.Service<ATag, "A">()("ATag") {}
 
 describe("Effect", () => {
   it("isEffect", () => {
@@ -40,6 +40,7 @@ describe("Effect", () => {
       assert.notDeepEqual(Effect.succeed(0), Effect.succeed(1))
     })
   })
+
   describe("tracing", () => {
     it.effect("failCause captures stack frame", () =>
       Effect.gen(function*() {
@@ -49,7 +50,7 @@ describe("Effect", () => {
           Effect.flip
         )
         const annotations = Cause.annotations(cause)
-        const trace = ServiceMap.getUnsafe(annotations, Cause.StackTrace)
+        const trace = Context.getUnsafe(annotations, Cause.StackTrace)
         assert.strictEqual(trace.name, "test span")
       }))
   })
@@ -69,6 +70,7 @@ describe("Effect", () => {
     assert.strictEqual(isSync, 1)
     assert.strictEqual(isAsync, 2)
   })
+
   it("runPromise", async () => {
     const result = await Effect.runPromise(Effect.succeed(1))
     assert.strictEqual(result, 1)
@@ -129,8 +131,8 @@ describe("Effect", () => {
     assert.isTrue(release)
   })
 
-  it("ServiceMap.Service", () =>
-    ATag.asEffect().pipe(
+  it("Context.Service", () =>
+    ATag.pipe(
       Effect.tap((_) => Effect.sync(() => assert.strictEqual(_, "A"))),
       Effect.provideService(ATag, "A"),
       Effect.runPromise
@@ -138,28 +140,19 @@ describe("Effect", () => {
 
   describe("fromOption", () => {
     it("from a some", () =>
-      Option.some("A").asEffect().pipe(
+      Option.some("A").pipe(
+        Effect.fromOption,
         Effect.tap((_) => Effect.sync(() => assert.strictEqual(_, "A"))),
         Effect.runPromise
       ))
 
     it("from a none", () =>
-      Option.none().asEffect().pipe(
+      Option.none().pipe(
+        Effect.fromOption,
         Effect.flip,
         Effect.tap((error) => Effect.sync(() => assert.ok(error instanceof Cause.NoSuchElementError))),
         Effect.runPromise
       ))
-
-    it.effect("yieldable", () =>
-      Effect.gen(function*() {
-        const result = yield* Option.some("A")
-        assert.strictEqual(result, "A")
-
-        const error = yield* Effect.gen(function*() {
-          yield* Option.none()
-        }).pipe(Effect.flip)
-        assert.deepStrictEqual(error, new Cause.NoSuchElementError())
-      }))
   })
 
   describe("fromResult", () => {
@@ -171,22 +164,12 @@ describe("Effect", () => {
       ))
 
     it("from a failure", () =>
-      Result.fail("error").asEffect().pipe(
+      Result.fail("error").pipe(
+        Effect.fromResult,
         Effect.flip,
         Effect.tap((error) => Effect.sync(() => assert.strictEqual(error, "error"))),
         Effect.runPromise
       ))
-
-    it.effect("yieldable", () =>
-      Effect.gen(function*() {
-        const result = yield* Result.succeed("A")
-        assert.strictEqual(result, "A")
-
-        const error = yield* Effect.gen(function*() {
-          yield* Result.fail("error")
-        }).pipe(Effect.flip)
-        assert.strictEqual(error, "error")
-      }))
   })
 
   describe("gen", () => {
@@ -302,6 +285,7 @@ describe("Effect", () => {
         const results = yield* Effect.forEach([], (_) => Effect.succeed(_))
         assert.deepStrictEqual(results, [])
       }).pipe(Effect.runPromise))
+
     it("string", () =>
       Effect.gen(function*() {
         const results = yield* Effect.forEach("abc", (_) => Effect.succeed(_))
@@ -539,6 +523,26 @@ describe("Effect", () => {
       }))
   })
 
+  describe("acquireDisposable", () => {
+    it.effect("releases disposables", ({ expect }) =>
+      Effect.gen(function*() {
+        const acquire = Effect.sync((): Disposable => ({ [Symbol.dispose]: release }))
+        const release = vi.fn(() => void 0)
+
+        yield* Effect.scoped(Effect.acquireDisposable(acquire))
+        expect(release).toHaveBeenCalledTimes(1)
+      }))
+
+    it.effect("releases async disposables", ({ expect }) =>
+      Effect.gen(function*() {
+        const acquire = Effect.sync((): AsyncDisposable => ({ [Symbol.asyncDispose]: release }))
+        const release = vi.fn(async () => void 0)
+
+        yield* Effect.scoped(Effect.acquireDisposable(acquire))
+        expect(release).toHaveBeenCalledTimes(1)
+      }))
+  })
+
   describe("acquireRelease", () => {
     it("releases on interrupt", () =>
       Effect.gen(function*() {
@@ -733,7 +737,7 @@ describe("Effect", () => {
           until: (n) => n === 3
         })
         assert.strictEqual(n, 3)
-        assert.strictEqual(result, 2) // schedule result
+        assert.strictEqual(result, 3)
       }))
 
     it.effect("repeat/schedule - with while", () =>
@@ -745,7 +749,7 @@ describe("Effect", () => {
           while: (n) => n < 3
         })
         assert.strictEqual(n, 3)
-        assert.strictEqual(result, 2) // schedule result
+        assert.strictEqual(result, 3) // schedule result
       }))
   })
 
@@ -2165,6 +2169,50 @@ describe("Effect", () => {
       }))
   })
 
+  describe("firstSuccessOf", () => {
+    it.effect("returns the first success and does not run later effects", () =>
+      Effect.gen(function*() {
+        const executed: Array<string> = []
+        const result = yield* Effect.firstSuccessOf([
+          Effect.sync(() => executed.push("first")).pipe(
+            Effect.flatMap(() => Effect.fail("e1" as const))
+          ),
+          Effect.sync(() => executed.push("second")).pipe(
+            Effect.as("success" as const)
+          ),
+          Effect.sync(() => executed.push("third")).pipe(
+            Effect.as("unreachable" as const)
+          )
+        ])
+
+        assert.strictEqual(result, "success")
+        assert.deepStrictEqual(executed, ["first", "second"])
+      }))
+
+    it.effect("fails with the last failure when all effects fail", () =>
+      Effect.gen(function*() {
+        const result = yield* Effect.firstSuccessOf([
+          Effect.fail("e1" as const),
+          Effect.fail("e2" as const),
+          Effect.fail("e3" as const)
+        ]).pipe(Effect.flip)
+
+        assert.strictEqual(result, "e3")
+      }))
+
+    it.effect("defects on an empty collection", () =>
+      Effect.gen(function*() {
+        const result = yield* Effect.firstSuccessOf([]).pipe(Effect.sandbox, Effect.flip)
+        const reason = result.reasons[0]
+
+        assert.isTrue(Cause.isDieReason(reason))
+        if (Cause.isDieReason(reason)) {
+          assert.instanceOf(reason.defect, Error)
+          assert.strictEqual(reason.defect.message, "Received an empty collection of effects")
+        }
+      }))
+  })
+
   describe("catchCause", () => {
     it.effect("first argument as success", () =>
       Effect.gen(function*() {
@@ -2180,100 +2228,102 @@ describe("Effect", () => {
       }))
   })
 
-  describe("transaction (isolated transactions)", () => {
-    describe("basic isolation", () => {
-      it.effect("should create isolated transaction boundaries", () =>
+  describe("transaction (composable transactions)", () => {
+    describe("basic behavior", () => {
+      it.effect("should create transaction boundaries when no transaction is active", () =>
         Effect.gen(function*() {
           const ref1 = TxRef.makeUnsafe(0)
           const ref2 = TxRef.makeUnsafe(100)
 
-          // Each Effect.transaction creates an isolated boundary
-          yield* Effect.transaction(TxRef.set(ref1, 10))
+          yield* Effect.tx(TxRef.set(ref1, 10))
 
-          // Another isolated transaction
-          yield* Effect.transaction(TxRef.set(ref2, 200))
+          yield* Effect.tx(TxRef.set(ref2, 200))
 
-          const val1 = yield* Effect.transaction(TxRef.get(ref1))
-          const val2 = yield* Effect.transaction(TxRef.get(ref2))
+          const val1 = yield* Effect.tx(TxRef.get(ref1))
+          const val2 = yield* Effect.tx(TxRef.get(ref2))
 
           assert.strictEqual(val1, 10)
           assert.strictEqual(val2, 200)
         }))
 
-      it.effect("should isolate failures between parent and child transactions", () =>
+      it.effect("should allow TxRef.modify outside an existing transaction", () =>
+        Effect.gen(function*() {
+          const ref = TxRef.makeUnsafe(0)
+
+          const result = yield* TxRef.modify(ref, (current) => [current + 1, current + 10])
+          const value = yield* Effect.tx(TxRef.get(ref))
+
+          assert.strictEqual(result, 1)
+          assert.strictEqual(value, 10)
+        }))
+
+      it.effect("should roll back nested changes when the outer transaction fails", () =>
         Effect.gen(function*() {
           const ref1 = TxRef.makeUnsafe(0)
           const ref2 = TxRef.makeUnsafe(100)
 
-          // Parent transaction that will fail
-          const parentError = yield* Effect.transaction(Effect.gen(function*() {
+          const parentError = yield* Effect.tx(Effect.gen(function*() {
             yield* TxRef.set(ref1, 10)
 
-            // Child isolated transaction should commit independently
-            yield* Effect.transaction(TxRef.set(ref2, 200))
+            yield* Effect.tx(TxRef.set(ref2, 200))
 
-            // This will cause parent transaction to fail
             return yield* Effect.fail("parent failed")
           })).pipe(Effect.flip)
 
-          const val1 = yield* Effect.transaction(TxRef.get(ref1))
-          const val2 = yield* Effect.transaction(TxRef.get(ref2))
+          const val1 = yield* Effect.tx(TxRef.get(ref1))
+          const val2 = yield* Effect.tx(TxRef.get(ref2))
 
           assert.strictEqual(parentError, "parent failed")
-          assert.strictEqual(val1, 0) // Parent transaction rolled back
-          assert.strictEqual(val2, 200) // Child transaction committed independently
+          assert.strictEqual(val1, 0)
+          assert.strictEqual(val2, 100)
         }))
 
-      it.effect("should isolate failures from child to parent transactions", () =>
+      it.effect("should allow catching nested failures in the same transaction", () =>
         Effect.gen(function*() {
           const ref1 = TxRef.makeUnsafe(0)
           const ref2 = TxRef.makeUnsafe(100)
 
-          // Parent transaction should succeed
-          yield* Effect.transaction(Effect.gen(function*() {
+          yield* Effect.tx(Effect.gen(function*() {
             yield* TxRef.set(ref1, 10)
 
-            // Child isolated transaction that fails
-            const childResult = yield* Effect.transaction(Effect.gen(function*() {
+            const childResult = yield* Effect.tx(Effect.gen(function*() {
               yield* TxRef.set(ref2, 200)
               return yield* Effect.fail("child failed")
             })).pipe(Effect.result)
 
-            // Parent continues despite child failure
             yield* TxRef.set(ref1, 20)
 
-            // Verify child failed
             assert.strictEqual(Result.isFailure(childResult), true)
           }))
 
-          const val1 = yield* Effect.transaction(TxRef.get(ref1))
-          const val2 = yield* Effect.transaction(TxRef.get(ref2))
+          const val1 = yield* Effect.tx(TxRef.get(ref1))
+          const val2 = yield* Effect.tx(TxRef.get(ref2))
 
-          assert.strictEqual(val1, 20) // Parent transaction committed
-          assert.strictEqual(val2, 100) // Child transaction rolled back
+          assert.strictEqual(val1, 20)
+          assert.strictEqual(val2, 200)
         }))
     })
 
     describe("transaction nesting", () => {
-      it.effect("should handle multiple levels of nested isolated transactions", () =>
+      it.effect("should handle multiple levels of nested composed transactions", () =>
         Effect.gen(function*() {
           const ref1 = TxRef.makeUnsafe(0)
           const ref2 = TxRef.makeUnsafe(0)
           const ref3 = TxRef.makeUnsafe(0)
 
-          yield* Effect.transaction(Effect.gen(function*() {
+          yield* Effect.tx(Effect.gen(function*() {
             yield* TxRef.set(ref1, 1)
 
-            yield* Effect.transaction(Effect.gen(function*() {
+            yield* Effect.tx(Effect.gen(function*() {
               yield* TxRef.set(ref2, 2)
 
-              yield* Effect.transaction(TxRef.set(ref3, 3))
+              yield* Effect.tx(TxRef.set(ref3, 3))
             }))
           }))
 
-          const val1 = yield* Effect.transaction(TxRef.get(ref1))
-          const val2 = yield* Effect.transaction(TxRef.get(ref2))
-          const val3 = yield* Effect.transaction(TxRef.get(ref3))
+          const val1 = yield* Effect.tx(TxRef.get(ref1))
+          const val2 = yield* Effect.tx(TxRef.get(ref2))
+          const val3 = yield* Effect.tx(TxRef.get(ref3))
 
           assert.strictEqual(val1, 1)
           assert.strictEqual(val2, 2)
@@ -2281,112 +2331,62 @@ describe("Effect", () => {
         }))
     })
 
-    describe("transactionWith function", () => {
-      it.effect("should provide isolated transaction state", () =>
-        Effect.gen(function*() {
-          const ref = TxRef.makeUnsafe(0)
-
-          const result = yield* Effect.transactionWith((txState) =>
-            Effect.gen(function*() {
-              // Transaction state should be isolated
-              const initialJournalSize = txState.journal.size
-
-              yield* TxRef.set(ref, 42)
-
-              // Journal should now have one entry
-              const finalJournalSize = txState.journal.size
-              const value = yield* TxRef.get(ref)
-
-              return {
-                value,
-                initialJournalSize,
-                finalJournalSize,
-                retry: txState.retry
-              }
-            })
-          )
-
-          assert.strictEqual(result.value, 42)
-          assert.strictEqual(result.initialJournalSize, 0)
-          assert.strictEqual(result.finalJournalSize, 1)
-          assert.strictEqual(result.retry, false)
-        }))
-
-      it.effect("should maintain isolation when nested in transaction blocks", () =>
+    describe("transaction composition behavior", () => {
+      it.effect("should compose nested tx calls into the same transaction", () =>
         Effect.gen(function*() {
           const ref1 = TxRef.makeUnsafe(0)
           const ref2 = TxRef.makeUnsafe(0)
 
-          yield* Effect.transaction(Effect.gen(function*() {
+          yield* Effect.tx(Effect.gen(function*() {
             yield* TxRef.set(ref1, 10)
 
-            // This should run in its own isolated transaction
-            const isolatedResult = yield* Effect.transactionWith((txState) =>
-              Effect.gen(function*() {
-                // Should start with empty journal despite parent transaction
-                const journalSize = txState.journal.size
-                yield* TxRef.set(ref2, 20)
-                return { journalSize }
-              })
-            )
-
-            // Verify journal was isolated
-            assert.strictEqual(isolatedResult.journalSize, 0)
+            yield* Effect.tx(TxRef.set(ref2, 20))
           }))
 
-          const val1 = yield* Effect.transaction(TxRef.get(ref1))
-          const val2 = yield* Effect.transaction(TxRef.get(ref2))
+          const val1 = yield* Effect.tx(TxRef.get(ref1))
+          const val2 = yield* Effect.tx(TxRef.get(ref2))
 
           assert.strictEqual(val1, 10)
           assert.strictEqual(val2, 20)
         }))
-    })
 
-    describe("transaction isolation behavior", () => {
-      it.effect("should rollback entire transaction on failure", () =>
+      it.effect("should rollback the entire composed transaction on failure", () =>
         Effect.gen(function*() {
           const ref = TxRef.makeUnsafe(0)
 
-          // Transaction failure rolls back all changes
-          const txError = yield* Effect.transaction(Effect.gen(function*() {
+          const txError = yield* Effect.tx(Effect.gen(function*() {
             yield* TxRef.set(ref, 10)
 
-            // Nested transaction fails independently
-            return yield* Effect.transaction(Effect.gen(function*() {
+            return yield* Effect.tx(Effect.gen(function*() {
               yield* TxRef.set(ref, 20)
               return yield* Effect.fail("nested failure")
             }))
           })).pipe(Effect.flip)
 
-          const valueAfterFailure = yield* Effect.transaction(TxRef.get(ref))
+          const valueAfterFailure = yield* Effect.tx(TxRef.get(ref))
 
           assert.strictEqual(txError, "nested failure")
-          // Outer transaction rolled back because the nested failure propagated
           assert.strictEqual(valueAfterFailure, 0)
         }))
 
-      it.effect("should isolate nested transaction failure when caught", () =>
+      it.effect("should preserve nested writes when nested failure is caught", () =>
         Effect.gen(function*() {
           const ref = TxRef.makeUnsafe(0)
 
-          // Parent transaction succeeds, child failure is caught
-          yield* Effect.transaction(Effect.gen(function*() {
+          yield* Effect.tx(Effect.gen(function*() {
             yield* TxRef.set(ref, 10)
 
-            // This isolated transaction fails but doesn't affect parent
-            const childError = yield* Effect.transaction(Effect.gen(function*() {
+            const childError = yield* Effect.tx(Effect.gen(function*() {
               yield* TxRef.set(ref, 20)
               return yield* Effect.fail("transaction nested failure")
             })).pipe(Effect.flip)
 
-            // Verify child failed
             assert.strictEqual(childError, "transaction nested failure")
           }))
 
-          const transactionValue = yield* Effect.transaction(TxRef.get(ref))
+          const transactionValue = yield* Effect.tx(TxRef.get(ref))
 
-          // Parent committed despite nested failure (which was caught)
-          assert.strictEqual(transactionValue, 10)
+          assert.strictEqual(transactionValue, 20)
         }))
     })
   })
@@ -2635,7 +2635,7 @@ describe("Effect", () => {
   })
 
   describe("provide", () => {
-    class MyNumber extends ServiceMap.Service<MyNumber, number>()("MyNumber") {}
+    class MyNumber extends Context.Service<MyNumber, number>()("MyNumber") {}
 
     it.effect("subsequent calls share MemoMap", () =>
       Effect.gen(function*() {
@@ -2645,7 +2645,7 @@ describe("Effect", () => {
           return 42
         })
 
-        // @effect-diagnostics-next-line multipleEffectProvide:off
+        // @effect-diagnostics multipleEffectProvide:off
         yield* Effect.void.pipe(
           Effect.provide(layer, { local: true }), // local always builds the layer
           Effect.provide(layer),

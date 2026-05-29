@@ -79,6 +79,7 @@
  * @since 4.0.0
  */
 import type { StandardSchemaV1 } from "@standard-schema/spec"
+import * as Arr from "./Array.ts"
 import { format, formatPath, type Formatter as FormatterI } from "./Formatter.ts"
 import * as InternalAnnotations from "./internal/schema/annotations.ts"
 import * as Option from "./Option.ts"
@@ -92,14 +93,13 @@ const TypeId = "~effect/SchemaIssue/Issue"
 /**
  * Returns `true` if the given value is an {@link Issue}.
  *
- * When to use:
+ * **When to use**
  *
- * - Narrowing an `unknown` value to `Issue` in error-handling code.
+ * Use when narrowing an `unknown` value to `Issue` in error-handling code.
  * - Distinguishing an `Issue` from other error types in a catch-all handler.
  *
- * Behaviour:
+ * **Details**
  *
- * - Pure; does not mutate input.
  * - Checks for the internal `TypeId` brand on the value.
  *
  * **Example** (Type-guarding an unknown error)
@@ -116,6 +116,7 @@ const TypeId = "~effect/SchemaIssue/Issue"
  *
  * @see {@link Issue}
  *
+ * @category guards
  * @since 4.0.0
  */
 export function isIssue(u: unknown): u is Issue {
@@ -125,10 +126,12 @@ export function isIssue(u: unknown): u is Issue {
 /**
  * Union of all terminal (leaf) issue types that have no inner `Issue` children.
  *
- * When to use:
+ * **When to use**
  *
- * - Constraining formatter hooks to only handle terminal nodes.
+ * Use when constraining formatter hooks to only handle terminal nodes.
  * - Pattern-matching on the `_tag` of an issue when you only care about leaves.
+ *
+ * **Details**
  *
  * Members: {@link InvalidType}, {@link InvalidValue}, {@link MissingKey},
  * {@link UnexpectedKey}, {@link Forbidden}, {@link OneOf}.
@@ -136,7 +139,7 @@ export function isIssue(u: unknown): u is Issue {
  * @see {@link Issue} — the full union including composite nodes
  * @see {@link LeafHook} — formatter hook that operates on `Leaf` values
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export type Leaf =
@@ -150,25 +153,25 @@ export type Leaf =
 /**
  * The root discriminated union of all validation error nodes.
  *
- * Every node has a `_tag` field for pattern-matching. The union includes both
- * terminal {@link Leaf} types and composite types that wrap inner issues:
- * {@link Filter}, {@link Encoding}, {@link Pointer}, {@link Composite},
- * {@link AnyOf}.
+ * **When to use**
  *
- * When to use:
- *
- * - Typing the error channel in `Effect<A, Issue, R>` results from schema
+ * Use when typing the error channel in `Effect<A, Issue, R>` results from schema
  *   parsing.
  * - Writing custom formatters or issue-tree walkers.
  *
- * All `Issue` instances have a `toString()` that delegates to the default
- * formatter, so `String(issue)` produces a human-readable message.
+ * **Details**
+ *
+ * Every node has a `_tag` field for pattern-matching. The union includes both
+ * terminal {@link Leaf} types and composite types that wrap inner issues:
+ * {@link Filter}, {@link Encoding}, {@link Pointer}, {@link Composite},
+ * {@link AnyOf}. All `Issue` instances have a `toString()` that delegates to
+ * the default formatter, so `String(issue)` produces a human-readable message.
  *
  * @see {@link Leaf} — the terminal subset
  * @see {@link isIssue} — type guard
  * @see {@link getActual} — extract the actual value from any issue
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export type Issue =
@@ -188,14 +191,13 @@ class Base {
 }
 
 /**
- * Issue produced when a schema filter (refinement check) fails.
+ * Represents a schema issue produced when a schema filter (refinement check) fails.
  *
- * When to use:
+ * **When to use**
  *
- * - Inspect which filter rejected the value.
- * - Walk the inner `issue` for the specific validation failure.
+ * Use when you need to inspect which filter rejected the value.
  *
- * Behaviour:
+ * **Details**
  *
  * - `actual` is the raw input value that was tested (plain `unknown`, not
  *   wrapped in `Option`).
@@ -218,7 +220,7 @@ class Base {
  * @see {@link Leaf} — terminal issue types that commonly appear as the inner `issue`
  * @see {@link CheckHook} — formatter hook for `Filter` issues
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Filter extends Base {
@@ -258,15 +260,14 @@ export class Filter extends Base {
 }
 
 /**
- * Issue produced when a schema transformation (encode/decode step) fails.
+ * Represents a schema issue produced when a schema transformation (encode/decode step) fails.
  *
- * When to use:
+ * **When to use**
  *
- * - Inspect failures from `Schema.decodeTo` / `Schema.encodeTo`
+ * Use when you need to inspect failures from `Schema.decodeTo` / `Schema.encodeTo`
  *   transformations.
- * - Walk the inner `issue` for the root cause of the transformation failure.
  *
- * Behaviour:
+ * **Details**
  *
  * - `ast` is the AST node for the transformation that failed.
  * - `actual` is `Option.some(value)` when the input was present, or
@@ -276,7 +277,7 @@ export class Filter extends Base {
  * @see {@link Filter} — failure from a refinement check (not a transformation)
  * @see {@link Composite} — multiple issues from a single schema node
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class Encoding extends Base {
@@ -319,12 +320,12 @@ export class Encoding extends Base {
  * Wraps an inner {@link Issue} with a property-key path, indicating *where* in
  * a nested structure the error occurred.
  *
- * When to use:
+ * **When to use**
  *
- * - Walk the issue tree to accumulate path segments for error reporting.
- * - Match on `_tag === "Pointer"` when flattening nested issues.
+ * Use when you need to walk the issue tree to accumulate path segments for error
+ * reporting.
  *
- * Behaviour:
+ * **Details**
  *
  * - `path` is an array of property keys (strings, numbers, or symbols).
  * - Has no `actual` value — {@link getActual} returns `Option.none()`.
@@ -334,8 +335,8 @@ export class Encoding extends Base {
  * @see {@link getActual} — returns `Option.none()` for `Pointer`
  * @see {@link Composite} — groups multiple issues under one schema node
  *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class Pointer extends Base {
   readonly _tag = "Pointer"
@@ -365,15 +366,13 @@ export class Pointer extends Base {
 }
 
 /**
- * Issue produced when a required key or tuple index is missing from the input.
+ * Represents a schema issue produced when a required key or tuple index is missing from the input.
  *
- * When to use:
+ * **When to use**
  *
- * - Detect absent fields in struct/tuple validation.
- * - Typically found inside a {@link Pointer} that indicates which key is
- *   missing.
+ * Use when you need to detect absent fields in struct/tuple validation.
  *
- * Behaviour:
+ * **Details**
  *
  * - Has no `actual` value — {@link getActual} returns `Option.none()`.
  * - `annotations` may contain a custom `messageMissingKey` for formatting.
@@ -381,7 +380,7 @@ export class Pointer extends Base {
  * @see {@link Pointer} — wraps this issue with the missing key's path
  * @see {@link UnexpectedKey} — the opposite case (extra key present)
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class MissingKey extends Base {
@@ -403,16 +402,15 @@ export class MissingKey extends Base {
 }
 
 /**
- * Issue produced when an input object or tuple contains a key/index not
+ * Represents a schema issue produced when an input object or tuple contains a key/index not
  * declared by the schema.
  *
- * When to use:
+ * **When to use**
  *
- * - Detect excess properties during strict struct/tuple validation.
- * - Typically found inside a {@link Pointer} that indicates which key was
- *   unexpected.
+ * Use when you need to detect excess properties during strict struct/tuple
+ * validation.
  *
- * Behaviour:
+ * **Details**
  *
  * - `actual` is the raw value at the unexpected key (plain `unknown`).
  * - `ast` is the schema that was being validated against.
@@ -421,7 +419,7 @@ export class MissingKey extends Base {
  * @see {@link MissingKey} — the opposite case (required key absent)
  * @see {@link Pointer} — wraps this issue with the unexpected key's path
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class UnexpectedKey extends Base {
@@ -452,15 +450,14 @@ export class UnexpectedKey extends Base {
 }
 
 /**
- * Issue that groups multiple child issues under a single schema node.
+ * Represents a schema issue that groups multiple child issues under a single schema node.
  *
- * When to use:
+ * **When to use**
  *
- * - Walk the issue tree for struct/tuple schemas that collect all field errors
- *   rather than failing on the first.
- * - Match on `_tag === "Composite"` to iterate over `issues`.
+ * Use when you need to walk the issue tree for struct/tuple schemas that collect
+ * all field errors rather than failing on the first.
  *
- * Behaviour:
+ * **Details**
  *
  * - `issues` is a non-empty readonly array (at least one child).
  * - `actual` is `Option.some(value)` when the input was present, or
@@ -470,8 +467,8 @@ export class UnexpectedKey extends Base {
  * @see {@link AnyOf} — used for union no-match errors (similar but different semantics)
  * @see {@link Pointer} — adds path context to individual issues
  *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class Composite extends Base {
   readonly _tag = "Composite"
@@ -510,16 +507,15 @@ export class Composite extends Base {
 }
 
 /**
- * Issue produced when the runtime type of the input does not match the type
+ * Represents a schema issue produced when the runtime type of the input does not match the type
  * expected by the schema (e.g. got `null` when `string` was expected).
  *
- * When to use:
+ * **When to use**
  *
- * - Detect basic type mismatches (wrong primitive, null where object expected,
- *   etc.).
- * - The most common leaf issue in typical validation failures.
+ * Use when you need to detect basic type mismatches, such as a wrong primitive
+ * or `null` where an object was expected.
  *
- * Behaviour:
+ * **Details**
  *
  * - `ast` is the schema node that expected a different type.
  * - `actual` is `Option.some(value)` when the input was present, or
@@ -543,7 +539,7 @@ export class Composite extends Base {
  *
  * @see {@link InvalidValue} — the input has the right type but fails a value constraint
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class InvalidType extends Base {
@@ -574,16 +570,15 @@ export class InvalidType extends Base {
 }
 
 /**
- * Issue produced when the input has the correct type but its value violates a
+ * Represents a schema issue produced when the input has the correct type but its value violates a
  * constraint (e.g. a string that is too short, a number out of range).
  *
- * When to use:
+ * **When to use**
  *
- * - Detect constraint violations from `Schema.filter`, `Schema.minLength`,
- *   `Schema.greaterThan`, etc.
- * - Create custom validation errors in `Schema.makeFilter` callbacks.
+ * Use when you need to detect constraint violations from `Schema.filter`,
+ * `Schema.minLength`, `Schema.greaterThan`, or similar checks.
  *
- * Behaviour:
+ * **Details**
  *
  * - `actual` is `Option.some(value)` when the failing value is known, or
  *   `Option.none()` when absent.
@@ -607,7 +602,7 @@ export class InvalidType extends Base {
  * @see {@link InvalidType} — the input has the wrong type entirely
  * @see {@link Filter} — composite wrapper when a schema filter produces this issue
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class InvalidValue extends Base {
@@ -638,15 +633,15 @@ export class InvalidValue extends Base {
 }
 
 /**
- * Issue produced when a forbidden operation is encountered during parsing,
+ * Represents a schema issue produced when a forbidden operation is encountered during parsing,
  * such as an asynchronous Effect running inside `Schema.decodeUnknownSync`.
  *
- * When to use:
+ * **When to use**
  *
- * - Detect that a schema requires async execution but was run synchronously.
- * - Provide custom error messages via the `annotations.message` field.
+ * Use when you need to detect that a schema requires async execution but was run
+ * synchronously.
  *
- * Behaviour:
+ * **Details**
  *
  * - `actual` is `Option.some(value)` when the input is known, or
  *   `Option.none()` when absent.
@@ -668,8 +663,8 @@ export class InvalidValue extends Base {
  *
  * @see {@link InvalidValue} — for value-constraint failures (not operation failures)
  *
- * @category model
- * @since 4.0.0
+ * @category models
+ * @since 3.10.0
  */
 export class Forbidden extends Base {
   readonly _tag = "Forbidden"
@@ -699,15 +694,14 @@ export class Forbidden extends Base {
 }
 
 /**
- * Issue produced when a value does not match *any* member of a union schema.
+ * Represents a schema issue produced when a value does not match *any* member of a union schema.
  *
- * When to use:
+ * **When to use**
  *
- * - Inspect which union members were attempted and why each failed.
- * - `issues` may be empty when the union has no members or when the input does
- *   not pass the initial type guard.
+ * Use when you need to inspect which union members were attempted and why each
+ * failed.
  *
- * Behaviour:
+ * **Details**
  *
  * - `ast` is the `Union` AST node.
  * - `actual` is the raw input value (plain `unknown`).
@@ -717,7 +711,7 @@ export class Forbidden extends Base {
  * @see {@link OneOf} — the opposite: *too many* members matched
  * @see {@link Composite} — groups multiple issues under a non-union schema
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class AnyOf extends Base {
@@ -757,15 +751,15 @@ export class AnyOf extends Base {
 }
 
 /**
- * Issue produced when a value matches *multiple* members of a union that is
+ * Represents a schema issue produced when a value matches *multiple* members of a union that is
  * configured to allow exactly one match (oneOf mode).
  *
- * When to use:
+ * **When to use**
  *
- * - Detect ambiguous union matches when `oneOf` validation is enabled.
- * - Inspect `successes` to see which members matched.
+ * Use when you need to detect ambiguous union matches when `oneOf` validation is
+ * enabled.
  *
- * Behaviour:
+ * **Details**
  *
  * - `ast` is the `Union` AST node.
  * - `actual` is the raw input value (plain `unknown`).
@@ -775,7 +769,7 @@ export class AnyOf extends Base {
  *
  * @see {@link AnyOf} — the opposite: *no* members matched
  *
- * @category model
+ * @category models
  * @since 4.0.0
  */
 export class OneOf extends Base {
@@ -817,14 +811,13 @@ export class OneOf extends Base {
 /**
  * Extracts the actual input value from any {@link Issue} variant.
  *
- * When to use:
+ * **When to use**
  *
- * - Retrieve the offending value for logging or custom error rendering.
+ * Use when retrieve the offending value for logging or custom error rendering.
  * - Uniformly access `actual` regardless of which issue variant you have.
  *
- * Behaviour:
+ * **Details**
  *
- * - Pure; does not mutate the issue.
  * - Returns `Option.none()` for `Pointer` and `MissingKey` (they carry no
  *   value).
  * - Returns the existing `Option` for variants that already store `actual` as
@@ -846,6 +839,7 @@ export class OneOf extends Base {
  * @see {@link Issue}
  * @see {@link isIssue}
  *
+ * @category getters
  * @since 4.0.0
  */
 export function getActual(issue: Issue): Option.Option<unknown> {
@@ -867,30 +861,42 @@ export function getActual(issue: Issue): Option.Option<unknown> {
   }
 }
 
+function makeFilterIssue(input: unknown, entry: Schema.FilterIssue): Issue {
+  if (isIssue(entry)) {
+    return entry
+  }
+  if (typeof entry === "string") {
+    return new InvalidValue(Option.some(input), { message: entry })
+  }
+  const inner = typeof entry.issue === "string"
+    ? new InvalidValue(Option.some(input), { message: entry.issue })
+    : entry.issue
+  return new Pointer(entry.path, inner)
+}
+
 /** @internal */
-export function make(
-  input: unknown,
-  out: undefined | boolean | string | Issue | {
-    readonly path: ReadonlyArray<PropertyKey>
-    readonly message: string
-  }
-) {
-  if (isIssue(out)) {
-    return out
-  }
+export function makeSingle(input: unknown, out: undefined | boolean | Schema.FilterIssue): Issue | undefined {
   if (out === undefined) {
     return undefined
   }
   if (typeof out === "boolean") {
     return out ? undefined : new InvalidValue(Option.some(input))
   }
-  if (typeof out === "string") {
-    return new InvalidValue(Option.some(input), { message: out })
+  return makeFilterIssue(input, out)
+}
+
+/** @internal */
+export function make(input: unknown, ast: AST.AST, out: Schema.FilterOutput): Issue | undefined {
+  if (Array.isArray(out)) {
+    if (Arr.isReadonlyArrayNonEmpty(out)) {
+      if (out.length === 1) {
+        return makeFilterIssue(input, out[0])
+      }
+      return new Composite(ast, Option.some(input), Arr.map(out, (entry) => makeFilterIssue(input, entry)))
+    }
+    return undefined
   }
-  return new Pointer(
-    out.path,
-    new InvalidValue(Option.some(input), { message: out.message })
-  )
+  return makeSingle(input, out as undefined | boolean | Schema.FilterIssue)
 }
 
 /**
@@ -898,15 +904,8 @@ export function make(
  * representation. Specialisation of the generic `Formatter` from
  * `Formatter.ts` with `Value` fixed to `Issue`.
  *
- * When to use:
- *
- * - Type custom formatters that accept an `Issue` and return any output format.
- * - Use with {@link makeFormatterDefault} or
- *   {@link makeFormatterStandardSchemaV1} to obtain built-in implementations.
- *
  * @see {@link makeFormatterDefault} — creates a `Formatter<string>`
- * @see {@link makeFormatterStandardSchemaV1} — creates a
- *   `Formatter<StandardSchemaV1.FailureResult>`
+ * @see {@link makeFormatterStandardSchemaV1} — creates a `Formatter<StandardSchemaV1.FailureResult>`
  *
  * @category Formatter
  * @since 4.0.0
@@ -916,10 +915,10 @@ export interface Formatter<out Format> extends FormatterI<Issue, Format> {}
 /**
  * Callback type used to format {@link Leaf} issues into strings.
  *
- * When to use:
+ * **When to use**
  *
- * - Pass a custom `LeafHook` to {@link makeFormatterStandardSchemaV1} to
- *   override how terminal issues are rendered.
+ * Use when customizing how {@link makeFormatterStandardSchemaV1} renders
+ * terminal issues.
  *
  * @see {@link defaultLeafHook} — the built-in implementation
  * @see {@link Leaf} — the union of terminal issue types
@@ -930,15 +929,15 @@ export interface Formatter<out Format> extends FormatterI<Issue, Format> {}
 export type LeafHook = (issue: Leaf) => string
 
 /**
- * The built-in {@link LeafHook} used by default formatters.
+ * Returns the built-in {@link LeafHook} used by default formatters.
  *
- * When to use:
+ * **When to use**
  *
- * - Use as-is when you only need to customise the {@link CheckHook} but want
- *   the default leaf rendering.
+ * Use as the default leaf renderer when you only need to customise the
+ * {@link CheckHook}.
  * - Reference as a starting point for custom `LeafHook` implementations.
  *
- * Behaviour:
+ * **Details**
  *
  * - Checks for a `message` annotation first; returns it if present.
  * - Otherwise generates a default message per `_tag`:
@@ -987,12 +986,12 @@ export const defaultLeafHook: LeafHook = (issue): string => {
 /**
  * Callback type used to format {@link Filter} issues into strings.
  *
- * When to use:
+ * **When to use**
  *
- * - Pass a custom `CheckHook` to {@link makeFormatterStandardSchemaV1} to
- *   override how filter failures are rendered.
+ * Use when customizing how {@link makeFormatterStandardSchemaV1} renders
+ * filter failures.
  *
- * Behaviour:
+ * **Details**
  *
  * - Returns `string` to override the message, or `undefined` to fall back to
  *   the default formatting.
@@ -1006,14 +1005,14 @@ export const defaultLeafHook: LeafHook = (issue): string => {
 export type CheckHook = (issue: Filter) => string | undefined
 
 /**
- * The built-in {@link CheckHook} used by default formatters.
+ * Returns the built-in {@link CheckHook} used by default formatters.
  *
- * When to use:
+ * **When to use**
  *
- * - Use as-is when you only need to customise the {@link LeafHook} but want
- *   the default filter rendering.
+ * Use as the default filter renderer when you only need to customise the
+ * {@link LeafHook}.
  *
- * Behaviour:
+ * **Details**
  *
  * - Looks for a `message` annotation on the inner issue first, then on the
  *   filter itself.
@@ -1033,14 +1032,14 @@ export const defaultCheckHook: CheckHook = (issue): string | undefined => {
 /**
  * Creates a {@link Formatter} that produces a `StandardSchemaV1.FailureResult`.
  *
- * When to use:
+ * **When to use**
  *
- * - Integrate with libraries that consume the
+ * Use when integrate with libraries that consume the
  *   [Standard Schema V1](https://github.com/standard-schema/standard-schema)
  *   error format.
  * - Customise error rendering by providing `leafHook` and/or `checkHook`.
  *
- * Behaviour:
+ * **Details**
  *
  * - Returns a `Formatter<StandardSchemaV1.FailureResult>`.
  * - Each leaf issue is flattened into `{ message, path }` entries.
@@ -1141,13 +1140,13 @@ function formatCheck<T>(check: AST.Check<T>): string {
  * Creates a {@link Formatter} that converts an {@link Issue} into a
  * human-readable multi-line string.
  *
- * When to use:
+ * **When to use**
  *
- * - Produce error messages for logging, CLI output, or developer-facing
+ * Use when produce error messages for logging, CLI output, or developer-facing
  *   diagnostics.
  * - This is the default formatter used by `Issue.toString()`.
  *
- * Behaviour:
+ * **Details**
  *
  * - Flattens the issue tree into `{ message, path }` entries using
  *   {@link defaultLeafHook} and {@link defaultCheckHook}.
