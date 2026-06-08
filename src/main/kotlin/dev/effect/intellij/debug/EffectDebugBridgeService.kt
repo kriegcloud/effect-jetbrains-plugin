@@ -163,9 +163,11 @@ class EffectDebugBridgeService {
     }
 
     fun interruptCurrentFiber(project: Project) {
-        val fiberId = state.snapshot?.fibers?.firstOrNull { it.isCurrent }?.id
+        val fiberId = state.snapshot?.fibers
+            ?.firstOrNull { it.isCurrent && it.isInterruptible && !it.isInterrupted }
+            ?.id
         if (fiberId == null) {
-            updateState(state.copy(error = "No current Effect fiber is available to interrupt."))
+            updateState(state.copy(error = "No interruptible current Effect fiber is available to interrupt."))
             return
         }
         interruptFiber(project, fiberId)

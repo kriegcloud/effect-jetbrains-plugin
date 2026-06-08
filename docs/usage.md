@@ -37,8 +37,9 @@ TypeScript and JavaScript files.
 | Hover-based layer graph links | Implemented | This is the supported layer-graph path today |
 | Local Mermaid graph action | Experimental | Editor/Tools action opens Mermaid source when the LSP advertises the Effect execute-command bridge |
 
-The table above describes the shipped surface area. Recorded manual editor smoke and richer
-real-binary semantic evidence are still explicit follow-up validation items in this repo.
+The table above describes the shipped surface area. Recorded real-binary LSP smoke exists for the
+fixtures below; full manual IDE/editor smoke and broader semantic coverage remain follow-up validation
+items in this repo.
 
 ### Current TSGO Smoke Targets
 

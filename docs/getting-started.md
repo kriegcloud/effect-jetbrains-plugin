@@ -101,7 +101,7 @@ The default runtime server port is `34437`.
 - Tracer data is streamed from runtime span events.
 - A browser-backed `Tracer Web` tab appears when the IDE's JCEF runtime is available.
 - The `Debug` tab can attach to a paused debug session, inject optional Node.js instrumentation for
-  configured JetBrains Node run/debug profiles, and show interactive `Context`, `Span Stack`,
-  `Fibers`, and `Breakpoints` snapshots.
+  configured JetBrains Node run/debug profiles, and show best-effort interactive `Context`,
+  `Span Stack`, `Fibers`, and `Breakpoints` snapshot trees when instrumentation is available.
 
 Continue with the [usage guide](usage.md) once the plugin is installed and running.

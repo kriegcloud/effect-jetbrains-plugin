@@ -6,14 +6,19 @@ import dev.effect.intellij.core.EffectPluginConstants
 import dev.effect.intellij.debug.EffectDebugBridgeService
 import dev.effect.intellij.debug.EffectDebugSnapshot
 import dev.effect.intellij.debug.EffectDebugTreeModels
+import dev.effect.intellij.debug.EffectDebugTreeEntry
 import dev.effect.intellij.debug.EffectInstrumentationService
 import dev.effect.intellij.devtools.EffectDevToolsService
 import dev.effect.intellij.lsp.EffectLayerMermaidService
 import dev.effect.intellij.lsp.EffectLspProjectService
 import dev.effect.intellij.settings.EffectProjectSettingsService
 import dev.effect.intellij.status.EffectStatusService
+import java.awt.Component
+import java.awt.Container
 import java.nio.file.Files
 import java.nio.file.Path
+import javax.swing.JComponent
+import javax.swing.text.JTextComponent
 
 class EffectPluginSmokeTest : BasePlatformTestCase() {
     fun testProjectServicesAreRegistered() {
@@ -161,6 +166,40 @@ class EffectPluginSmokeTest : BasePlatformTestCase() {
         assertEquals("/tmp/app.ts", breakpoints.first { it.title == "Last pause location" }.location?.path)
     }
 
+    fun testDebugTreePanelKeepsRefreshErrorsVisible() {
+        val panelClass = Class.forName("dev.effect.intellij.ui.DebugTreePanel")
+        val noOpAction: (EffectDebugTreeEntry?) -> Unit = {}
+        val constructor = panelClass.getDeclaredConstructor(
+            com.intellij.openapi.project.Project::class.java,
+            String::class.java,
+            String::class.java,
+            Function1::class.java,
+        ).also { it.isAccessible = true }
+        val panel = constructor.newInstance(
+            project,
+            "Context",
+            null,
+            noOpAction,
+        )
+        val refresh = panelClass.getDeclaredMethod(
+            "refresh",
+            DebugBridgeState::class.java,
+            List::class.java,
+            String::class.java,
+        ).also { it.isAccessible = true }
+        refresh.invoke(
+            panel,
+            DebugBridgeState(attachedSessionName = "node", error = "Snapshot refresh failed"),
+            listOf(EffectDebugTreeEntry("Context entry", detail = "Context detail")),
+            null,
+        )
+        val component = panelClass.getDeclaredMethod("getComponent")
+            .also { it.isAccessible = true }
+            .invoke(panel) as JComponent
+
+        assertTrue(findTextComponents(component).any { it.text == "Snapshot refresh failed" })
+    }
+
     fun testMermaidResultExtractionMatchesVsCodeWrapperShape() {
         val result = mapOf(
             "success" to true,
@@ -171,6 +210,20 @@ class EffectPluginSmokeTest : BasePlatformTestCase() {
         )
 
         assertEquals("flowchart TD\n  A --> B", EffectLayerMermaidService.extractMermaidCode(result))
+    }
+
+    private fun findTextComponents(component: Component): List<JTextComponent> =
+        buildList {
+            collectTextComponents(component, this)
+        }
+
+    private fun collectTextComponents(component: Component, result: MutableList<JTextComponent>) {
+        if (component is JTextComponent) {
+            result += component
+        }
+        if (component is Container) {
+            component.components.forEach { child -> collectTextComponents(child, result) }
+        }
     }
 
     override fun getTestDataPath(): String = Path.of("src", "test", "testData").toAbsolutePath().toString()

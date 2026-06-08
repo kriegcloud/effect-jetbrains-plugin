@@ -85,6 +85,11 @@ class EffectLspProjectService(private val project: Project) {
             extraEnv = settings.extraEnv,
             initializationOptionsJson = settings.initializationOptionsJson,
             workspaceConfigurationJson = settings.workspaceConfigurationJson,
+            lspInlays = settings.lspInlays,
+            lspMermaidProvider = settings.lspMermaidProvider,
+            lspNoExternal = settings.lspNoExternal,
+            lspLayerGraphFollowDepth = settings.lspLayerGraphFollowDepth,
+            lspDiagnosticSeverity = settings.lspDiagnosticSeverity,
         )
     }
 }
@@ -101,4 +106,9 @@ private data class LaunchConfigurationKey(
     val extraEnv: Map<String, String>,
     val initializationOptionsJson: String,
     val workspaceConfigurationJson: String,
+    val lspInlays: Boolean?,
+    val lspMermaidProvider: String,
+    val lspNoExternal: Boolean?,
+    val lspLayerGraphFollowDepth: Int?,
+    val lspDiagnosticSeverity: Map<String, String>,
 )

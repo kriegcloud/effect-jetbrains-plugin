@@ -1,8 +1,11 @@
 package dev.effect.intellij.settings
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.awt.Component
+import java.awt.Container
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
+import javax.swing.text.JTextComponent
 
 class EffectSettingsValidationTest : BasePlatformTestCase() {
     fun testConfigurableIsNotModifiedBeforeComponentCreation() {
@@ -96,6 +99,27 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         assertTrue(problems.any { it.severity == SettingSeverity.WARNING && it.message.contains("inlays") })
     }
 
+    fun testConfigurableKeepsDefaultDebugConfigurationTypesWhenFieldIsCleared() {
+        val service = project.getService(EffectProjectSettingsService::class.java)
+        service.updateSettings(EffectProjectSettings(binaryMode = EffectBinaryMode.LATEST))
+        val configurable = EffectProjectSettingsConfigurable(project)
+        val component = configurable.createComponent()
+        try {
+            val debugTypesField = findTextComponents(component)
+                .first { textComponent ->
+                    val text = textComponent.text
+                    text.contains("Node.js") && text.contains("JavaScript Debug")
+                }
+
+            debugTypesField.text = ""
+            configurable.apply()
+
+            assertEquals(DEFAULT_NODE_DEBUG_CONFIGURATION_TYPES, service.currentSettings().injectDebugConfigurationTypes)
+        } finally {
+            configurable.disposeUIResources()
+        }
+    }
+
     fun testManualModeAcceptsExistingExecutable() {
         val service = project.getService(EffectProjectSettingsService::class.java)
         val executable = Files.createTempFile("effect-manual", if (System.getProperty("os.name").contains("win", ignoreCase = true)) ".exe" else "")
@@ -153,11 +177,25 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         assertTrue(problems.any { it.field == "manualBinaryPath" && it.message.contains("absolute") })
     }
 
-    fun testInvalidPersistedBinaryModeFallsBackToLatest() {
+    fun testInvalidPersistedBinaryModeFallsBackToManual() {
         val service = project.getService(EffectProjectSettingsService::class.java)
         service.loadState(EffectProjectSettingsState().also { it.binaryMode = "BROKEN" })
 
         assertEquals(EffectBinaryMode.MANUAL, service.currentSettings().binaryMode)
+    }
+
+    private fun findTextComponents(component: Component): List<JTextComponent> =
+        buildList {
+            collectTextComponents(component, this)
+        }
+
+    private fun collectTextComponents(component: Component, result: MutableList<JTextComponent>) {
+        if (component is JTextComponent) {
+            result += component
+        }
+        if (component is Container) {
+            component.components.forEach { child -> collectTextComponents(child, result) }
+        }
     }
 
     private fun makeNonExecutable(path: java.nio.file.Path) {

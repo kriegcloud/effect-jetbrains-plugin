@@ -5,7 +5,8 @@ JetBrains plugin for `@effect/tsgo` language-server support and Effect runtime D
 It targets the WebStorm `2026.2` EAP platform line, launches `@effect/tsgo` directly with `--lsp --stdio`,
 and ships core LSP integration plus local runtime Dev Tools. First-run binary setup is manual by default;
 managed npm downloads are available when explicitly configured. Debugger surfaces include attach/setup
-guidance, interactive live Effect snapshots, and opt-in Node.js instrumentation injection.
+guidance, best-effort snapshot trees for paused instrumented sessions, and opt-in Node.js instrumentation
+injection.
 <!-- Plugin description end -->
 
 ## Overview
@@ -29,7 +30,7 @@ The current plugin baseline is:
 | Core LSP wiring | Implemented | Direct binary launch, project settings, workspace/config passthrough, and widget actions are in place. |
 | Editor features | Implemented | Diagnostics, code actions, completion, hover, inlay hints, symbols, and hover-based layer graph links are the intended supported surface; fuller real-IDE smoke evidence remains follow-up work. |
 | Runtime Dev Tools | Implemented | Runtime server, client selection, metrics polling, tracer streaming, reset flows, and empty/error states are present. |
-| Debugger surfaces | Adapted | The `Debug` tab can attach to the current session, render interactive Context/Span/Fiber/Breakpoint trees, reveal source locations, toggle pause-on-defects, interrupt fibers, and inject Node.js instrumentation. |
+| Debugger surfaces | Adapted | The `Debug` tab can attach to the current session, render best-effort Context/Span/Fiber/Breakpoint trees for paused instrumented sessions, reveal source locations, toggle pause-on-defects, interrupt fibers, and inject Node.js instrumentation. |
 | Advanced tracer / JCEF | Adapted | The Swing tracer is the guaranteed baseline; a capability-gated JCEF tracer tab is shown when supported. |
 | Local Mermaid graph action | Experimental | Editor/Tools action is capability-gated and requires a `tsgo` build that advertises the Effect execute-command bridge. |
 | Supported-IDE manual editor smoke | Pending evidence | WebStorm sandbox boot and Plugin Verifier coverage are in place; recorded manual editor smoke remains follow-up work. |
@@ -89,9 +90,9 @@ timeout 90s ./gradlew runIde
 ./gradlew verifyPlugin
 ```
 
-The shipped artifact is intended for the WebStorm/IntelliJ Platform `262.*` build line. Full recorded
-manual editor smoke plus richer real-binary semantic smoke evidence are explicit follow-up items rather
-than completed documentation claims.
+The shipped artifact is intended for the WebStorm/IntelliJ Platform `262.*` build line. Recorded
+real-binary LSP smoke exists for the checked-in fixtures; full manual IDE/editor smoke and broader
+semantic coverage remain follow-up validation items.
 
 ## Development
 

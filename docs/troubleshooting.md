@@ -90,7 +90,6 @@ timeout 90s ./gradlew runIde
 The remaining explicit evidence gaps are:
 
 - recorded manual editor smoke in WebStorm and IntelliJ IDEA Ultimate
-- richer real-binary semantic smoke evidence against a native `@effect/tsgo` executable in this
-  environment
+- broader semantic smoke beyond the recorded real-binary LSP fixture checks
 
 Those are follow-up validation items, not user-facing feature claims.

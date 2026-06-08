@@ -268,6 +268,7 @@ private class MetricsTabPanel(
             }
         }
         expandAll(tree)
+        selectFirstRowIfAvailable(tree)
     }
 }
 
@@ -338,6 +339,7 @@ private class TracerTabPanel(
             }
         }
         expandAll(tree)
+        selectFirstRowIfAvailable(tree)
         updateSelectionActions()
     }
 
@@ -495,19 +497,16 @@ private class DebugTreePanel(
             entries.forEach { treeRoot.add(it.toTreeNode()) }
         }
         expandAll(tree)
-        if (tree.selectionPath == null && tree.rowCount > 0) {
-            tree.setSelectionRow(0)
-        }
-        state.error?.let { detailArea.text = it }
-        updateSelectionActions()
+        selectFirstRowIfAvailable(tree)
+        updateSelectionActions(state.error)
     }
 
     private fun selectedEntry(): EffectDebugTreeEntry? =
         (tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject as? EffectDebugTreeEntry
 
-    private fun updateSelectionActions() {
+    private fun updateSelectionActions(error: String? = null) {
         val selected = selectedEntry()
-        detailArea.text = selected?.detail ?: "Select an entry to inspect details."
+        detailArea.text = error ?: selected?.detail ?: "Select an entry to inspect details."
         copyButton.isEnabled = selected != null
         revealButton.isEnabled = selected?.location != null
         extraButton?.isEnabled = selected != null
@@ -657,7 +656,9 @@ private class InterruptCurrentFiberAction(private val project: Project) : AnActi
 
     override fun update(event: AnActionEvent) {
         val state = project.getService(EffectDebugBridgeService::class.java).currentState()
-        event.presentation.isEnabled = state.snapshot?.fibers?.any { it.isCurrent } == true
+        event.presentation.isEnabled = state.snapshot?.fibers?.any {
+            it.isCurrent && it.isInterruptible && !it.isInterrupted
+        } == true
     }
 }
 
@@ -738,4 +739,12 @@ private fun rebuildTree(root: DefaultMutableTreeNode, model: DefaultTreeModel, f
 
 private fun expandAll(tree: JTree) {
     repeat(tree.rowCount) { row -> tree.expandRow(row) }
+}
+
+private fun selectFirstRowIfAvailable(tree: JTree) {
+    if (tree.rowCount > 0) {
+        tree.setSelectionRow(0)
+    } else {
+        tree.clearSelection()
+    }
 }

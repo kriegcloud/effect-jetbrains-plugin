@@ -131,6 +131,32 @@ class EffectLspStatusOwnershipTest : BasePlatformTestCase() {
         assertEquals("warning", severityConfiguration["schemaNumber"])
     }
 
+    fun testTypedWorkspaceConfigurationChangesRefreshCachedLaunchConfiguration() {
+        val binary = createExecutableBinary()
+        val lspService = project.getService(EffectLspProjectService::class.java)
+        val settingsService = project.getService(EffectProjectSettingsService::class.java)
+        val baseSettings = EffectProjectSettings(
+            binaryMode = EffectBinaryMode.MANUAL,
+            manualBinaryPath = binary.toString(),
+            workspaceConfigurationJson = """{"effect":{"mermaidProvider":"raw"}}""",
+            lspInlays = true,
+        )
+        settingsService.updateSettings(baseSettings)
+
+        val firstConfiguration = lspService.activeLaunchConfiguration()
+        settingsService.updateSettings(
+            baseSettings.copy(
+                lspInlays = false,
+                lspMermaidProvider = "mermaid.live",
+            ),
+        )
+        val refreshedConfiguration = lspService.activeLaunchConfiguration()
+
+        assertNotSame(firstConfiguration, refreshedConfiguration)
+        assertEquals(false, refreshedConfiguration.workspaceConfiguration!!.path("effect").path("inlays").asBoolean())
+        assertEquals("mermaid.live", refreshedConfiguration.workspaceConfiguration.path("effect").path("mermaidProvider").asText())
+    }
+
     fun testInvalidLaunchConfigurationMarksError() {
         project.getService(EffectProjectSettingsService::class.java).updateSettings(
             EffectProjectSettings(

@@ -201,7 +201,8 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             metricsPollIntervalMs = metricsPollInterval.value as Int,
             spanStackIgnoreList = parseList(spanStackIgnoreList.text),
             injectNodeOptions = injectNodeOptions.isSelected,
-            injectDebugConfigurationTypes = parseList(injectDebugConfigurationTypes.text).ifEmpty { listOf("*") },
+            injectDebugConfigurationTypes = parseList(injectDebugConfigurationTypes.text)
+                .ifEmpty { DEFAULT_NODE_DEBUG_CONFIGURATION_TYPES },
         )
 
     fun showProblems(problems: List<SettingProblem>) {
