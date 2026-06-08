@@ -8,6 +8,8 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.project.Project
 import com.intellij.util.xmlb.XmlSerializerUtil
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.ObjectNode
 import dev.effect.intellij.core.EffectJson
 import dev.effect.intellij.core.EffectPluginConstants
 import dev.effect.intellij.status.EffectStatusService
@@ -51,8 +53,38 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
         return ResolvedEffectSettings(
             projectSettings = settings,
             initializationOptions = EffectJson.parseObjectOrNull(settings.initializationOptionsJson),
-            workspaceConfiguration = EffectJson.parseObjectOrNull(settings.workspaceConfigurationJson),
+            workspaceConfiguration = effectiveWorkspaceConfiguration(settings),
         )
+    }
+
+    fun effectiveWorkspaceConfiguration(settings: EffectProjectSettings = currentSettings()): JsonNode? {
+        val raw = EffectJson.parseObjectOrNull(settings.workspaceConfigurationJson)
+        val hasTypedSettings = settings.hasTypedLspSettings()
+        if (!hasTypedSettings) {
+            return raw
+        }
+
+        val root = raw?.deepCopy<ObjectNode>() ?: EffectJson.emptyObject()
+        val currentEffectNode = root.get("effect")
+        val effect = if (currentEffectNode is ObjectNode) {
+            currentEffectNode
+        } else {
+            EffectJson.emptyObject().also { root.set<ObjectNode>("effect", it) }
+        }
+
+        settings.lspInlays?.let { effect.put("inlays", it) }
+        settings.lspMermaidProvider.trim().takeIf(String::isNotBlank)?.let { effect.put("mermaidProvider", it) }
+        settings.lspNoExternal?.let { effect.put("noExternal", it) }
+        settings.lspLayerGraphFollowDepth?.let { effect.put("layerGraphFollowDepth", it) }
+        if (settings.lspDiagnosticSeverity.isNotEmpty()) {
+            val diagnosticSeverity = EffectJson.emptyObject()
+            settings.lspDiagnosticSeverity.toSortedMap().forEach { (rule, severity) ->
+                diagnosticSeverity.put(rule, severity)
+            }
+            effect.set<ObjectNode>("diagnosticSeverity", diagnosticSeverity)
+        }
+
+        return root
     }
 
     fun validate(settings: EffectProjectSettings = currentSettings()): List<SettingProblem> {
@@ -83,6 +115,7 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
         parseEnvProblems(settings.extraEnv, problems)
         validateJson("initializationOptionsJson", settings.initializationOptionsJson, problems)
         validateJson("workspaceConfigurationJson", settings.workspaceConfigurationJson, problems)
+        validateTypedLspSettings(settings, problems)
 
         if (settings.devToolsPort !in 1..65535) {
             problems += SettingProblem("devToolsPort", "Dev Tools port must be between 1 and 65535.")
@@ -112,6 +145,44 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
         }
     }
 
+    private fun validateTypedLspSettings(settings: EffectProjectSettings, problems: MutableList<SettingProblem>) {
+        settings.lspLayerGraphFollowDepth?.let { depth ->
+            if (depth < 0) {
+                problems += SettingProblem("lspLayerGraphFollowDepth", "Layer graph follow depth must be zero or greater.")
+            }
+        }
+
+        val invalidSeverity = settings.lspDiagnosticSeverity
+            .filterValues { severity -> severity !in EFFECT_LSP_SEVERITIES }
+        invalidSeverity.forEach { (rule, severity) ->
+            problems += SettingProblem("lspDiagnosticSeverity", "Invalid severity '$severity' for diagnostic '$rule'.")
+        }
+
+        if (settings.hasTypedLspSettings() && settings.workspaceConfigurationJson.isNotBlank()) {
+            runCatching { EffectJson.parseObjectOrNull(settings.workspaceConfigurationJson) }
+                .getOrNull()
+                ?.get("effect")
+                ?.let { effectNode ->
+                    if (!effectNode.isObject) {
+                        problems += SettingProblem(
+                            "workspaceConfigurationJson",
+                            "Typed Effect LSP settings replace the non-object raw 'effect' workspace configuration.",
+                            SettingSeverity.WARNING,
+                        )
+                    } else {
+                        val duplicateKeys = settings.typedLspKeys().filter(effectNode::has)
+                        if (duplicateKeys.isNotEmpty()) {
+                            problems += SettingProblem(
+                                "workspaceConfigurationJson",
+                                "Typed Effect LSP settings override raw workspace keys: ${duplicateKeys.joinToString()}.",
+                                SettingSeverity.WARNING,
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
     companion object {
         fun getInstance(project: Project): EffectProjectSettingsService = project.getService(EffectProjectSettingsService::class.java)
     }
@@ -125,11 +196,20 @@ private fun EffectProjectSettingsState.toModel(): EffectProjectSettings =
         extraEnv = extraEnv.toMap(),
         initializationOptionsJson = initializationOptionsJson.trim(),
         workspaceConfigurationJson = workspaceConfigurationJson.trim(),
+        lspInlays = parseOptionalBoolean(lspInlays),
+        lspMermaidProvider = lspMermaidProvider.trim(),
+        lspNoExternal = parseOptionalBoolean(lspNoExternal),
+        lspLayerGraphFollowDepth = lspLayerGraphFollowDepth.trim().toIntOrNull(),
+        lspDiagnosticSeverity = lspDiagnosticSeverity
+            .mapKeys { (key, _) -> key.trim() }
+            .mapValues { (_, value) -> value.trim() }
+            .filter { (key, value) -> key.isNotBlank() && value.isNotBlank() },
         devToolsPort = devToolsPort,
         metricsPollIntervalMs = metricsPollIntervalMs,
         spanStackIgnoreList = spanStackIgnoreList.map(String::trim).filter(String::isNotBlank),
         injectNodeOptions = injectNodeOptions,
-        injectDebugConfigurationTypes = injectDebugConfigurationTypes.map(String::trim).filter(String::isNotBlank),
+        injectDebugConfigurationTypes = injectDebugConfigurationTypes.map(String::trim).filter(String::isNotBlank)
+            .ifEmpty { DEFAULT_NODE_DEBUG_CONFIGURATION_TYPES },
     )
 
 private fun parseBinaryMode(raw: String): EffectBinaryMode =
@@ -143,6 +223,11 @@ private fun EffectProjectSettings.toState(): EffectProjectSettingsState =
         state.extraEnv = extraEnv.toMutableMap()
         state.initializationOptionsJson = initializationOptionsJson
         state.workspaceConfigurationJson = workspaceConfigurationJson
+        state.lspInlays = lspInlays?.toString().orEmpty()
+        state.lspMermaidProvider = lspMermaidProvider
+        state.lspNoExternal = lspNoExternal?.toString().orEmpty()
+        state.lspLayerGraphFollowDepth = lspLayerGraphFollowDepth?.toString().orEmpty()
+        state.lspDiagnosticSeverity = lspDiagnosticSeverity.toMutableMap()
         state.devToolsPort = devToolsPort
         state.metricsPollIntervalMs = metricsPollIntervalMs
         state.spanStackIgnoreList = spanStackIgnoreList.toMutableList()
@@ -157,6 +242,11 @@ private data class LspRelevantSettingsView(
     val extraEnv: Map<String, String>,
     val initializationOptionsJson: String,
     val workspaceConfigurationJson: String,
+    val lspInlays: Boolean?,
+    val lspMermaidProvider: String,
+    val lspNoExternal: Boolean?,
+    val lspLayerGraphFollowDepth: Int?,
+    val lspDiagnosticSeverity: Map<String, String>,
 )
 
 private fun EffectProjectSettings.lspRelevantView(): LspRelevantSettingsView =
@@ -167,4 +257,34 @@ private fun EffectProjectSettings.lspRelevantView(): LspRelevantSettingsView =
         extraEnv = extraEnv,
         initializationOptionsJson = initializationOptionsJson,
         workspaceConfigurationJson = workspaceConfigurationJson,
+        lspInlays = lspInlays,
+        lspMermaidProvider = lspMermaidProvider,
+        lspNoExternal = lspNoExternal,
+        lspLayerGraphFollowDepth = lspLayerGraphFollowDepth,
+        lspDiagnosticSeverity = lspDiagnosticSeverity,
     )
+
+private val EFFECT_LSP_SEVERITIES = setOf("off", "suggestion", "message", "warning", "error")
+
+private fun parseOptionalBoolean(raw: String): Boolean? =
+    when (raw.trim().lowercase()) {
+        "true" -> true
+        "false" -> false
+        else -> null
+    }
+
+private fun EffectProjectSettings.hasTypedLspSettings(): Boolean =
+    lspInlays != null ||
+        lspMermaidProvider.isNotBlank() ||
+        lspNoExternal != null ||
+        lspLayerGraphFollowDepth != null ||
+        lspDiagnosticSeverity.isNotEmpty()
+
+private fun EffectProjectSettings.typedLspKeys(): List<String> =
+    buildList {
+        if (lspInlays != null) add("inlays")
+        if (lspMermaidProvider.isNotBlank()) add("mermaidProvider")
+        if (lspNoExternal != null) add("noExternal")
+        if (lspLayerGraphFollowDepth != null) add("layerGraphFollowDepth")
+        if (lspDiagnosticSeverity.isNotEmpty()) add("diagnosticSeverity")
+    }

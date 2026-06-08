@@ -1,6 +1,6 @@
-import { Effect, Layer, ServiceMap } from "effect"
+import { Context, Effect, Layer } from "effect"
 
-class Database extends ServiceMap.Service<Database>()("Database", {
+class Database extends Context.Service<Database>()("Database", {
   make: Effect.succeed({
     query: (_sql: string) => Effect.succeed(["row"] as const),
   }),
@@ -8,8 +8,8 @@ class Database extends ServiceMap.Service<Database>()("Database", {
   static Default = Layer.effect(this, this.make)
 }
 
-class Cache extends ServiceMap.Service<Cache>()("Cache", {
-  make: Effect.as(Database.asEffect(), {
+class Cache extends Context.Service<Cache>()("Cache", {
+  make: Effect.as(Database, {
     get: (_key: string) => Effect.succeed("cached"),
   }),
 }) {

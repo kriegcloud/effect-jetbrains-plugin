@@ -100,6 +100,37 @@ class EffectLspStatusOwnershipTest : BasePlatformTestCase() {
         assertEquals(EffectLspStatus.NOT_CONFIGURED, statusService.currentSnapshot().status)
     }
 
+    fun testDescriptorUsesTypedWorkspaceConfigurationOverlay() {
+        val binary = createExecutableBinary()
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.MANUAL,
+                manualBinaryPath = binary.toString(),
+                workspaceConfigurationJson = """{"effect":{"inlays":false},"other":true}""",
+                lspInlays = true,
+                lspMermaidProvider = "mermaid.live",
+                lspDiagnosticSeverity = mapOf("schemaNumber" to "warning"),
+            ),
+        )
+
+        val descriptor = EffectLspServerDescriptor(project)
+        descriptor.javaClass.getDeclaredMethod("createCommandLine").let { method ->
+            method.isAccessible = true
+            method.invoke(descriptor)
+        }
+
+        val effectConfiguration = descriptor.getWorkspaceConfiguration(
+            ConfigurationItem().apply { section = "effect" },
+        ) as Map<*, *>
+        val severityConfiguration = descriptor.getWorkspaceConfiguration(
+            ConfigurationItem().apply { section = "effect.diagnosticSeverity" },
+        ) as Map<*, *>
+
+        assertEquals(true, effectConfiguration["inlays"])
+        assertEquals("mermaid.live", effectConfiguration["mermaidProvider"])
+        assertEquals("warning", severityConfiguration["schemaNumber"])
+    }
+
     fun testInvalidLaunchConfigurationMarksError() {
         project.getService(EffectProjectSettingsService::class.java).updateSettings(
             EffectProjectSettings(

@@ -1,9 +1,11 @@
 package dev.effect.intellij
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import dev.effect.intellij.debug.DebugBridgeState
 import dev.effect.intellij.core.EffectPluginConstants
 import dev.effect.intellij.debug.EffectDebugBridgeService
 import dev.effect.intellij.debug.EffectDebugSnapshot
+import dev.effect.intellij.debug.EffectDebugTreeModels
 import dev.effect.intellij.debug.EffectInstrumentationService
 import dev.effect.intellij.devtools.EffectDevToolsService
 import dev.effect.intellij.lsp.EffectLayerMermaidService
@@ -102,6 +104,61 @@ class EffectPluginSmokeTest : BasePlatformTestCase() {
         assertTrue(snapshot.fibers.single().isCurrent)
         assertTrue(snapshot.breakpoints.pauseOnDefects)
         assertEquals("/tmp/app.ts", snapshot.breakpoints.location?.path)
+    }
+
+    fun testDebugTreeModelsExposeInteractiveMetadata() {
+        val snapshot = EffectDebugSnapshot.parse(
+            """
+            {
+              "context": [],
+              "spanStack": [
+                {
+                  "name": "HTTP GET",
+                  "traceId": "trace",
+                  "spanId": "span",
+                  "stackIndex": 0,
+                  "path": "/tmp/app.ts",
+                  "line": 4,
+                  "column": 8,
+                  "attributes": []
+                },
+                {
+                  "name": "internal-span",
+                  "traceId": "trace",
+                  "spanId": "ignored",
+                  "stackIndex": 1,
+                  "attributes": []
+                }
+              ],
+              "fibers": [
+                {
+                  "id": "1",
+                  "isCurrent": true,
+                  "isInterruptible": true,
+                  "isInterrupted": false,
+                  "children": [],
+                  "lifeTimeMillis": 42,
+                  "stack": []
+                }
+              ],
+              "breakpoints": {
+                "pauseOnDefects": true,
+                "values": [],
+                "location": { "path": "/tmp/app.ts", "line": 4, "column": 8 }
+              }
+            }
+            """.trimIndent(),
+        )
+        val state = DebugBridgeState(attachedSessionName = "node", snapshot = snapshot)
+
+        val spans = EffectDebugTreeModels.spanStackEntries(state, ignoreList = listOf("internal-*"), ignoreEnabled = true)
+        val fibers = EffectDebugTreeModels.fiberEntries(state)
+        val breakpoints = EffectDebugTreeModels.breakpointEntries(state)
+
+        assertEquals(listOf("HTTP GET"), spans.map { it.title })
+        assertEquals("/tmp/app.ts", spans.single().location?.path)
+        assertEquals("1", fibers.first { it.title.contains("Fiber") }.fiberId)
+        assertEquals("/tmp/app.ts", breakpoints.first { it.title == "Last pause location" }.location?.path)
     }
 
     fun testMermaidResultExtractionMatchesVsCodeWrapperShape() {

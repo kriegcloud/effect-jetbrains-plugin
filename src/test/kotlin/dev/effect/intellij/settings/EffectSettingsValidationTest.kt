@@ -52,6 +52,50 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         assertTrue(problems.any { it.field == "workspaceConfigurationJson" && it.message.contains("JSON object") })
     }
 
+    fun testTypedLspSettingsOverlayRawWorkspaceConfiguration() {
+        val service = project.getService(EffectProjectSettingsService::class.java)
+
+        val config = service.effectiveWorkspaceConfiguration(
+            EffectProjectSettings(
+                workspaceConfigurationJson = """{"effect":{"inlays":false,"mermaidProvider":"custom"},"other":true}""",
+                lspInlays = true,
+                lspMermaidProvider = "mermaid.live",
+                lspNoExternal = true,
+                lspLayerGraphFollowDepth = 2,
+                lspDiagnosticSeverity = mapOf(
+                    "schemaNumber" to "warning",
+                    "redundantOrDie" to "suggestion",
+                ),
+            ),
+        )
+
+        assertNotNull(config)
+        assertEquals(true, config!!.path("other").asBoolean())
+        assertEquals(true, config.path("effect").path("inlays").asBoolean())
+        assertEquals("mermaid.live", config.path("effect").path("mermaidProvider").asText())
+        assertEquals(true, config.path("effect").path("noExternal").asBoolean())
+        assertEquals(2, config.path("effect").path("layerGraphFollowDepth").asInt())
+        assertEquals("warning", config.path("effect").path("diagnosticSeverity").path("schemaNumber").asText())
+        assertEquals("suggestion", config.path("effect").path("diagnosticSeverity").path("redundantOrDie").asText())
+    }
+
+    fun testTypedLspSettingsValidation() {
+        val service = project.getService(EffectProjectSettingsService::class.java)
+
+        val problems = service.validate(
+            EffectProjectSettings(
+                workspaceConfigurationJson = """{"effect":{"inlays":false}}""",
+                lspInlays = true,
+                lspLayerGraphFollowDepth = -1,
+                lspDiagnosticSeverity = mapOf("schemaNumber" to "loud"),
+            ),
+        )
+
+        assertTrue(problems.any { it.field == "lspLayerGraphFollowDepth" })
+        assertTrue(problems.any { it.field == "lspDiagnosticSeverity" })
+        assertTrue(problems.any { it.severity == SettingSeverity.WARNING && it.message.contains("inlays") })
+    }
+
     fun testManualModeAcceptsExistingExecutable() {
         val service = project.getService(EffectProjectSettingsService::class.java)
         val executable = Files.createTempFile("effect-manual", if (System.getProperty("os.name").contains("win", ignoreCase = true)) ".exe" else "")

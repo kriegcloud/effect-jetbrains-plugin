@@ -8,6 +8,8 @@ Use these pages in this order:
   - Installation, prerequisites, binary modes, first-run setup, and the initial LSP/runtime flow
 - [Usage guide](usage.md)
   - Day-to-day settings, widget behavior, `Effect Dev Tools`, and the current debugger story
+- [VS Code and Zed parity matrix](parity-matrix.md)
+  - Behavioral parity status, intentional adaptations, and release evidence checklist
 - [Troubleshooting](troubleshooting.md)
   - Binary failures, runtime/server issues, status meanings, logs, and known evidence gaps
 - [Development guide](development.md)

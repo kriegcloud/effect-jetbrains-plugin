@@ -21,6 +21,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
+private const val CURRENT_TSGO_VERSION = "0.14.1"
+
 class EffectBinaryServiceTest : BasePlatformTestCase() {
     private lateinit var server: HttpServer
     private lateinit var serverExecutor: ExecutorService
@@ -64,7 +66,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
     }
 
     fun testLatestModeDownloadsManagedBinary() {
-        registerLatestEndpoints("1.2.3")
+        registerLatestEndpoints(CURRENT_TSGO_VERSION)
 
         val binaryService = EffectBinaryService.getInstance()
         binaryService.registryBaseUrl = "http://127.0.0.1:${server.address.port}"
@@ -75,7 +77,9 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
 
         val resolution = binaryService.ensureAvailable(project)
         assertEquals(EffectBinaryMode.LATEST, resolution.mode)
-        assertEquals("1.2.3", resolution.version)
+        assertEquals(CURRENT_TSGO_VERSION, resolution.version)
+        assertEquals(platformPackage, resolution.packageName)
+        assertTrue(resolution.binaryPath.toString().contains(CURRENT_TSGO_VERSION))
         assertTrue(Files.exists(resolution.binaryPath))
     }
 

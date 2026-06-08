@@ -7,9 +7,12 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.options.ShowSettingsUtil
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.CollectionListModel
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
@@ -19,10 +22,9 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.xdebugger.XDebuggerManager
 import dev.effect.intellij.debug.DebugBridgeState
 import dev.effect.intellij.debug.EffectDebugBridgeService
-import dev.effect.intellij.debug.EffectDebugBreakpointsSnapshot
-import dev.effect.intellij.debug.EffectDebugFiberEntry
-import dev.effect.intellij.debug.EffectDebugSpanEntry
-import dev.effect.intellij.debug.EffectDebugValueSnapshot
+import dev.effect.intellij.debug.EffectDebugTreeEntry
+import dev.effect.intellij.debug.EffectDebugTreeModels
+import dev.effect.intellij.debug.EffectSourceLocation
 import dev.effect.intellij.devtools.DevToolsRuntimeState
 import dev.effect.intellij.devtools.EffectDevToolsService
 import dev.effect.intellij.devtools.RuntimeClientSnapshot
@@ -30,16 +32,21 @@ import dev.effect.intellij.devtools.RuntimeDetailEntry
 import dev.effect.intellij.devtools.RuntimeMetricSnapshot
 import dev.effect.intellij.devtools.RuntimeSpanEventSnapshot
 import dev.effect.intellij.devtools.RuntimeSpanSnapshot
+import dev.effect.intellij.notifications.EffectNotificationService
 import dev.effect.intellij.settings.EffectProjectSettingsConfigurable
+import dev.effect.intellij.settings.EffectProjectSettingsService
 import dev.effect.intellij.webview.EffectWebTracerSupport
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
+import java.awt.datatransfer.StringSelection
+import javax.swing.JButton
 import javax.swing.DefaultListCellRenderer
 import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.JTabbedPane
+import javax.swing.JToolBar
 import javax.swing.JTree
 import javax.swing.event.TreeSelectionListener
 import javax.swing.tree.DefaultMutableTreeNode
@@ -78,10 +85,10 @@ class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
     private fun buildContent(): JComponent {
         val clientsPanel = ClientsTabPanel(project, devToolsService)
         val metricsPanel = MetricsTabPanel(devToolsService)
-        val tracerPanel = TracerTabPanel(devToolsService)
+        val tracerPanel = TracerTabPanel(project, devToolsService)
         val webTracerPanel = EffectWebTracerSupport.createPanelOrNull()
         browserTracerPanel = webTracerPanel
-        val debugPanel = DebugTabGroup(debugBridgeService)
+        val debugPanel = DebugTabGroup(project, debugBridgeService)
 
         devToolsService.addListener({ state ->
             onEdt {
@@ -265,6 +272,7 @@ private class MetricsTabPanel(
 }
 
 private class TracerTabPanel(
+    private val project: Project,
     private val devToolsService: EffectDevToolsService,
 ) {
     private val statusLabel = JBLabel()
@@ -280,9 +288,19 @@ private class TracerTabPanel(
         wrapStyleWord = true
         text = "Select a span or span event to inspect its details."
     }
+    private val copyButton = JButton("Copy")
+    private val revealButton = JButton("Reveal Source")
 
     val component: JComponent = JPanel(BorderLayout()).apply {
         add(statusLabel, BorderLayout.NORTH)
+        add(
+            JToolBar().apply {
+                isFloatable = false
+                add(copyButton)
+                add(revealButton)
+            },
+            BorderLayout.SOUTH,
+        )
         add(
             JBSplitter(false, 0.5f).apply {
                 firstComponent = JBScrollPane(tree)
@@ -294,14 +312,15 @@ private class TracerTabPanel(
 
     init {
         tree.addTreeSelectionListener(TreeSelectionListener {
-            val userObject = (tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject
-            detailArea.text = when (userObject) {
-                is RuntimeSpanSnapshot -> userObject.formatSpanDetails()
-                is RuntimeSpanEventSnapshot -> userObject.formatSpanEventDetails()
-                is RuntimeDetailEntry -> "${userObject.key}: ${userObject.value}"
-                else -> "Select a span or span event to inspect its details."
-            }
+            updateSelectionActions()
         })
+        copyButton.addActionListener {
+            runtimeSelectedText()?.let { CopyPasteManager.getInstance().setContents(StringSelection(it)) }
+        }
+        revealButton.addActionListener {
+            runtimeSelectedLocation()?.let { revealSource(project, it) }
+        }
+        updateSelectionActions()
     }
 
     fun refresh(state: DevToolsRuntimeState) {
@@ -319,6 +338,7 @@ private class TracerTabPanel(
             }
         }
         expandAll(tree)
+        updateSelectionActions()
     }
 
     private fun buildSpanNode(span: RuntimeSpanSnapshot): DefaultMutableTreeNode {
@@ -327,15 +347,57 @@ private class TracerTabPanel(
         span.children.forEach { child -> node.add(buildSpanNode(child)) }
         return node
     }
+
+    private fun selectedUserObject(): Any? =
+        (tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject
+
+    private fun updateSelectionActions() {
+        detailArea.text = runtimeSelectedText() ?: "Select a span or span event to inspect its details."
+        copyButton.isEnabled = runtimeSelectedText() != null
+        revealButton.isEnabled = runtimeSelectedLocation() != null
+    }
+
+    private fun runtimeSelectedText(): String? =
+        when (val userObject = selectedUserObject()) {
+            is RuntimeSpanSnapshot -> userObject.formatSpanDetails()
+            is RuntimeSpanEventSnapshot -> userObject.formatSpanEventDetails()
+            is RuntimeDetailEntry -> "${userObject.key}: ${userObject.value}"
+            else -> null
+        }
+
+    private fun runtimeSelectedLocation(): EffectSourceLocation? =
+        when (val userObject = selectedUserObject()) {
+            is RuntimeSpanSnapshot -> userObject.details.toSourceLocation()
+            is RuntimeSpanEventSnapshot -> userObject.details.toSourceLocation()
+            else -> null
+        }
 }
 
 private class DebugTabGroup(
+    private val project: Project,
     private val debugBridgeService: EffectDebugBridgeService,
 ) {
-    private val contextPanel = DebugStatePanel("Context", DebugBridgeState::formatContextSnapshot)
-    private val spanStackPanel = DebugStatePanel("Span Stack", DebugBridgeState::formatSpanStackSnapshot)
-    private val fibersPanel = DebugStatePanel("Fibers", DebugBridgeState::formatFibersSnapshot)
-    private val breakpointsPanel = DebugStatePanel("Breakpoints", DebugBridgeState::formatBreakpointsSnapshot)
+    private val contextPanel = DebugTreePanel(project, "Context")
+    private val spanStackPanel = DebugTreePanel(
+        project,
+        "Span Stack",
+        extraActionLabel = "Toggle Ignore",
+        extraAction = {
+            spanStackIgnoreEnabled = !spanStackIgnoreEnabled
+            refresh(lastState)
+        },
+    )
+    private val fibersPanel = DebugTreePanel(
+        project,
+        "Fibers",
+        extraActionLabel = "Interrupt Selected",
+        extraAction = { entry ->
+            entry?.fiberId?.let { debugBridgeService.interruptFiber(project, it) }
+        },
+    )
+    private val breakpointsPanel = DebugTreePanel(project, "Breakpoints")
+    private var spanStackIgnoreEnabled = true
+    private var lastState = debugBridgeService.currentState()
 
     val component: JComponent = JTabbedPane().apply {
         addTab("Context", contextPanel.component)
@@ -345,44 +407,117 @@ private class DebugTabGroup(
     }
 
     fun refresh(state: DebugBridgeState) {
-        listOf(contextPanel, spanStackPanel, fibersPanel, breakpointsPanel).forEach { panel ->
-            panel.refresh(state)
-        }
+        lastState = state
+        val ignoreList = EffectProjectSettingsService.getInstance(project).currentSettings().spanStackIgnoreList
+        contextPanel.refresh(state, EffectDebugTreeModels.contextEntries(state))
+        spanStackPanel.refresh(
+            state,
+            EffectDebugTreeModels.spanStackEntries(
+                state = state,
+                ignoreList = ignoreList,
+                ignoreEnabled = spanStackIgnoreEnabled,
+            ),
+            suffix = if (spanStackIgnoreEnabled) "ignore list enabled" else "ignore list disabled",
+        )
+        fibersPanel.refresh(state, EffectDebugTreeModels.fiberEntries(state))
+        breakpointsPanel.refresh(state, EffectDebugTreeModels.breakpointEntries(state))
     }
 }
 
-private class DebugStatePanel(
+private class DebugTreePanel(
+    private val project: Project,
     private val title: String,
-    private val formatter: (DebugBridgeState) -> String,
+    extraActionLabel: String? = null,
+    private val extraAction: (EffectDebugTreeEntry?) -> Unit = {},
 ) {
     private val header = JBLabel()
-    private val body = JBTextArea().apply {
+    private val treeRoot = DefaultMutableTreeNode(title)
+    private val treeModel = DefaultTreeModel(treeRoot)
+    private val tree = JTree(treeModel).apply {
+        isRootVisible = false
+        expandsSelectedPaths = true
+    }
+    private val detailArea = JBTextArea().apply {
         isEditable = false
         lineWrap = true
         wrapStyleWord = true
     }
+    private val copyButton = JButton("Copy")
+    private val revealButton = JButton("Reveal Source")
+    private val extraButton = extraActionLabel?.let(::JButton)
 
     val component: JComponent = JPanel(BorderLayout()).apply {
         add(header, BorderLayout.NORTH)
-        add(JBScrollPane(body), BorderLayout.CENTER)
+        add(
+            JToolBar().apply {
+                isFloatable = false
+                add(copyButton)
+                add(revealButton)
+                extraButton?.let(::add)
+            },
+            BorderLayout.SOUTH,
+        )
+        add(
+            JBSplitter(false, 0.5f).apply {
+                firstComponent = JBScrollPane(tree)
+                secondComponent = JBScrollPane(detailArea)
+            },
+            BorderLayout.CENTER,
+        )
     }
 
-    fun refresh(state: DebugBridgeState) {
-        header.text = if (state.attachedSessionName == null) {
+    init {
+        tree.addTreeSelectionListener(TreeSelectionListener { updateSelectionActions() })
+        copyButton.addActionListener {
+            selectedEntry()?.let { entry ->
+                CopyPasteManager.getInstance().setContents(StringSelection(entry.copyText))
+            }
+        }
+        revealButton.addActionListener {
+            selectedEntry()?.location?.let { revealSource(project, it) }
+        }
+        extraButton?.addActionListener {
+            extraAction(selectedEntry())
+        }
+        updateSelectionActions()
+    }
+
+    fun refresh(state: DebugBridgeState, entries: List<EffectDebugTreeEntry>, suffix: String? = null) {
+        val baseHeader = if (state.attachedSessionName == null) {
             "$title: no debug session attached"
         } else if (state.refreshInProgress) {
             "$title: refreshing ${state.attachedSessionName}"
         } else {
             "$title: attached to ${state.attachedSessionName} (${state.attachedSessionType ?: "unknown"})"
         }
-        body.text = buildString {
-            if (state.error != null) {
-                appendLine(state.error)
-                appendLine()
-            }
-            append(formatter(state))
+        header.text = listOfNotNull(baseHeader, suffix).joinToString(" - ")
+        rebuildTree(treeRoot, treeModel) {
+            entries.forEach { treeRoot.add(it.toTreeNode()) }
         }
+        expandAll(tree)
+        if (tree.selectionPath == null && tree.rowCount > 0) {
+            tree.setSelectionRow(0)
+        }
+        state.error?.let { detailArea.text = it }
+        updateSelectionActions()
     }
+
+    private fun selectedEntry(): EffectDebugTreeEntry? =
+        (tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject as? EffectDebugTreeEntry
+
+    private fun updateSelectionActions() {
+        val selected = selectedEntry()
+        detailArea.text = selected?.detail ?: "Select an entry to inspect details."
+        copyButton.isEnabled = selected != null
+        revealButton.isEnabled = selected?.location != null
+        extraButton?.isEnabled = selected != null
+    }
+
+    private fun EffectDebugTreeEntry.toTreeNode(): DefaultMutableTreeNode =
+        DefaultMutableTreeNode(this).also { node ->
+            children.forEach { node.add(it.toTreeNode()) }
+        }
+
 }
 
 private class StartRuntimeAction(private val project: Project) : AnAction(
@@ -571,99 +706,28 @@ private fun RuntimeSpanEventSnapshot.formatSpanEventDetails(): String = buildStr
     }
 }
 
-private fun DebugBridgeState.formatContextSnapshot(): String {
-    val current = snapshot ?: return guidance
-    if (current.context.isEmpty()) {
-        return current.message ?: "No Effect Context entries are visible for the current fiber."
-    }
-    return buildString {
-        current.message?.let {
-            appendLine(it)
-            appendLine()
-        }
-        current.context.forEach { entry ->
-            appendLine(entry.tag)
-            appendLine(entry.value.formatDebugValue("  "))
-        }
-    }
+private fun List<RuntimeDetailEntry>.toSourceLocation(): EffectSourceLocation? {
+    val byKey = associateBy { it.key.lowercase() }
+    val path = listOf("path", "file", "source.path", "source.file", "attr.path", "attr.file")
+        .firstNotNullOfOrNull { key -> byKey[key]?.value?.takeIf(String::isNotBlank) }
+        ?: return null
+    val line = listOf("line", "source.line", "attr.line")
+        .firstNotNullOfOrNull { key -> byKey[key]?.value?.toIntOrNull() }
+        ?: 0
+    val column = listOf("column", "col", "source.column", "source.col", "attr.column", "attr.col")
+        .firstNotNullOfOrNull { key -> byKey[key]?.value?.toIntOrNull() }
+        ?: 0
+    return EffectSourceLocation(path, line, column)
 }
 
-private fun DebugBridgeState.formatSpanStackSnapshot(): String {
-    val current = snapshot ?: return guidance
-    if (current.spanStack.isEmpty()) {
-        return current.message ?: "No Effect spans are visible for the current fiber."
+private fun revealSource(project: Project, location: EffectSourceLocation) {
+    val file = LocalFileSystem.getInstance().refreshAndFindFileByPath(location.path)
+    if (file == null) {
+        ApplicationManager.getApplication().getService(EffectNotificationService::class.java)
+            .warning(project, "Effect source unavailable", "Could not find ${location.path}.")
+        return
     }
-    return current.spanStack.joinToString(separator = "\n\n") { it.formatDebugSpan() }
-}
-
-private fun DebugBridgeState.formatFibersSnapshot(): String {
-    val current = snapshot ?: return guidance
-    if (current.fibers.isEmpty()) {
-        return current.message ?: "No live Effect fibers have been observed yet."
-    }
-    return current.fibers.joinToString(separator = "\n\n") { it.formatDebugFiber() }
-}
-
-private fun DebugBridgeState.formatBreakpointsSnapshot(): String {
-    val current = snapshot ?: return guidance
-    return current.breakpoints.formatDebugBreakpoints()
-}
-
-private fun EffectDebugBreakpointsSnapshot.formatDebugBreakpoints(): String = buildString {
-    appendLine("pauseOnDefects: $pauseOnDefects")
-    location?.let {
-        appendLine("lastPauseLocation: ${it.path ?: "<unknown>"}:${it.line ?: 0}:${it.column ?: 0}")
-    }
-    if (values.isNotEmpty()) {
-        appendLine()
-        appendLine("Values")
-        values.forEach { value -> appendLine(value.formatDebugValue("  ")) }
-    }
-}
-
-private fun EffectDebugFiberEntry.formatDebugFiber(): String = buildString {
-    append(id)
-    if (isCurrent) {
-        append(" current")
-    }
-    appendLine()
-    appendLine("interruptible: $isInterruptible")
-    appendLine("interrupted: $isInterrupted")
-    lifeTimeMillis?.let { appendLine("lifetimeMs: $it") }
-    if (children.isNotEmpty()) {
-        appendLine("children: ${children.joinToString()}")
-    }
-    if (stack.isNotEmpty()) {
-        appendLine()
-        appendLine("Span Stack")
-        stack.forEach { span -> appendLine("  ${span.formatDebugSpan().replace("\n", "\n  ")}") }
-    }
-}
-
-private fun EffectDebugSpanEntry.formatDebugSpan(): String = buildString {
-    appendLine(name)
-    spanId?.let { appendLine("spanId: $it") }
-    traceId?.let { appendLine("traceId: $it") }
-    stackIndex?.let { appendLine("stackIndex: $it") }
-    if (path != null) {
-        appendLine("source: $path:${line ?: 0}:${column ?: 0}")
-    }
-    if (attributes.isNotEmpty()) {
-        appendLine("attributes: ${attributes.joinToString()}")
-    }
-}
-
-private fun EffectDebugValueSnapshot.formatDebugValue(indent: String = ""): String = buildString {
-    append(indent)
-    append(label)
-    type?.takeIf { it != label }?.let { append(" : ").append(it) }
-    summary?.takeIf { it != label }?.let { append(" = ").append(it) }
-    if (children.isNotEmpty()) {
-        children.forEach { child ->
-            appendLine()
-            append(child.formatDebugValue("$indent  "))
-        }
-    }
+    OpenFileDescriptor(project, file, location.line.coerceAtLeast(0), location.column.coerceAtLeast(0)).navigate(true)
 }
 
 private fun rebuildTree(root: DefaultMutableTreeNode, model: DefaultTreeModel, fill: () -> Unit) {

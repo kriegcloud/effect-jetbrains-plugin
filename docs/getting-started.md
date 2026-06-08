@@ -61,7 +61,9 @@ If you already use npm to obtain `@effect/tsgo`, one way to discover a native ex
 npm exec --yes --package @effect/tsgo -- effect-tsgo get-exe-path
 ```
 
-Use the resulting executable path in `MANUAL` mode.
+Use the resulting native `tsgo` executable path in `MANUAL` mode. Do not point manual mode at the
+`effect-tsgo` package CLI wrapper; the plugin already supplies `--lsp --stdio` when it launches the
+native server.
 
 Managed modes download npm platform packages and validate npm tarball integrity before extraction.
 
@@ -98,7 +100,8 @@ The default runtime server port is `34437`.
 - Runtime metrics are polled from connected clients.
 - Tracer data is streamed from runtime span events.
 - A browser-backed `Tracer Web` tab appears when the IDE's JCEF runtime is available.
-- The `Debug` tab can attach to a paused debug session, inject optional Node.js instrumentation,
-  and show best-effort `Context`, `Span Stack`, `Fibers`, and `Breakpoints` snapshots.
+- The `Debug` tab can attach to a paused debug session, inject optional Node.js instrumentation for
+  configured JetBrains Node run/debug profiles, and show interactive `Context`, `Span Stack`,
+  `Fibers`, and `Breakpoints` snapshots.
 
 Continue with the [usage guide](usage.md) once the plugin is installed and running.

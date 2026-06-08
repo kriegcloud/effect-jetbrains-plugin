@@ -7,7 +7,12 @@
     "moduleResolution": "NodeNext",
     "plugins": [
       {
-        "name": "@effect/language-service"
+        "name": "@effect/language-service",
+        "diagnosticSeverity": {
+          "catchToOrElseSucceed": "warning",
+          "redundantOrDie": "warning",
+          "schemaNumber": "warning"
+        }
       }
     ]
   },

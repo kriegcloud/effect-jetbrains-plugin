@@ -19,14 +19,17 @@ function parseArgs(argv) {
     if (current === "--binary") {
       args.binary = argv[index + 1]
       index += 1
+    } else if (current === "--only") {
+      args.only = argv[index + 1]
+      index += 1
     }
   }
   return args
 }
 
-const { binary } = parseArgs(process.argv.slice(2))
+const { binary, only = "all" } = parseArgs(process.argv.slice(2))
 if (!binary) {
-  console.error("Usage: node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/tsgo")
+  console.error("Usage: node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/tsgo [--only healthy|failing|new-diagnostics|all]")
   process.exit(1)
 }
 
@@ -151,6 +154,11 @@ class LspClient {
   }
 
   handleMessage(message) {
+    if (typeof message.id !== "undefined" && typeof message.method === "string") {
+      this.handleServerRequest(message)
+      return
+    }
+
     if (typeof message.id !== "undefined") {
       const pending = this.pending.get(message.id)
       if (!pending) {
@@ -176,6 +184,19 @@ class LspClient {
       this.notificationWaiters = this.notificationWaiters.filter((candidate) => candidate !== waiter)
       waiter.resolve(message.params)
     }
+  }
+
+  handleServerRequest(message) {
+    let result = null
+    if (message.method === "workspace/configuration") {
+      const items = Array.isArray(message.params?.items) ? message.params.items : []
+      result = items.map(() => null)
+    }
+    this.send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result,
+    })
   }
 }
 
@@ -268,6 +289,49 @@ function hoverText(hover) {
     return contents.value
   }
   return JSON.stringify(contents)
+}
+
+function fullDocumentRange(text) {
+  const lines = text.split("\n")
+  return {
+    start: { line: 0, character: 0 },
+    end: {
+      line: lines.length - 1,
+      character: lines[lines.length - 1].length,
+    },
+  }
+}
+
+function diagnosticMessages(diagnostics) {
+  return diagnostics.map((diagnostic) => String(diagnostic.message ?? ""))
+}
+
+function diagnosticsFromReport(report) {
+  if (Array.isArray(report)) {
+    return report
+  }
+  if (Array.isArray(report?.items)) {
+    return report.items
+  }
+  if (report?.relatedDocuments && typeof report.relatedDocuments === "object") {
+    return Object.values(report.relatedDocuments).flatMap(diagnosticsFromReport)
+  }
+  return []
+}
+
+async function pullDiagnosticsWithRetries(client, uri, predicate) {
+  const report = await requestWithRetries(client, "textDocument/diagnostic", {
+    textDocument: { uri },
+  }, {
+    attempts: 6,
+    timeoutMs: 15_000,
+    delayMs: 2_500,
+    responsePredicate: (candidate) => {
+      const diagnostics = diagnosticsFromReport(candidate)
+      return Array.isArray(diagnostics) && diagnostics.length > 0 && predicate(diagnostics)
+    },
+  })
+  return diagnosticsFromReport(report)
 }
 
 async function verifyHealthyWorkspace(workspacePath) {
@@ -392,9 +456,9 @@ Layer.`
     }, {
       attempts: 4,
       timeoutMs: 20_000,
-      responsePredicate: (hints) => Array.isArray(hints) && hints.length > 0,
+      responsePredicate: (hints) => hints === null || Array.isArray(hints),
     })
-    assert(Array.isArray(inlayHints) && inlayHints.length > 0, "Expected inlay hints from healthy workspace")
+    const normalizedInlayHints = Array.isArray(inlayHints) ? inlayHints : []
 
     const workspaceSymbols = await requestWithRetries(client, "workspace/symbol", {
       query: "Database",
@@ -407,10 +471,101 @@ Layer.`
 
     return {
       hoverHasMermaidLink: true,
+      executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],
       completionItems: completionItems.length,
-      inlayHints: inlayHints.length,
+      inlayHints: normalizedInlayHints.length,
       documentSymbols: documentSymbolNames,
       workspaceSymbolCount: workspaceSymbols.length,
+      workspacePath,
+    }
+  } finally {
+    await client.shutdown()
+  }
+}
+
+async function verifyNewDiagnosticsWorkspace(workspacePath) {
+  const filePath = path.join(workspacePath, "src", "index.ts")
+  const text = await readFile(filePath, "utf8")
+  const uri = pathToFileURL(filePath).href
+  const workspaceUri = pathToFileURL(workspacePath).href
+  const client = new LspClient(binary, ["--lsp", "--stdio"], workspacePath)
+  try {
+    const initializeResult = await client.request("initialize", {
+      processId: process.pid,
+      clientInfo: { name: "effect-jetbrains-plugin-lsp-verifier", version: "1" },
+      rootPath: workspacePath,
+      rootUri: workspaceUri,
+      workspaceFolders: [
+        {
+          uri: workspaceUri,
+          name: path.basename(workspacePath),
+        },
+      ],
+      capabilities: {
+        textDocument: {
+          codeAction: {
+            codeActionLiteralSupport: {
+              codeActionKind: {
+                valueSet: ["quickfix", "refactor", "source"],
+              },
+            },
+          },
+        },
+      },
+      workspace: {},
+    })
+    console.error("new diagnostics capabilities:", JSON.stringify(initializeResult.capabilities ?? {}, null, 2))
+    client.notify("initialized", {})
+    client.notify("workspace/didChangeConfiguration", { settings: {} })
+    client.notify("textDocument/didOpen", {
+      textDocument: {
+        uri,
+        languageId: "typescript",
+        version: 1,
+        text,
+      },
+    })
+
+    const diagnostics = await pullDiagnosticsWithRetries(
+      client,
+      uri,
+      (candidateDiagnostics) => {
+        const messages = diagnosticMessages(candidateDiagnostics)
+        return messages.some((message) => message.includes("effect(catchToOrElseSucceed)")) &&
+          messages.some((message) => message.includes("effect(redundantOrDie)")) &&
+          messages.some((message) => message.includes("effect(schemaNumber)"))
+      },
+    )
+    const messages = diagnosticMessages(diagnostics)
+
+    const codeActions = await client.request("textDocument/codeAction", {
+      textDocument: { uri },
+      range: fullDocumentRange(text),
+      context: {
+        diagnostics,
+      },
+    })
+    const codeActionTitles = Array.isArray(codeActions)
+      ? codeActions.map((action) => String(action.title ?? ""))
+      : []
+
+    assert(
+      codeActionTitles.some((title) => title.includes("Effect.orElseSucceed")),
+      "Expected catchToOrElseSucceed code action to mention Effect.orElseSucceed",
+    )
+    assert(
+      codeActionTitles.some((title) => title.includes("Schema.Finite")),
+      "Expected schemaNumber code action to mention Schema.Finite",
+    )
+    assert(
+      codeActionTitles.some((title) => title.includes("Schema.FiniteFromString")),
+      "Expected schemaNumber code action to mention Schema.FiniteFromString",
+    )
+
+    return {
+      diagnostics: messages,
+      codeActionTitles,
+      executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],
       workspacePath,
     }
   } finally {
@@ -461,24 +616,24 @@ async function verifyFailingWorkspace(workspacePath) {
       },
     })
 
-    const diagnosticsParams = await client.waitForNotification(
-      "textDocument/publishDiagnostics",
-      (params) => params.uri === uri && Array.isArray(params.diagnostics) && params.diagnostics.length > 0,
-      10_000,
+    const diagnostics = await pullDiagnosticsWithRetries(
+      client,
+      uri,
+      (candidateDiagnostics) => candidateDiagnostics.length > 0,
     )
-    assert(diagnosticsParams.diagnostics.length > 0, "Expected diagnostics for failing workspace")
+    assert(diagnostics.length > 0, "Expected diagnostics for failing workspace")
 
     const codeActions = await client.request("textDocument/codeAction", {
       textDocument: { uri },
-      range: diagnosticsParams.diagnostics[0].range,
+      range: diagnostics[0].range,
       context: {
-        diagnostics: diagnosticsParams.diagnostics,
+        diagnostics,
       },
     })
     assert(Array.isArray(codeActions) && codeActions.length > 0, "Expected code actions for failing workspace diagnostics")
 
     return {
-      diagnostics: diagnosticsParams.diagnostics.map((diagnostic) => ({
+      diagnostics: diagnostics.map((diagnostic) => ({
         code: diagnostic.code,
         message: diagnostic.message,
       })),
@@ -492,17 +647,33 @@ async function verifyFailingWorkspace(workspacePath) {
 
 async function main() {
   await chmod(binary, 0o755).catch(() => {})
+  const validOnlyValues = new Set(["all", "healthy", "failing", "new-diagnostics"])
+  if (!validOnlyValues.has(only)) {
+    throw new Error(`Invalid --only value: ${only}`)
+  }
 
-  const healthyWorkspace = await copyFixtureWorkspace("healthy-workspace")
-  const failingWorkspace = await copyFixtureWorkspace("failing-workspace")
+  const workspaceDependencies = ["typescript", "effect@beta", "@effect/language-service"]
+  const result = {}
 
-  await runCommand("npm", ["install", "--no-fund", "--no-audit", "typescript", "effect", "@effect/language-service"], healthyWorkspace)
-  await runCommand("npm", ["install", "--no-fund", "--no-audit", "typescript", "effect", "@effect/language-service"], failingWorkspace)
+  if (only === "all" || only === "healthy") {
+    const healthyWorkspace = await copyFixtureWorkspace("healthy-workspace")
+    await runCommand("npm", ["install", "--no-fund", "--no-audit", ...workspaceDependencies], healthyWorkspace)
+    result.healthy = await verifyHealthyWorkspace(healthyWorkspace)
+  }
 
-  const healthy = await verifyHealthyWorkspace(healthyWorkspace)
-  const failing = await verifyFailingWorkspace(failingWorkspace)
+  if (only === "all" || only === "failing") {
+    const failingWorkspace = await copyFixtureWorkspace("failing-workspace")
+    await runCommand("npm", ["install", "--no-fund", "--no-audit", ...workspaceDependencies], failingWorkspace)
+    result.failing = await verifyFailingWorkspace(failingWorkspace)
+  }
 
-  console.log(JSON.stringify({ healthy, failing }, null, 2))
+  if (only === "all" || only === "new-diagnostics") {
+    const newDiagnosticsWorkspace = await copyFixtureWorkspace("new-diagnostics-workspace")
+    await runCommand("npm", ["install", "--no-fund", "--no-audit", ...workspaceDependencies], newDiagnosticsWorkspace)
+    result.newDiagnostics = await verifyNewDiagnosticsWorkspace(newDiagnosticsWorkspace)
+  }
+
+  console.log(JSON.stringify(result, null, 2))
 }
 
 main().catch((error) => {

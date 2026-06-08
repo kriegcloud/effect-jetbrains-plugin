@@ -61,12 +61,21 @@ class EffectProjectSettingsConfigurable(private val project: Project) : Searchab
 }
 
 private class EffectProjectSettingsComponent(private val project: Project) {
+    private val booleanOptions = arrayOf(SERVER_DEFAULT_OPTION, "true", "false")
     private val binaryMode = ComboBox(EffectBinaryMode.entries.toTypedArray())
     private val pinnedVersion = JBTextField()
     private val manualBinaryPath = TextFieldWithBrowseButton()
     private val extraEnv = JBTextArea(8, 40)
     private val initializationOptions = JBTextArea(8, 40)
     private val workspaceConfiguration = JBTextArea(8, 40)
+    private val lspInlays = ComboBox(booleanOptions)
+    private val lspMermaidProvider = JBTextField()
+    private val lspNoExternal = ComboBox(booleanOptions)
+    private val lspLayerGraphFollowDepth = JBTextField()
+    private val lspDiagnosticSeverity = JBTextArea(5, 40).apply {
+        lineWrap = true
+        wrapStyleWord = true
+    }
     private val devToolsPort = JSpinner(SpinnerNumberModel(34_437, 1, 65_535, 1))
     private val metricsPollInterval = JSpinner(SpinnerNumberModel(500, 50, 60_000, 50))
     private val injectNodeOptions = JCheckBox("Inject Effect instrumentation into Node.js run/debug configurations")
@@ -98,6 +107,11 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         val lspPanel = FormBuilder.createFormBuilder()
             .addLabeledComponent("Extra environment (KEY=VALUE per line)", JBScrollPane(extraEnv))
             .addLabeledComponent("Initialization options JSON", JBScrollPane(initializationOptions))
+            .addLabeledComponent("Inlays", lspInlays)
+            .addLabeledComponent("Mermaid provider", lspMermaidProvider)
+            .addLabeledComponent("Suppress external Mermaid links", lspNoExternal)
+            .addLabeledComponent("Layer graph follow depth", lspLayerGraphFollowDepth)
+            .addLabeledComponent("Diagnostic severity (rule=severity per line)", JBScrollPane(lspDiagnosticSeverity))
             .addLabeledComponent("Workspace configuration JSON", JBScrollPane(workspaceConfiguration))
             .panel
 
@@ -131,8 +145,15 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         preferredSize = Dimension(900, 640)
 
         binaryMode.addActionListener { updateBinaryFieldState() }
-        listOf(extraEnv, initializationOptions, workspaceConfiguration, injectDebugConfigurationTypes, spanStackIgnoreList).forEach { area ->
+        listOf(extraEnv, initializationOptions, workspaceConfiguration, lspDiagnosticSeverity, injectDebugConfigurationTypes, spanStackIgnoreList).forEach { area ->
             area.document.addDocumentListener(object : DocumentAdapter() {
+                override fun textChanged(event: DocumentEvent) {
+                    clearProblems()
+                }
+            })
+        }
+        listOf(lspMermaidProvider, lspLayerGraphFollowDepth).forEach { field ->
+            field.document.addDocumentListener(object : DocumentAdapter() {
                 override fun textChanged(event: DocumentEvent) {
                     clearProblems()
                 }
@@ -149,6 +170,11 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         extraEnv.text = settings.extraEnv.entries.joinToString(separator = "\n") { (key, value) -> "$key=$value" }
         initializationOptions.text = settings.initializationOptionsJson
         workspaceConfiguration.text = settings.workspaceConfigurationJson
+        lspInlays.selectedItem = settings.lspInlays?.toString() ?: SERVER_DEFAULT_OPTION
+        lspMermaidProvider.text = settings.lspMermaidProvider
+        lspNoExternal.selectedItem = settings.lspNoExternal?.toString() ?: SERVER_DEFAULT_OPTION
+        lspLayerGraphFollowDepth.text = settings.lspLayerGraphFollowDepth?.toString().orEmpty()
+        lspDiagnosticSeverity.text = settings.lspDiagnosticSeverity.entries.joinToString(separator = "\n") { (rule, severity) -> "$rule=$severity" }
         devToolsPort.value = settings.devToolsPort
         metricsPollInterval.value = settings.metricsPollIntervalMs
         injectNodeOptions.isSelected = settings.injectNodeOptions
@@ -166,6 +192,11 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             extraEnv = parseEnv(extraEnv.text),
             initializationOptionsJson = initializationOptions.text.trim(),
             workspaceConfigurationJson = workspaceConfiguration.text.trim(),
+            lspInlays = parseOptionalBoolean(lspInlays.selectedItem),
+            lspMermaidProvider = lspMermaidProvider.text.trim(),
+            lspNoExternal = parseOptionalBoolean(lspNoExternal.selectedItem),
+            lspLayerGraphFollowDepth = parseOptionalNonNegativeInt(lspLayerGraphFollowDepth.text),
+            lspDiagnosticSeverity = parseEnv(lspDiagnosticSeverity.text),
             devToolsPort = devToolsPort.value as Int,
             metricsPollIntervalMs = metricsPollInterval.value as Int,
             spanStackIgnoreList = parseList(spanStackIgnoreList.text),
@@ -209,4 +240,23 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             .map(String::trim)
             .filter(String::isNotBlank)
             .toList()
+
+    private fun parseOptionalBoolean(value: Any?): Boolean? =
+        when (value?.toString()?.trim()?.lowercase()) {
+            "true" -> true
+            "false" -> false
+            else -> null
+        }
+
+    private fun parseOptionalNonNegativeInt(value: String): Int? {
+        val trimmed = value.trim()
+        if (trimmed.isBlank()) {
+            return null
+        }
+        return trimmed.toIntOrNull() ?: -1
+    }
+
+    companion object {
+        private const val SERVER_DEFAULT_OPTION = "Server default"
+    }
 }

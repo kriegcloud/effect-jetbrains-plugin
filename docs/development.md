@@ -29,6 +29,7 @@ The repository also carries a real-binary probe script for `@effect/tsgo`:
 
 ```bash
 node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo
+node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo --only new-diagnostics
 ```
 
 ## Documentation Maintenance Rules
@@ -61,11 +62,11 @@ up a genuine implementation bug that should be corrected separately.
 ## External `@effect/tsgo` Canary
 
 The plugin's managed `LATEST` and `PINNED` modes resolve published npm builds. To exercise unpublished
-server patches, clone `Effect-TS/effect-tsgo` outside this repository, build it there, and point
+server patches, clone `Effect-TS/tsgo` outside this repository, build it there, and point
 `MANUAL` binary mode at the generated executable:
 
 ```bash
-git clone https://github.com/Effect-TS/effect-tsgo ../effect-tsgo-canary
+git clone https://github.com/Effect-TS/tsgo ../effect-tsgo-canary
 (cd ../effect-tsgo-canary && bash _tools/setup-repo.sh --ci && pnpm run build)
 ```
 
