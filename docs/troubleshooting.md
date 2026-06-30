@@ -9,6 +9,29 @@ When something goes wrong, check these in order:
 3. The `Effect Dev Tools` status banner and active client selection
 4. The IDE log directory from the widget's `Logs` action
 
+## Plugin Is Missing After Local Install
+
+If `Settings | Tools | Effect`, the Effect LSP widget, or `Effect Dev Tools` is missing after
+installing from disk:
+
+1. Restart the IDE after installing or updating the plugin ZIP.
+2. Open `Settings | Plugins | Installed` and confirm `Effect TSGO` is enabled.
+3. If JetBrains Settings Sync is enabled, confirm it did not mark `dev.effect.jetbrains` disabled.
+4. Confirm the plugin exists in the IDE plugin install directory, not only in the IDE plugin cache.
+
+For local WebStorm smoke testing, close WebStorm and install the latest built ZIP directly:
+
+```bash
+scripts/install-local-webstorm-plugin.sh --product WebStorm2026.2
+```
+
+The helper unpacks the plugin into the local JetBrains plugin directory, removes stale
+`effect-jetbrains-plugin*.zip` cache entries, removes the plugin from `disabled_plugins.txt` if
+needed, and clears a local Settings Sync `enabled: false` marker for `dev.effect.jetbrains`.
+
+The IDE log should list `Effect TSGO` under loaded custom plugins on startup. If it only shows a
+cached `effect-jetbrains-plugin.zip`, install from disk again, apply the plugin change, and restart.
+
 ## Common LSP Issues
 
 | Symptom | Likely cause | What to do |

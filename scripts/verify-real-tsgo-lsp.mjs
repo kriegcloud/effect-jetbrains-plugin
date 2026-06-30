@@ -29,7 +29,7 @@ function parseArgs(argv) {
 
 const { binary, only = "all" } = parseArgs(process.argv.slice(2))
 if (!binary) {
-  console.error("Usage: node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/tsgo [--only healthy|failing|new-diagnostics|all]")
+  console.error("Usage: node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/tsgo [--only healthy|failing|new-diagnostics|diagnostic-directives|all]")
   process.exit(1)
 }
 
@@ -306,6 +306,20 @@ function diagnosticMessages(diagnostics) {
   return diagnostics.map((diagnostic) => String(diagnostic.message ?? ""))
 }
 
+function diagnosticsForRule(diagnostics, ruleName) {
+  return diagnostics.filter((diagnostic) => String(diagnostic.message ?? "").includes(`effect(${ruleName})`))
+}
+
+function hasDiagnosticOnLine(diagnostics, line) {
+  return diagnostics.some((diagnostic) => diagnostic?.range?.start?.line === line)
+}
+
+function lineNumberOf(text, needle) {
+  const index = text.indexOf(needle)
+  assert(index >= 0, `Expected source to contain ${needle}`)
+  return text.slice(0, index).split("\n").length - 1
+}
+
 function diagnosticsFromReport(report) {
   if (Array.isArray(report)) {
     return report
@@ -573,6 +587,82 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
   }
 }
 
+async function verifyDiagnosticDirectivesWorkspace(workspacePath) {
+  const filePath = path.join(workspacePath, "src", "index.ts")
+  const text = await readFile(filePath, "utf8")
+  const uri = pathToFileURL(filePath).href
+  const workspaceUri = pathToFileURL(workspacePath).href
+  const client = new LspClient(binary, ["--lsp", "--stdio"], workspacePath)
+  try {
+    const initializeResult = await client.request("initialize", {
+      processId: process.pid,
+      clientInfo: { name: "effect-jetbrains-plugin-lsp-verifier", version: "1" },
+      rootPath: workspacePath,
+      rootUri: workspaceUri,
+      workspaceFolders: [
+        {
+          uri: workspaceUri,
+          name: path.basename(workspacePath),
+        },
+      ],
+      capabilities: {
+        textDocument: {
+          codeAction: {
+            codeActionLiteralSupport: {
+              codeActionKind: {
+                valueSet: ["quickfix", "refactor", "source"],
+              },
+            },
+          },
+        },
+      },
+      workspace: {},
+    })
+    console.error("diagnostic directives capabilities:", JSON.stringify(initializeResult.capabilities ?? {}, null, 2))
+    client.notify("initialized", {})
+    client.notify("workspace/didChangeConfiguration", { settings: {} })
+    client.notify("textDocument/didOpen", {
+      textDocument: {
+        uri,
+        languageId: "typescript",
+        version: 1,
+        text,
+      },
+    })
+
+    const diagnostics = await pullDiagnosticsWithRetries(
+      client,
+      uri,
+      (candidateDiagnostics) => {
+        const messages = diagnosticMessages(candidateDiagnostics)
+        return messages.some((message) => message.includes("effect(strictEffectProvide)")) &&
+          messages.some((message) => message.includes("effect(floatingEffect)"))
+      },
+    )
+    const messages = diagnosticMessages(diagnostics)
+    const strictDiagnostics = diagnosticsForRule(diagnostics, "strictEffectProvide")
+    const floatingDiagnostics = diagnosticsForRule(diagnostics, "floatingEffect")
+
+    assert(!messages.some((message) => message.includes("@effect-diagnostics directive has no effect")), "Expected all directive comments to be used")
+    assert(hasDiagnosticOnLine(strictDiagnostics, lineNumberOf(text, "visible-strict")), "Expected unsuppressed strictEffectProvide diagnostic")
+    assert(!hasDiagnosticOnLine(strictDiagnostics, lineNumberOf(text, "hidden-strict")), "Expected strictEffectProvide next-line directive to suppress diagnostic")
+    assert(hasDiagnosticOnLine(floatingDiagnostics, lineNumberOf(text, "visible-floating")), "Expected unsuppressed floatingEffect diagnostic")
+    assert(!hasDiagnosticOnLine(floatingDiagnostics, lineNumberOf(text, "hidden-floating-next-line")), "Expected floatingEffect next-line directive to suppress diagnostic")
+    assert(!hasDiagnosticOnLine(floatingDiagnostics, lineNumberOf(text, "hidden-floating-section")), "Expected floatingEffect section directive to suppress diagnostic")
+    assert(hasDiagnosticOnLine(floatingDiagnostics, lineNumberOf(text, "visible-floating-section")), "Expected later floatingEffect directive to re-enable diagnostic")
+
+    return {
+      diagnostics: messages,
+      strictEffectProvideLines: strictDiagnostics.map((diagnostic) => diagnostic.range.start.line),
+      floatingEffectLines: floatingDiagnostics.map((diagnostic) => diagnostic.range.start.line),
+      executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],
+      workspacePath,
+    }
+  } finally {
+    await client.shutdown()
+  }
+}
+
 async function verifyFailingWorkspace(workspacePath) {
   const filePath = path.join(workspacePath, "src", "index.ts")
   const text = await readFile(filePath, "utf8")
@@ -647,7 +737,7 @@ async function verifyFailingWorkspace(workspacePath) {
 
 async function main() {
   await chmod(binary, 0o755).catch(() => {})
-  const validOnlyValues = new Set(["all", "healthy", "failing", "new-diagnostics"])
+  const validOnlyValues = new Set(["all", "healthy", "failing", "new-diagnostics", "diagnostic-directives"])
   if (!validOnlyValues.has(only)) {
     throw new Error(`Invalid --only value: ${only}`)
   }
@@ -671,6 +761,12 @@ async function main() {
     const newDiagnosticsWorkspace = await copyFixtureWorkspace("new-diagnostics-workspace")
     await runCommand("npm", ["install", "--no-fund", "--no-audit", ...workspaceDependencies], newDiagnosticsWorkspace)
     result.newDiagnostics = await verifyNewDiagnosticsWorkspace(newDiagnosticsWorkspace)
+  }
+
+  if (only === "all" || only === "diagnostic-directives") {
+    const diagnosticDirectivesWorkspace = await copyFixtureWorkspace("diagnostic-directives-workspace")
+    await runCommand("npm", ["install", "--no-fund", "--no-audit", ...workspaceDependencies], diagnosticDirectivesWorkspace)
+    result.diagnosticDirectives = await verifyDiagnosticDirectivesWorkspace(diagnosticDirectivesWorkspace)
   }
 
   console.log(JSON.stringify(result, null, 2))

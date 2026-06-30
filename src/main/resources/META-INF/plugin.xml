@@ -1,4 +1,4 @@
-<idea-plugin>
+<idea-plugin require-restart="true">
     <id>dev.effect.jetbrains</id>
     <name>Effect TSGO</name>
     <vendor>Effect</vendor>

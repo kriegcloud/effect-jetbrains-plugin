@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.1]
+
+- Added JetBrains-side support for Effect diagnostic directive comments before LSP diagnostics become editor annotations.
+- Changed plugin metadata to require an IDE restart for install, update, and uninstall so LSP and tool-window extension points are registered on startup.
+- Documented local install checks for Settings Sync, the installed plugin directory, and restart behavior.
+
 ## [0.1.0]
 
 - Retargeted development and compatibility metadata to the WebStorm 2026.2 EAP / 262 platform line.

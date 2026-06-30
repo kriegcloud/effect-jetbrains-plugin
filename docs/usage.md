@@ -41,9 +41,14 @@ The table above describes the shipped surface area. Recorded real-binary LSP smo
 fixtures below; full manual IDE/editor smoke and broader semantic coverage remain follow-up validation
 items in this repo.
 
+Effect diagnostic directive comments such as `// @effect-diagnostics-next-line strictEffectProvide:off`
+and `/** @effect-diagnostics floatingEffect:skip-file */` are honored before LSP diagnostics become
+JetBrains editor annotations. This keeps manual server configurations from showing stale red squiggles
+for diagnostics that the source has explicitly disabled.
+
 ### Current TSGO Smoke Targets
 
-The current real-binary smoke target is `@effect/tsgo@0.14.1`. That version includes the
+The current real-binary smoke target is `@effect/tsgo@0.14.3`. That version includes the
 `catchToOrElseSucceed`, `redundantOrDie`, and `schemaNumber` diagnostics added after the previous
 `0.11.4` reference import. Effect v4 samples must install `effect@beta` or an explicit
 `effect@4.0.0-beta.78` version because the npm `effect` `latest` tag is still v3.

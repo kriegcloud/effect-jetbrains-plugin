@@ -30,6 +30,7 @@ The repository also carries a real-binary probe script for `@effect/tsgo`:
 ```bash
 node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo
 node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo --only new-diagnostics
+node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo --only diagnostic-directives
 ```
 
 ## Documentation Maintenance Rules

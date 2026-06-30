@@ -32,6 +32,10 @@ The repository currently documents local installation from source:
 Install the generated ZIP from `build/distributions/` using your IDE's `Install Plugin from Disk`
 action.
 
+Restart the IDE after install or update. The plugin declares restart-required metadata so its LSP
+support, status widget, settings page, and `Effect Dev Tools` tool window are registered during IDE
+startup.
+
 ## Configure Effect Settings
 
 Open `Settings | Tools | Effect`.

@@ -56,12 +56,21 @@ The current plugin baseline is:
    The Gradle build uses a Java 25 toolchain for the 2026.2 EAP classfile level.
 
 2. Install the plugin from disk in a supported JetBrains IDE using the artifact in
-   `build/distributions/`.
-3. Open `Settings | Tools | Effect` and provide an executable native `tsgo` path in `MANUAL` mode.
+   `build/distributions/`. For local WebStorm smoke testing, close WebStorm and run:
+
+   ```bash
+   scripts/install-local-webstorm-plugin.sh --product WebStorm2026.2
+   ```
+
+   The helper installs the latest built ZIP into the local JetBrains plugin directory, removes stale
+   cached ZIPs, and clears a local Settings Sync disabled marker for `dev.effect.jetbrains`.
+3. Restart the IDE when prompted so the LSP and tool-window extension points are registered at
+   startup.
+4. Open `Settings | Tools | Effect` and provide an executable native `tsgo` path in `MANUAL` mode.
    Managed `LATEST` and `PINNED` modes are available when you want the plugin to contact npm and
    download a platform package for you.
-4. Open a supported TypeScript or JavaScript file: `.ts`, `.tsx`, `.cts`, `.mts`, `.js`, `.jsx`, `.cjs`, or `.mjs`.
-5. Confirm the Effect LSP widget reaches `Running`, then open `Effect Dev Tools` if you want
+5. Open a supported TypeScript or JavaScript file: `.ts`, `.tsx`, `.cts`, `.mts`, `.js`, `.jsx`, `.cjs`, or `.mjs`.
+6. Confirm the Effect LSP widget reaches `Running`, then open `Effect Dev Tools` if you want
    runtime metrics or tracer data.
 
 The plugin launches `@effect/tsgo` directly. It does not patch JetBrains-managed or project-managed
