@@ -60,6 +60,38 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         }
     }
 
+    fun testEndedSpanExposesFailureOutcomeFromExit() {
+        val freePort = ServerSocket(0).use { it.localPort }
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(devToolsPort = freePort),
+        )
+
+        val service = project.getService(EffectDevToolsService::class.java)
+        service.startServer()
+
+        val client = createConnectedClient(freePort)
+
+        try {
+            client.send(loadFixture("fixtures/devtools/tracer/failing-span.json") + "\n")
+
+            waitForCondition {
+                val state = service.currentState()
+                val activeClient = state.clients.firstOrNull { it.id == state.activeClientId }
+                activeClient != null &&
+                    activeClient.rootSpans.size == 1 &&
+                    activeClient.rootSpans.first().status.contains("failure")
+            }
+
+            val state = service.currentState()
+            val span = state.clients.first { it.id == state.activeClientId }.rootSpans.first()
+            assertTrue(span.status.startsWith("Ended"))
+            assertTrue(span.status.contains("failure: RuntimeException: boom"))
+        } finally {
+            client.closeBlocking()
+            service.stopServer()
+        }
+    }
+
     fun testRuntimeServerPollsMetricsWithNewlineDelimitedMessages() {
         val freePort = ServerSocket(0).use { it.localPort }
         project.getService(EffectProjectSettingsService::class.java).updateSettings(

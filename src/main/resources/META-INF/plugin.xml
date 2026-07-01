@@ -24,6 +24,7 @@
         <projectService serviceImplementation="dev.effect.intellij.lsp.EffectLayerMermaidService"/>
         <projectService serviceImplementation="dev.effect.intellij.lsp.EffectLspProjectService"/>
         <projectService serviceImplementation="dev.effect.intellij.settings.EffectProjectSettingsService"/>
+        <projectService serviceImplementation="dev.effect.intellij.settings.EffectTsconfigSyncService"/>
         <projectService serviceImplementation="dev.effect.intellij.status.EffectStatusService"/>
 
         <projectConfigurable
@@ -40,6 +41,19 @@
                 secondary="true"/>
 
         <platform.lsp.serverSupportProvider implementation="dev.effect.intellij.lsp.EffectLspServerSupportProvider"/>
+
+        <completion.contributor
+                language="any"
+                implementationClass="dev.effect.intellij.lsp.EffectDiagnosticDirectiveCompletionContributor"/>
+
+        <codeInsight.lineMarkerProvider
+                language="TypeScript"
+                implementationClass="dev.effect.intellij.editor.EffectLineMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="JavaScript"
+                implementationClass="dev.effect.intellij.editor.EffectLineMarkerProvider"/>
+
+        <defaultLiveTemplates file="/liveTemplates/Effect"/>
     </extensions>
 
     <extensions defaultExtensionNs="JavaScript">
@@ -53,6 +67,20 @@
                 text="Effect Dev Tools: Show Layer Mermaid Graph"
                 description="Open the Mermaid graph for the Effect Layer at the caret">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action
+                id="dev.effect.intellij.SyncOptionsToTsconfig"
+                class="dev.effect.intellij.settings.EffectSyncTsconfigAction"
+                text="Effect: Sync Language-Service Options To tsconfig.json"
+                description="Write the typed Effect language-service options into the tsconfig.json @effect/language-service plugin entry">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action
+                id="dev.effect.intellij.ExportTracer"
+                class="dev.effect.intellij.devtools.EffectExportTracerAction"
+                text="Effect: Export Tracer Snapshot"
+                description="Export the active Effect Dev Tools client's span tree to a JSON file">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
     </actions>

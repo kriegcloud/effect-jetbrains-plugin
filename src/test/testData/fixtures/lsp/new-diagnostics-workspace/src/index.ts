@@ -18,3 +18,10 @@ export const User = Schema.Struct({
   age: Schema.Number,
   score: Schema.NumberFromString
 })
+
+export class Point extends Schema.Class<Point>("Point")({
+  x: Schema.Number,
+  y: Schema.Number
+}) {}
+
+export const origin = new Point({ x: 0, y: 0 })

@@ -547,10 +547,15 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
         const messages = diagnosticMessages(candidateDiagnostics)
         return messages.some((message) => message.includes("effect(catchToOrElseSucceed)")) &&
           messages.some((message) => message.includes("effect(redundantOrDie)")) &&
-          messages.some((message) => message.includes("effect(schemaNumber)"))
+          messages.some((message) => message.includes("effect(schemaNumber)")) &&
+          messages.some((message) => message.includes("effect(newSchemaClass)"))
       },
     )
     const messages = diagnosticMessages(diagnostics)
+    assert(
+      messages.some((message) => message.includes("effect(newSchemaClass)")),
+      "Expected newSchemaClass diagnostic (v4-only, enabled via tsconfig diagnosticSeverity)",
+    )
 
     const codeActions = await client.request("textDocument/codeAction", {
       textDocument: { uri },

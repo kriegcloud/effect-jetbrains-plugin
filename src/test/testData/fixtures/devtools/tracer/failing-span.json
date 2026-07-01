@@ -1,0 +1,33 @@
+{
+  "_tag": "Span",
+  "spanId": "failing",
+  "traceId": "trace",
+  "name": "failing-op",
+  "sampled": true,
+  "status": {
+    "_tag": "Ended",
+    "startTime": "0",
+    "endTime": "100",
+    "exit": {
+      "_tag": "Failure",
+      "cause": [
+        {
+          "_tag": "Die",
+          "defect": {
+            "name": "RuntimeException",
+            "message": "boom",
+            "stack": "RuntimeException: boom\n  at handler (/src/app.ts:12:7)",
+            "cause": {
+              "name": "Error",
+              "message": "root cause"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "parent": {
+    "_tag": "None"
+  },
+  "attributes": []
+}
