@@ -21,7 +21,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-private const val CURRENT_TSGO_VERSION = "0.14.1"
+private const val CURRENT_TSGO_VERSION = "0.15.0"
 
 class EffectBinaryServiceTest : BasePlatformTestCase() {
     private lateinit var server: HttpServer

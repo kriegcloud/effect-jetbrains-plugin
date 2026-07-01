@@ -113,6 +113,16 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             .addLabeledComponent("Layer graph follow depth", lspLayerGraphFollowDepth)
             .addLabeledComponent("Diagnostic severity (rule=severity per line)", JBScrollPane(lspDiagnosticSeverity))
             .addLabeledComponent("Workspace configuration JSON", JBScrollPane(workspaceConfiguration))
+            .addComponent(
+                JBLabel(
+                    "<html><body style='width:520px'>Note: current <code>@effect/tsgo</code> builds read Effect " +
+                        "language-service options (inlays, mermaid provider, no-external, follow depth, diagnostic " +
+                        "severities) from <code>tsconfig.json</code> &rarr; <code>compilerOptions.plugins</code> " +
+                        "(the <code>@effect/language-service</code> entry), not from LSP configuration. Run " +
+                        "<b>Tools | Effect: Sync Language-Service Options To tsconfig.json</b> to write them there " +
+                        "automatically.</body></html>",
+                ),
+            )
             .panel
 
         val devToolsPanel = FormBuilder.createFormBuilder()

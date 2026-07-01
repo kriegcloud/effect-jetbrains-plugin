@@ -1,0 +1,44 @@
+<templateSet group="Effect">
+  <template name="egen"
+            value="Effect.gen(function*() {&#10;  $END$&#10;})"
+            description="Effect.gen generator block"
+            toReformat="true"
+            toShortenFQNames="false">
+    <context>
+      <option name="JavaScript" value="true"/>
+      <option name="TypeScript" value="true"/>
+    </context>
+  </template>
+  <template name="eservice"
+            value="export class $NAME$ extends Effect.Service&lt;$NAME$&gt;()(&quot;$NAME$&quot;, {&#10;  effect: Effect.gen(function*() {&#10;    $END$&#10;  })&#10;}) {}"
+            description="Effect.Service definition"
+            toReformat="true"
+            toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;MyService&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="TypeScript" value="true"/>
+    </context>
+  </template>
+  <template name="elayer"
+            value="export const $NAME$ = Layer.effect($TAG$, Effect.gen(function*() {&#10;  $END$&#10;}))"
+            description="Layer.effect construction"
+            toReformat="true"
+            toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;MyLayer&quot;" alwaysStopAt="true"/>
+    <variable name="TAG" expression="" defaultValue="&quot;MyService&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="JavaScript" value="true"/>
+      <option name="TypeScript" value="true"/>
+    </context>
+  </template>
+  <template name="eschema"
+            value="export class $NAME$ extends Schema.Class&lt;$NAME$&gt;(&quot;$NAME$&quot;)({&#10;  $END$&#10;}) {}"
+            description="Schema.Class definition"
+            toReformat="true"
+            toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;MyModel&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="TypeScript" value="true"/>
+    </context>
+  </template>
+</templateSet>

@@ -1,6 +1,6 @@
 # VS Code And Zed Parity Matrix
 
-Last checked: June 8, 2026.
+Last checked: June 30, 2026 (against `@effect/tsgo@0.15.0` and `effect@4.0.0-beta.92`).
 
 This matrix tracks behavioral parity, not literal UI cloning. VS Code is the runtime Dev Tools
 reference. Zed is the direct `@effect/tsgo` language-server launch reference.
@@ -16,7 +16,7 @@ reference. Zed is the direct `@effect/tsgo` language-server launch reference.
 | Typed common `@effect/tsgo` settings | Zed/tsgo | Implemented with raw JSON escape hatch | Settings merge tests |
 | Diagnostics/code actions/completion/hover/symbols | tsgo | Implemented through LSP | Real-binary verifier |
 | Hover Mermaid links | tsgo | Implemented through LSP hover | Real-binary verifier |
-| Local Layer Mermaid preview | VS Code | Gated; experimental | Requires advertised execute-command support |
+| Local Layer Mermaid preview | tsgo hover link | Implemented; decodes the `mermaid.live` `pako:` link from Layer hover into a local `.mmd` (requires `noExternal=false`). Execute-command probe kept as a forward-compatible path (no such command ships in 0.15.0). | `EffectLayerMermaidService` + decoder test; real-binary hover smoke |
 | Runtime Dev Tools server | VS Code | Implemented | Dev Tools service tests |
 | Runtime clients and active selection | VS Code | Implemented | Dev Tools service tests |
 | Metrics polling/reset | VS Code | Implemented | Dev Tools service tests |

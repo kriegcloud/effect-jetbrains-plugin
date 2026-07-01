@@ -11,7 +11,8 @@
         "diagnosticSeverity": {
           "catchToOrElseSucceed": "warning",
           "redundantOrDie": "warning",
-          "schemaNumber": "warning"
+          "schemaNumber": "warning",
+          "newSchemaClass": "warning"
         }
       }
     ]

@@ -43,6 +43,13 @@ dependencies {
 }
 
 intellijPlatform {
+    // buildSearchableOptions launches the target IDE headlessly to pre-index Settings search. The
+    // pinned WebStorm 262.x EAP carries a JetBrains time-bomb and refuses to start once expired, which
+    // breaks buildPlugin (buildSearchableOptions + prepareJarSearchableOptions). The index is optional
+    // (the IDE rebuilds it at runtime), so disable the whole pipeline. Re-enable after bumping to a
+    // current platform build.
+    buildSearchableOptions = false
+
     pluginConfiguration {
         id = providers.gradleProperty("pluginId")
         name = providers.gradleProperty("pluginName")

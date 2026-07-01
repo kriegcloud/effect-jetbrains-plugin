@@ -353,7 +353,9 @@ class EffectDebugBridgeService {
               if (!instrumentation) {
                 return JSON.stringify({ message: "Effect instrumentation is not installed in this debug target." });
               }
-              var currentFiber = globalThis["effect/FiberCurrent"];
+              var currentFiber = (instrumentation.getCurrentFiber ? instrumentation.getCurrentFiber() : null)
+                || globalThis["~effect/Fiber/currentFiber"]
+                || globalThis["effect/FiberCurrent"];
               var breakpoints = instrumentation.getBreakpointSnapshot
                 ? instrumentation.getBreakpointSnapshot()
                 : { pauseOnDefects: !!(instrumentation.getAutoPauseConfig && instrumentation.getAutoPauseConfig().pauseOnDefects), values: [], location: null };

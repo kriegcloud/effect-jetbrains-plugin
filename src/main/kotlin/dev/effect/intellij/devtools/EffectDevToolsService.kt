@@ -163,6 +163,16 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         }
     }
 
+    /** Serializes the active client's captured span tree to shareable JSON, or null when there is none. */
+    fun exportActiveTracer(): String? {
+        val snapshot = runtimeState
+        val active = snapshot.clients.firstOrNull { it.id == snapshot.activeClientId } ?: return null
+        if (active.rootSpans.isEmpty()) {
+            return null
+        }
+        return EffectTracerExport.toJson(active)
+    }
+
     override fun dispose() {
         stopServer()
     }
@@ -357,10 +367,12 @@ class EffectDevToolsService(private val project: Project) : Disposable {
     }
 
     private fun parseMetric(node: JsonNode): RuntimeMetricSnapshot {
-        val kind = node.path("_tag").asText("Metric")
-        val name = node.path("name").asText(kind)
+        // Effect v4 (effect-smol) devtools metrics encode as { id, type, description?, attributes:Record, state }.
+        // Older runtimes used { _tag, name, tags:[{key,value}] }; keep those as a fallback for mixed fleets.
+        val kind = node.path("type").asText(node.path("_tag").asText("Metric"))
+        val name = node.path("id").asText(node.path("name").asText(kind))
         val description = node.path("description").takeIf { !it.isMissingNode && !it.isNull }?.asText()
-        val tags = parseTags(node.path("tags"))
+        val tags = parseAttributes(node)
         val unitSuffix = unitSuffix(tags)
         val details = mutableListOf<RuntimeDetailEntry>()
         val summary = when (kind) {
@@ -397,8 +409,17 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             }
 
             "Frequency" -> {
-                val occurrences = node.path("state").path("occurrences").properties().asSequence().map { it.key to it.value }.toList()
-                    .sortedBy { it.first }
+                // v4 encodes `occurrences` as a ReadonlyMap -> array of [key, count] pairs; older
+                // runtimes sent a plain object. Support both.
+                val occurrencesNode = node.path("state").path("occurrences")
+                val occurrences = when {
+                    occurrencesNode.isArray -> occurrencesNode.mapNotNull { pair ->
+                        if (pair.isArray && pair.size() >= 2) scalarText(pair[0]) to pair[1] else null
+                    }
+
+                    occurrencesNode.isObject -> occurrencesNode.properties().asSequence().map { it.key to it.value }.toList()
+                    else -> emptyList()
+                }.sortedBy { it.first }
                 occurrences.forEach { (key, value) ->
                     details += RuntimeDetailEntry(key, "${formattedScalar(value)}$unitSuffix")
                 }
@@ -418,20 +439,34 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         )
     }
 
-    private fun parseTags(node: JsonNode): List<RuntimeMetricTagSnapshot> =
-        when {
-            node.isMissingNode || node.isNull -> emptyList()
-            node.isArray -> node.mapNotNull { tag ->
-                val key = tag.path("key").asText().ifBlank { null } ?: return@mapNotNull null
-                RuntimeMetricTagSnapshot(key = key, value = scalarText(tag.path("value")))
-            }
-
-            node.isObject -> node.properties().asSequence().map { (key, value) ->
+    private fun parseAttributes(metric: JsonNode): List<RuntimeMetricTagSnapshot> {
+        // v4 metrics carry labels in `attributes` (a Record -> JSON object). Older runtimes used
+        // `tags` as an array of { key, value } objects. Also tolerate ReadonlyMap-style pair arrays.
+        val attributes = metric.path("attributes")
+        val source = if (!attributes.isMissingNode && !attributes.isNull) attributes else metric.path("tags")
+        return when {
+            source.isMissingNode || source.isNull -> emptyList()
+            source.isObject -> source.properties().asSequence().map { (key, value) ->
                 RuntimeMetricTagSnapshot(key = key, value = scalarText(value))
             }.toList()
 
+            source.isArray -> source.mapNotNull { entry ->
+                when {
+                    entry.isArray && entry.size() >= 2 ->
+                        RuntimeMetricTagSnapshot(key = scalarText(entry[0]), value = scalarText(entry[1]))
+
+                    entry.isObject -> {
+                        val key = entry.path("key").asText().ifBlank { null } ?: return@mapNotNull null
+                        RuntimeMetricTagSnapshot(key = key, value = scalarText(entry.path("value")))
+                    }
+
+                    else -> null
+                }
+            }
+
             else -> emptyList()
         }
+    }
 
     private fun unitSuffix(tags: List<RuntimeMetricTagSnapshot>): String =
         tags.firstOrNull { it.key == "unit" || it.key == "time_unit" }?.value?.let { " $it" }.orEmpty()
@@ -478,9 +513,68 @@ class EffectDevToolsService(private val project: Project) : Disposable {
 
     private fun parseSpanStatus(node: JsonNode): String =
         when (node.path("_tag").asText()) {
-            "Ended" -> "Ended @ ${scalarText(node.path("endTime"))}"
+            "Ended" -> {
+                val endTime = scalarText(node.path("endTime"))
+                when (val outcome = exitOutcome(node.path("exit"))) {
+                    null -> "Ended @ $endTime"
+                    else -> "Ended ($outcome) @ $endTime"
+                }
+            }
+
             "Started" -> "Started @ ${scalarText(node.path("startTime"))}"
             else -> "Unknown"
+        }
+
+    private fun exitOutcome(exit: JsonNode): String? =
+        when {
+            exit.isMissingNode || exit.isNull -> null
+            exit.path("_tag").asText() == "Success" -> "success"
+            exit.path("_tag").asText() == "Failure" -> {
+                val summary = summarizeCause(exit.path("cause"))
+                if (summary.isBlank()) "failure" else "failure: $summary"
+            }
+
+            else -> null
+        }
+
+    private fun summarizeCause(cause: JsonNode): String {
+        // Effect v4 encodes a Cause as a bare array of reasons ({ _tag: Fail | Die | Interrupt }).
+        // Tolerate an object wrapper ({ reasons: [...] }) and a legacy single-reason shape.
+        val reasons = when {
+            cause.isArray -> cause
+            cause.path("reasons").isArray -> cause.path("reasons")
+            else -> null
+        }
+        if (reasons == null) {
+            return reasonMessage(cause).orEmpty()
+        }
+        return reasons.mapNotNull(::reasonMessage).joinToString("; ").take(200)
+    }
+
+    private fun reasonMessage(reason: JsonNode): String? =
+        when (reason.path("_tag").asText()) {
+            "Die" -> defectMessage(reason.path("defect"))
+            "Fail" -> defectMessage(reason.path("error"))
+            "Interrupt" -> "interrupted"
+            else -> defectMessage(reason)
+        }
+
+    private fun defectMessage(node: JsonNode): String? =
+        when {
+            node.isMissingNode || node.isNull -> null
+            node.isTextual -> node.asText().takeIf(String::isNotBlank)
+            node.isObject -> {
+                val message = node.path("message").asText("")
+                val name = node.path("name").asText("")
+                when {
+                    message.isNotBlank() && name.isNotBlank() -> "$name: $message"
+                    message.isNotBlank() -> message
+                    name.isNotBlank() -> name
+                    else -> null
+                }
+            }
+
+            else -> null
         }
 
     private fun parseEntries(node: JsonNode, prefix: String = ""): List<RuntimeDetailEntry> =

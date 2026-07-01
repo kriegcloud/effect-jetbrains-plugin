@@ -48,14 +48,23 @@ for diagnostics that the source has explicitly disabled.
 
 ### Current TSGO Smoke Targets
 
-The current real-binary smoke target is `@effect/tsgo@0.14.3`. That version includes the
-`catchToOrElseSucceed`, `redundantOrDie`, and `schemaNumber` diagnostics added after the previous
-`0.11.4` reference import. Effect v4 samples must install `effect@beta` or an explicit
-`effect@4.0.0-beta.78` version because the npm `effect` `latest` tag is still v3.
+The current real-binary smoke target is `@effect/tsgo@0.15.0` (npm `latest`). That version includes the
+`catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, and `newSchemaClass` diagnostics added after
+the previous `0.11.4` reference import (`newSchemaClass` is off by default). The `catchToIgnore`
+diagnostic exists only on the tsgo `main` branch and is not in any published release yet. Effect v4
+samples must install `effect@beta` or an explicit `effect@4.0.0-beta.92` version because the npm
+`effect` `latest` tag is still v3.
 
 For common language-service options, prefer the typed settings controls. They emit `effect.*`
 workspace configuration only when explicitly set, and they override duplicate raw JSON keys. Keep
 `Workspace configuration JSON` for advanced options that do not yet have a dedicated control.
+
+> **Where Effect options are read.** Current `@effect/tsgo` builds parse Effect language-service
+> options (`inlays`, `mermaidProvider`, `noExternal`, `layerGraphFollowDepth`, `diagnosticSeverity`,
+> …) from `tsconfig.json` &rarr; `compilerOptions.plugins` (the `@effect/language-service` entry) via
+> `program.Options().Effect`. They are **not** read from LSP `initializationOptions` or
+> `workspace/configuration`. The plugin still sends the typed values over LSP for forward
+> compatibility, but to change server behavior today, set them in the workspace `tsconfig.json`.
 
 Equivalent raw JSON example:
 
@@ -69,7 +78,8 @@ Equivalent raw JSON example:
     "diagnosticSeverity": {
       "catchToOrElseSucceed": "warning",
       "redundantOrDie": "warning",
-      "schemaNumber": "warning"
+      "schemaNumber": "warning",
+      "newSchemaClass": "warning"
     }
   }
 }
