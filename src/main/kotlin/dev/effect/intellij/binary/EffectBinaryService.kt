@@ -83,14 +83,13 @@ class EffectBinaryService {
 
                 val cacheRoot = managedCacheRoot()
                 val versionRoot = cacheRoot.resolve(version).resolve(platform.packageName)
-                val binaryPath = versionRoot.resolve("package").resolve("lib").resolve(platform.binaryName)
-
-                synchronized(cacheOperationLock) {
-                    if (!binaryPath.exists()) {
+                val binaryPath = synchronized(cacheOperationLock) {
+                    if (!versionRoot.resolve(INSTALL_COMPLETE_MARKER).exists()) {
                         status.markDownloadingBinary("Downloading ${platform.packageName}@$version")
-                        installManagedPackage(platform.packageName, version, versionRoot, binaryPath)
+                        installManagedPackage(platform, version, versionRoot)
                     }
-                    ensureExecutable(binaryPath)
+                    selectManagedBinary(project, versionRoot.resolve("package").resolve("lib"), platform)
+                        .also(::ensureExecutable)
                 }
 
                 BinaryResolution(
@@ -151,7 +150,8 @@ class EffectBinaryService {
         }
     }
 
-    private fun installManagedPackage(packageName: String, version: String, versionRoot: Path, binaryPath: Path) {
+    private fun installManagedPackage(platform: PlatformPackage, version: String, versionRoot: Path) {
+        val packageName = platform.packageName
         val metadataUrl = "${registryBaseUrl.trimEnd('/')}/${encodePackageName(packageName)}/$version"
         val metadataResponse = sendStringRequest(HttpRequest.newBuilder(URI.create(metadataUrl)).GET().build())
         val metadataJson = EffectJson.mapper.readTree(metadataResponse.body())
@@ -165,7 +165,6 @@ class EffectBinaryService {
         val tempRoot = Files.createTempDirectory("effect-tsgo-download")
         val archivePath = tempRoot.resolve("package.tgz")
         val stagingRoot = versionRoot.resolveSibling("${versionRoot.fileName}.staging-${UUID.randomUUID()}")
-        val stagedBinary = stagingRoot.resolve("package").resolve("lib").resolve(binaryPath.fileName.toString())
         val archiveResponse = sendFileRequest(HttpRequest.newBuilder(URI.create(tarballUrl)).GET().build(), archivePath)
         if (archiveResponse.statusCode() !in 200..299) {
             archivePath.deleteIfExists()
@@ -175,12 +174,15 @@ class EffectBinaryService {
 
         try {
             extractArchive(archivePath, stagingRoot)
-            if (!stagedBinary.exists()) {
+            val stagedLib = stagingRoot.resolve("package").resolve("lib")
+            val packagedBinaries = platform.packagedBinaryNames.map(stagedLib::resolve)
+            if (packagedBinaries.none(Files::isRegularFile)) {
                 throw EffectBinaryException(
-                    "Downloaded $packageName@$version successfully, but the native binary was not found at $stagedBinary.",
+                    "Downloaded $packageName@$version successfully, but no supported native binary was found in $stagedLib. " +
+                        "Tried: ${packagedBinaries.joinToString()}.",
                 )
             }
-            ensureExecutable(stagedBinary)
+            Files.writeString(stagingRoot.resolve(INSTALL_COMPLETE_MARKER), version)
             versionRoot.deleteRecursively()
             EffectFileUtil.atomicMove(stagingRoot, versionRoot)
         } catch (error: Exception) {
@@ -193,6 +195,150 @@ class EffectBinaryService {
             stagingRoot.deleteRecursively()
         }
     }
+
+    /**
+     * Modern platform packages carry binaries for stable and nightly TypeScript together with
+     * adjacent metadata. Select the binary built from the workspace's exact TypeScript git head;
+     * older packages without metadata retain their dedicated `tsgo` executable.
+     */
+    private fun selectManagedBinary(project: Project, libRoot: Path, platform: PlatformPackage): Path {
+        val modernCandidates = listOf("tsc", "tsc-next")
+            .map { binaryName ->
+                val path = libRoot.resolve(platform.executableName(binaryName))
+                PackagedBinaryCandidate(binaryName, path, readBinaryMetadata(path))
+            }
+            .filter { candidate -> candidate.path.exists() }
+
+        if (modernCandidates.any { candidate -> candidate.metadata != null }) {
+            val workspaceTypeScript = resolveWorkspaceTypeScript(project)
+            modernCandidates.firstOrNull { candidate ->
+                candidate.metadata?.tsGitHead == workspaceTypeScript.gitHead
+            }?.let { return it.path }
+
+            val tried = modernCandidates.joinToString(separator = "\n") { candidate ->
+                val metadata = candidate.metadata
+                if (metadata == null) {
+                    "  ${candidate.path.fileName}: metadata missing or invalid"
+                } else {
+                    "  ${candidate.path.fileName}: TypeScript ${metadata.tsVersion}, gitHead ${metadata.tsGitHead}"
+                }
+            }
+            throw EffectBinaryException(
+                "No packaged @effect/tsgo binary matches ${workspaceTypeScript.packageName}@${workspaceTypeScript.version} " +
+                    "gitHead ${workspaceTypeScript.gitHead}. Tried:\n$tried\n" +
+                    "Install matching TypeScript and @effect/tsgo versions, or select a compatible executable in MANUAL mode.",
+            )
+        }
+
+        val legacyBinary = libRoot.resolve(platform.executableName("tsgo"))
+        if (legacyBinary.exists()) {
+            return legacyBinary
+        }
+
+        if (modernCandidates.isNotEmpty()) {
+            throw EffectBinaryException(
+                "The downloaded @effect/tsgo package contains ${modernCandidates.joinToString { it.path.fileName.toString() }}, " +
+                    "but their TypeScript compatibility metadata is missing or invalid.",
+            )
+        }
+
+        throw EffectBinaryException("No supported @effect/tsgo executable was found in $libRoot.")
+    }
+
+    private fun readBinaryMetadata(binaryPath: Path): PackagedBinaryMetadata? {
+        if (!binaryPath.exists()) {
+            return null
+        }
+        val metadataPath = binaryPath.resolveSibling("${binaryPath.fileName}.json")
+        if (!metadataPath.exists()) {
+            return null
+        }
+        return runCatching {
+            val json = EffectJson.mapper.readTree(Files.readString(metadataPath))
+            val tsVersion = json.path("tsVersion").asText().trim()
+            val tsGitHead = json.path("tsGitHead").asText().trim()
+            require(tsVersion.isNotBlank() && tsGitHead.isNotBlank())
+            PackagedBinaryMetadata(tsVersion, tsGitHead)
+        }.getOrNull()
+    }
+
+    private fun resolveWorkspaceTypeScript(project: Project): WorkspaceTypeScript {
+        val workspaceRoot = project.basePath?.takeIf(String::isNotBlank)?.let(::parseWorkspacePath)
+            ?: throw EffectBinaryException(
+                "Cannot select a compatible @effect/tsgo binary because the project has no workspace path.",
+            )
+        val packageNames = buildList {
+            add("typescript")
+            addAll(readTypeScriptAliases(workspaceRoot))
+            add("@typescript/native")
+            add("@typescript/native-preview")
+        }.distinct()
+
+        val missingGitHeads = mutableListOf<String>()
+        for (packageName in packageNames) {
+            val packageJson = workspaceRoot.resolve("node_modules").resolve(packageName).resolve("package.json")
+            if (!Files.isRegularFile(packageJson)) {
+                continue
+            }
+            val metadata = runCatching { EffectJson.mapper.readTree(Files.readString(packageJson)) }.getOrNull() ?: continue
+            val version = metadata.path("version").asText().trim()
+            if (!isNativeTypeScriptVersion(version)) {
+                continue
+            }
+            val gitHead = metadata.path("gitHead").asText().trim()
+            if (gitHead.isBlank()) {
+                missingGitHeads += "$packageName@$version"
+                continue
+            }
+            return WorkspaceTypeScript(packageName, version, gitHead)
+        }
+
+        val detail = if (missingGitHeads.isEmpty()) {
+            "None of ${packageNames.joinToString()} is installed with a native TypeScript 7+ version."
+        } else {
+            "Missing gitHead metadata for ${missingGitHeads.joinToString()}."
+        }
+        throw EffectBinaryException(
+            "Cannot select a compatible @effect/tsgo binary for $workspaceRoot. $detail " +
+                "Install typescript >= 7 (or a native TypeScript alias), then retry.",
+        )
+    }
+
+    private fun readTypeScriptAliases(workspaceRoot: Path): List<String> {
+        val packageJson = workspaceRoot.resolve("package.json")
+        if (!Files.isRegularFile(packageJson)) {
+            return emptyList()
+        }
+        val root = runCatching { EffectJson.mapper.readTree(Files.readString(packageJson)) }.getOrNull() ?: return emptyList()
+        return TYPESCRIPT_DEPENDENCY_SECTIONS.flatMap { section ->
+            val dependencies = root.path(section)
+            if (!dependencies.isObject) {
+                emptyList()
+            } else {
+                dependencies.properties().asSequence()
+                    .filter { (_, version) -> version.asText().isTypeScriptAliasSpecifier() }
+                    .map { (name, _) -> name }
+                    .toList()
+            }
+        }
+    }
+
+    private fun String.isTypeScriptAliasSpecifier(): Boolean {
+        val normalized = trim().lowercase()
+        return normalized.startsWith("npm:typescript@") ||
+            normalized.startsWith("npm:@typescript/native@") ||
+            normalized.startsWith("npm:@typescript/native-preview@")
+    }
+
+    private fun isNativeTypeScriptVersion(version: String): Boolean =
+        version.substringBefore('.').toIntOrNull()?.let { it >= 7 } == true
+
+    private fun parseWorkspacePath(raw: String): Path =
+        try {
+            Path.of(raw)
+        } catch (error: InvalidPathException) {
+            throw EffectBinaryException("Project workspace is not a valid filesystem path: $raw", error)
+        }
 
     private fun extractArchive(archivePath: Path, destinationRoot: Path) {
         destinationRoot.deleteRecursively()
@@ -330,10 +476,9 @@ class EffectBinaryService {
             else -> throw EffectBinaryException("Unsupported architecture for @effect/tsgo: $archName")
         }
 
-        val binaryName = if (os == "win32") "tsgo.exe" else "tsgo"
         return PlatformPackage(
             packageName = "$BASE_PACKAGE_NAME-$os-$arch",
-            binaryName = binaryName,
+            executableSuffix = if (os == "win32") ".exe" else "",
         )
     }
 
@@ -369,6 +514,13 @@ class EffectBinaryService {
     companion object {
         private const val DEFAULT_REGISTRY_BASE_URL = "https://registry.npmjs.org"
         private const val BASE_PACKAGE_NAME = "@effect/tsgo"
+        private const val INSTALL_COMPLETE_MARKER = ".install-complete"
+        private val TYPESCRIPT_DEPENDENCY_SECTIONS = listOf(
+            "dependencies",
+            "devDependencies",
+            "optionalDependencies",
+            "peerDependencies",
+        )
 
         fun getInstance(): EffectBinaryService = ApplicationManager.getApplication().getService(EffectBinaryService::class.java)
     }
@@ -376,5 +528,27 @@ class EffectBinaryService {
 
 private data class PlatformPackage(
     val packageName: String,
+    val executableSuffix: String,
+) {
+    fun executableName(baseName: String): String = "$baseName$executableSuffix"
+
+    val packagedBinaryNames: List<String>
+        get() = listOf("tsc", "tsc-next", "tsgo").map(::executableName)
+}
+
+private data class PackagedBinaryMetadata(
+    val tsVersion: String,
+    val tsGitHead: String,
+)
+
+private data class PackagedBinaryCandidate(
     val binaryName: String,
+    val path: Path,
+    val metadata: PackagedBinaryMetadata?,
+)
+
+private data class WorkspaceTypeScript(
+    val packageName: String,
+    val version: String,
+    val gitHead: String,
 )
