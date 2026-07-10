@@ -48,12 +48,12 @@ for diagnostics that the source has explicitly disabled.
 
 ### Current TSGO Smoke Targets
 
-The current real-binary smoke target is `@effect/tsgo@0.15.0` (npm `latest`). That version includes the
-`catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, and `newSchemaClass` diagnostics added after
-the previous `0.11.4` reference import (`newSchemaClass` is off by default). The `catchToIgnore`
-diagnostic exists only on the tsgo `main` branch and is not in any published release yet. Effect v4
-samples must install `effect@beta` or an explicit `effect@4.0.0-beta.92` version because the npm
-`effect` `latest` tag is still v3.
+The current real-binary smoke target is `@effect/tsgo@0.19.0` (npm `latest`) with
+`typescript@latest` and `effect@4.0.0-beta.97`. In addition to the existing
+`catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, and `newSchemaClass` coverage,
+`catchToIgnore` is published as of 0.16.0 and 0.19.0 adds the fixable `flatMapToMap` diagnostic.
+`newSchemaClass` remains off by default. Effect v4 samples must install the explicit beta (or
+`effect@beta`) because the npm `effect` `latest` tag is still v3.
 
 For common language-service options, prefer the typed settings controls. They emit `effect.*`
 workspace configuration only when explicitly set, and they override duplicate raw JSON keys. Keep
@@ -77,6 +77,8 @@ Equivalent raw JSON example:
     "layerGraphFollowDepth": 1,
     "diagnosticSeverity": {
       "catchToOrElseSucceed": "warning",
+      "catchToIgnore": "warning",
+      "flatMapToMap": "warning",
       "redundantOrDie": "warning",
       "schemaNumber": "warning",
       "newSchemaClass": "warning"
@@ -87,13 +89,14 @@ Equivalent raw JSON example:
 
 ### Recorded Real-Binary Smoke
 
-On June 8, 2026, the real-binary verifier was run against the native Linux x64 npm binary for
-`@effect/tsgo@0.14.1` with fixture workspaces installing `effect@beta` (`4.0.0-beta.78`).
+On July 10, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
+for `@effect/tsgo@0.19.0`; fixture workspaces install `typescript@latest` and the explicit
+`effect@4.0.0-beta.97` release.
 
 Command:
 
 ```bash
-node scripts/verify-real-tsgo-lsp.mjs --binary /home/elpresidank/.npm/_npx/87bbd351d137307a/node_modules/@effect/tsgo-linux-x64/lib/tsgo
+node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/@effect/tsgo-linux-x64/lib/tsc
 ```
 
 Observed through LSP:
@@ -103,10 +106,13 @@ Observed through LSP:
   completed with no current hints.
 - Failing fixture: `missingStarInYieldEffectGen` diagnostic `377008` appeared with quick fixes including
   `Replace yield with yield*`.
-- New diagnostics fixture: `catchToOrElseSucceed`, `redundantOrDie`, and `schemaNumber` diagnostics
-  appeared. Code actions included `Replace with Effect.orElseSucceed`, `Replace with Schema.Finite`,
-  and `Replace with Schema.FiniteFromString`.
-- The published `0.14.1` server did not advertise `executeCommandProvider.commands`, so the local
+- New diagnostics fixture: `catchToOrElseSucceed`, `flatMapToMap`, `redundantOrDie`, `schemaNumber`,
+  and explicitly enabled `newSchemaClass` diagnostics appeared. Code actions included
+  `Replace with Effect.orElseSucceed`, `Replace with Effect.map`, `Replace with Schema.Finite`, and
+  `Replace with Schema.FiniteFromString`.
+- Diagnostic-directive fixture: next-line and section directives suppressed the intended
+  `strictEffectProvide` and `floatingEffect` findings, then surfaced them again when re-enabled.
+- The published `0.19.0` server did not advertise `executeCommandProvider.commands`, so the local
   Mermaid graph action remains experimental; hover Mermaid links are the supported path.
 
 ## LSP Widget

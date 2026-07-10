@@ -16,8 +16,10 @@
   - `.cjs`
   - `.mjs`
 - One of the following binary strategies:
-  - A `MANUAL` path to an executable native `tsgo` binary
+  - A `MANUAL` path to an executable Effect-patched native `tsc` (or legacy `tsgo`) binary
   - Plugin-managed `LATEST` or `PINNED` after you explicitly choose managed npm downloads
+- A native TypeScript package in the project: `typescript >= 7`, `@typescript/native`, an npm alias,
+  or the legacy `@typescript/native-preview` package
 
 Community Edition and Android Studio are out of scope for this plugin.
 
@@ -47,7 +49,7 @@ project-managed TypeScript binaries.
 
 | Mode | When to use it | Requirements |
 | --- | --- | --- |
-| `MANUAL` | You already manage the binary yourself, or want no plugin-managed download | An executable native `tsgo` path |
+| `MANUAL` | You already manage the binary yourself, or want no plugin-managed download | An executable Effect-patched native `tsc` or legacy `tsgo` path |
 | `LATEST` | You want the newest published `@effect/tsgo` for your platform | Network access to npm during resolution and download |
 | `PINNED` | You need a stable version across projects or teammates | A specific `@effect/tsgo` version string and network access to npm |
 
@@ -65,11 +67,13 @@ If you already use npm to obtain `@effect/tsgo`, one way to discover a native ex
 npm exec --yes --package @effect/tsgo -- effect-tsgo get-exe-path
 ```
 
-Use the resulting native `tsgo` executable path in `MANUAL` mode. Do not point manual mode at the
+Use the resulting native executable path in `MANUAL` mode. Do not point manual mode at the
 `effect-tsgo` package CLI wrapper; the plugin already supplies `--lsp --stdio` when it launches the
 native server.
 
-Managed modes download npm platform packages and validate npm tarball integrity before extraction.
+Managed modes download the complete npm platform package and validate npm tarball integrity before
+extraction. Current packages include `tsc` and `tsc-next` plus compatibility metadata; the plugin
+matches that metadata to the native TypeScript package installed in the workspace.
 
 ## Start The Language Server
 
