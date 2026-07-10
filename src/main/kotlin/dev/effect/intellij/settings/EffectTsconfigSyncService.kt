@@ -1,5 +1,6 @@
 package dev.effect.intellij.settings
 
+import com.intellij.json.psi.JsonFile
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.Service
@@ -7,19 +8,23 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiManager
 import dev.effect.intellij.notifications.EffectNotificationService
 
-/**
- * Writes the plugin's typed Effect language-service options into the workspace `tsconfig.json`
- * `@effect/language-service` plugin entry, which is the channel `@effect/tsgo` actually reads.
- */
+/** Writes typed Effect language-service options into the workspace `tsconfig.json`. */
 @Service(Service.Level.PROJECT)
 class EffectTsconfigSyncService(private val project: Project) {
     fun locateTsconfig(): VirtualFile? = project.guessProjectDir()?.findChild(TSCONFIG_FILE_NAME)
 
+    /** Tools-menu entry point: sync the settings that have already been applied. */
     fun sync() {
-        val notifications = ApplicationManager.getApplication().getService(EffectNotificationService::class.java)
+        sync(EffectProjectSettingsService.getInstance(project).currentSettings())
+    }
 
+    /** Settings-page entry point: sync an explicit, possibly not-yet-applied form snapshot. */
+    fun sync(settings: EffectProjectSettings) {
+        val notifications = ApplicationManager.getApplication().getService(EffectNotificationService::class.java)
         val tsconfig = locateTsconfig()
         if (tsconfig == null || !tsconfig.isValid) {
             notifications.warning(
@@ -30,45 +35,49 @@ class EffectTsconfigSyncService(private val project: Project) {
             return
         }
 
-        val original = runCatching { String(tsconfig.contentsToByteArray(), Charsets.UTF_8) }.getOrNull()
-        if (original == null) {
-            notifications.warning(project, "Effect: could not read tsconfig.json", "Failed to read ${tsconfig.path}.")
+        val documentManager = FileDocumentManager.getInstance()
+        val document = documentManager.getDocument(tsconfig)
+        val psiFile = PsiManager.getInstance(project).findFile(tsconfig) as? JsonFile
+        if (document == null || psiFile == null) {
+            notifications.warning(project, "Effect: could not read tsconfig.json", "Failed to open ${tsconfig.path} as JSON.")
             return
         }
 
-        val settings = EffectProjectSettingsService.getInstance(project).currentSettings()
-        val result = EffectTsconfigSync.apply(original, settings)
+        PsiDocumentManager.getInstance(project).commitDocument(document)
+        var result: EffectTsconfigSync.SyncResult? = null
+        WriteCommandAction.runWriteCommandAction(project, "Sync Effect Options To tsconfig.json", null, Runnable {
+            result = EffectTsconfigSync.apply(psiFile, settings)
+            if (result?.changed == true) {
+                PsiDocumentManager.getInstance(project).doPostponedOperationsAndUnblockDocument(document)
+                documentManager.saveDocument(document)
+            }
+        })
+
         when {
             result == null -> notifications.info(
                 project,
                 "Effect: nothing to sync",
-                "No typed Effect language-service options are set, or tsconfig.json is not a JSON object.",
+                "No typed Effect language-service options are set.",
             )
 
-            !result.changed -> notifications.info(
+            result?.errorMessage != null -> notifications.warning(
+                project,
+                "Effect: could not sync tsconfig.json",
+                result?.errorMessage.orEmpty(),
+            )
+
+            result?.changed == false -> notifications.info(
                 project,
                 "Effect: tsconfig.json already up to date",
                 "The \"@effect/language-service\" plugin entry already matches your Effect settings.",
             )
 
-            else -> {
-                WriteCommandAction.runWriteCommandAction(project, "Sync Effect Options To tsconfig.json", null, Runnable {
-                    val document = FileDocumentManager.getInstance().getDocument(tsconfig)
-                    if (document != null) {
-                        document.setText(result.updatedJson)
-                        FileDocumentManager.getInstance().saveDocument(document)
-                    } else {
-                        tsconfig.setBinaryContent(result.updatedJson.toByteArray(Charsets.UTF_8))
-                    }
-                })
-                val commentNote = if (result.hadComments) " Comments in tsconfig.json were removed by the rewrite." else ""
-                notifications.info(
-                    project,
-                    "Effect: synced options to tsconfig.json",
-                    "Wrote your Effect language-service options into the \"@effect/language-service\" plugin entry.$commentNote " +
-                        "Restart the Effect language server to apply.",
-                )
-            }
+            else -> notifications.info(
+                project,
+                "Effect: synced options to tsconfig.json",
+                "Wrote your Effect language-service options into the \"@effect/language-service\" plugin entry. " +
+                    "Restart the Effect language server to apply.",
+            )
         }
     }
 

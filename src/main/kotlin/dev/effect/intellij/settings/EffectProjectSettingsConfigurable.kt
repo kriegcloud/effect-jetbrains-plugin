@@ -8,18 +8,21 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.TextBrowseFolderListener
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.DocumentAdapter
-import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
-import com.intellij.util.ui.FormBuilder
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.Row
+import com.intellij.ui.dsl.builder.panel as uiPanel
+import com.intellij.ui.dsl.builder.rows
+import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
-import java.awt.Dimension
 import javax.swing.JComponent
 import javax.swing.JCheckBox
 import javax.swing.JPanel
 import javax.swing.JSpinner
+import javax.swing.ScrollPaneConstants
 import javax.swing.SpinnerNumberModel
 import javax.swing.event.DocumentEvent
 
@@ -65,9 +68,9 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     private val binaryMode = ComboBox(EffectBinaryMode.entries.toTypedArray())
     private val pinnedVersion = JBTextField()
     private val manualBinaryPath = TextFieldWithBrowseButton()
-    private val extraEnv = JBTextArea(8, 40)
-    private val initializationOptions = JBTextArea(8, 40)
-    private val workspaceConfiguration = JBTextArea(8, 40)
+    private val extraEnv = JBTextArea(4, 40)
+    private val initializationOptions = JBTextArea(4, 40)
+    private val workspaceConfiguration = JBTextArea(4, 40)
     private val lspInlays = ComboBox(booleanOptions)
     private val lspMermaidProvider = JBTextField()
     private val lspNoExternal = ComboBox(booleanOptions)
@@ -84,78 +87,29 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         wrapStyleWord = true
     }
     private val spanStackIgnoreList = JBTextArea(4, 40)
-    private val debuggerNotice = JBTextArea().apply {
-        isEditable = false
-        lineWrap = true
-        wrapStyleWord = true
-        text = "Attach-time instrumentation is available for active debug sessions. Optional NODE_OPTIONS injection applies to Node.js run/debug configurations; live Context, Span Stack, Fibers, and Breakpoints snapshots are still best-effort while the JetBrains debugger bridge matures."
-    }
     private val validationLabel = JBLabel()
-    val panel: JComponent = JPanel(BorderLayout()).apply {
+
+    private lateinit var pinnedVersionRow: Row
+    private lateinit var manualBinaryPathRow: Row
+
+    val panel: JComponent = createPanel()
+
+    init {
         val manualBinaryDescriptor = FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor().apply {
             title = "Select @effect/tsgo binary"
             description = "Choose the native tsgo executable for manual mode."
         }
         manualBinaryPath.addBrowseFolderListener(TextBrowseFolderListener(manualBinaryDescriptor, project))
 
-        val binaryPanel = FormBuilder.createFormBuilder()
-            .addLabeledComponent("Binary mode", binaryMode)
-            .addLabeledComponent("Pinned version", pinnedVersion)
-            .addLabeledComponent("Manual binary path", manualBinaryPath)
-            .panel
-
-        val lspPanel = FormBuilder.createFormBuilder()
-            .addLabeledComponent("Extra environment (KEY=VALUE per line)", JBScrollPane(extraEnv))
-            .addLabeledComponent("Initialization options JSON", JBScrollPane(initializationOptions))
-            .addLabeledComponent("Inlays", lspInlays)
-            .addLabeledComponent("Mermaid provider", lspMermaidProvider)
-            .addLabeledComponent("Suppress external Mermaid links", lspNoExternal)
-            .addLabeledComponent("Layer graph follow depth", lspLayerGraphFollowDepth)
-            .addLabeledComponent("Diagnostic severity (rule=severity per line)", JBScrollPane(lspDiagnosticSeverity))
-            .addLabeledComponent("Workspace configuration JSON", JBScrollPane(workspaceConfiguration))
-            .addComponent(
-                JBLabel(
-                    "<html><body style='width:520px'>Note: current <code>@effect/tsgo</code> builds read Effect " +
-                        "language-service options (inlays, mermaid provider, no-external, follow depth, diagnostic " +
-                        "severities) from <code>tsconfig.json</code> &rarr; <code>compilerOptions.plugins</code> " +
-                        "(the <code>@effect/language-service</code> entry), not from LSP configuration. Run " +
-                        "<b>Tools | Effect: Sync Language-Service Options To tsconfig.json</b> to write them there " +
-                        "automatically.</body></html>",
-                ),
-            )
-            .panel
-
-        val devToolsPanel = FormBuilder.createFormBuilder()
-            .addLabeledComponent("Dev Tools port", devToolsPort)
-            .addLabeledComponent("Metrics poll interval (ms)", metricsPollInterval)
-            .panel
-
-        val debugPanel = FormBuilder.createFormBuilder()
-            .addComponent(injectNodeOptions)
-            .addLabeledComponent("Run/debug configuration types", JBScrollPane(injectDebugConfigurationTypes))
-            .addLabeledComponent("Span stack ignore list", JBScrollPane(spanStackIgnoreList))
-            .addLabeledComponent("Debugger status", JBScrollPane(debuggerNotice))
-            .panel
-
-        val splitter = JBSplitter(true, 0.5f).apply {
-            firstComponent = FormBuilder.createFormBuilder()
-                .addComponentFillVertically(binaryPanel, 0)
-                .addSeparator()
-                .addComponentFillVertically(lspPanel, 0)
-                .panel
-            secondComponent = FormBuilder.createFormBuilder()
-                .addComponentFillVertically(devToolsPanel, 0)
-                .addSeparator()
-                .addComponentFillVertically(debugPanel, 0)
-                .panel
-        }
-
-        add(splitter, BorderLayout.CENTER)
-        add(validationLabel, BorderLayout.SOUTH)
-        preferredSize = Dimension(900, 640)
-
         binaryMode.addActionListener { updateBinaryFieldState() }
-        listOf(extraEnv, initializationOptions, workspaceConfiguration, lspDiagnosticSeverity, injectDebugConfigurationTypes, spanStackIgnoreList).forEach { area ->
+        listOf(
+            extraEnv,
+            initializationOptions,
+            workspaceConfiguration,
+            lspDiagnosticSeverity,
+            injectDebugConfigurationTypes,
+            spanStackIgnoreList,
+        ).forEach { area ->
             area.document.addDocumentListener(object : DocumentAdapter() {
                 override fun textChanged(event: DocumentEvent) {
                     clearProblems()
@@ -171,6 +125,131 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         }
         updateBinaryFieldState()
         clearProblems()
+    }
+
+    private fun createPanel(): JComponent {
+        val content = uiPanel {
+            group("Binary") {
+                row("Binary mode") {
+                    cell(binaryMode)
+                }
+                pinnedVersionRow = row("Pinned version") {
+                    cell(pinnedVersion)
+                        .align(AlignX.FILL)
+                        .resizableColumn()
+                }
+                manualBinaryPathRow = row("Manual binary path") {
+                    cell(manualBinaryPath)
+                        .align(AlignX.FILL)
+                        .resizableColumn()
+                }
+            }
+
+            group("Language Server") {
+                row("Inlays") {
+                    cell(lspInlays)
+                }
+                row("Mermaid provider") {
+                    cell(lspMermaidProvider)
+                        .align(AlignX.FILL)
+                        .resizableColumn()
+                }
+                row("Suppress external Mermaid links") {
+                    cell(lspNoExternal)
+                }
+                row("Layer graph follow depth") {
+                    cell(lspLayerGraphFollowDepth)
+                        .align(AlignX.FILL)
+                        .resizableColumn()
+                }
+                row {
+                    button("Sync to tsconfig.json") { syncCurrentSettings() }
+                }
+                row {
+                    comment(
+                        "Current @effect/tsgo builds read these typed language-service options from " +
+                            "tsconfig.json > compilerOptions.plugins > @effect/language-service. Sync writes " +
+                            "the visible form values without applying the rest of this Settings page.",
+                    )
+                }
+                collapsibleGroup("Advanced language-server settings", false) {
+                    row("Extra environment (KEY=VALUE per line)") {
+                        scrollCell(extraEnv)
+                            .rows(4)
+                            .align(AlignX.FILL)
+                            .resizableColumn()
+                    }
+                    row("Initialization options JSON") {
+                        scrollCell(initializationOptions)
+                            .rows(4)
+                            .align(AlignX.FILL)
+                            .resizableColumn()
+                    }
+                    row("Diagnostic severity (rule=severity per line)") {
+                        scrollCell(lspDiagnosticSeverity)
+                            .rows(5)
+                            .align(AlignX.FILL)
+                            .resizableColumn()
+                    }
+                    row("Workspace configuration JSON") {
+                        scrollCell(workspaceConfiguration)
+                            .rows(4)
+                            .align(AlignX.FILL)
+                            .resizableColumn()
+                    }
+                }
+            }
+
+            group("Dev Tools") {
+                row("Dev Tools port") {
+                    cell(devToolsPort)
+                }
+                row("Metrics poll interval (ms)") {
+                    cell(metricsPollInterval)
+                }
+            }
+
+            group("Debugger") {
+                row {
+                    cell(injectNodeOptions)
+                }
+                row {
+                    comment(DEBUGGER_NOTICE)
+                }
+                collapsibleGroup("Advanced debugger settings", false) {
+                    row("Run/debug configuration types") {
+                        scrollCell(injectDebugConfigurationTypes)
+                            .rows(3)
+                            .align(AlignX.FILL)
+                            .resizableColumn()
+                    }
+                    row("Span stack ignore list") {
+                        scrollCell(spanStackIgnoreList)
+                            .rows(4)
+                            .align(AlignX.FILL)
+                            .resizableColumn()
+                    }
+                }
+            }
+
+            row {
+                cell(validationLabel)
+                    .align(AlignX.FILL)
+                    .resizableColumn()
+            }
+        }
+
+        val scrollPane = JBScrollPane(
+            content,
+            ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+            ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER,
+        ).apply {
+            border = JBUI.Borders.empty()
+            viewport.background = content.background
+        }
+        return JPanel(BorderLayout()).apply {
+            add(scrollPane, BorderLayout.CENTER)
+        }
     }
 
     fun reset(settings: EffectProjectSettings) {
@@ -223,12 +302,26 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         validationLabel.text = problems.joinToString(separator = " | ") { it.message }
     }
 
+    private fun syncCurrentSettings() {
+        val settings = toSettings()
+        val problems = settingsService().validate(settings)
+        showProblems(problems)
+        if (problems.any { it.severity == SettingSeverity.ERROR }) {
+            return
+        }
+        EffectTsconfigSyncService.getInstance(project).sync(settings)
+    }
+
+    private fun settingsService(): EffectProjectSettingsService = EffectProjectSettingsService.getInstance(project)
+
     private fun clearProblems() {
         validationLabel.text = "All user-visible Effect features are project-scoped."
     }
 
     private fun updateBinaryFieldState() {
         val mode = binaryMode.selectedItem as? EffectBinaryMode ?: EffectBinaryMode.MANUAL
+        pinnedVersionRow.visible(mode == EffectBinaryMode.PINNED)
+        manualBinaryPathRow.visible(mode == EffectBinaryMode.MANUAL)
         pinnedVersion.isEnabled = mode == EffectBinaryMode.PINNED
         manualBinaryPath.isEnabled = mode == EffectBinaryMode.MANUAL
     }
@@ -269,5 +362,9 @@ private class EffectProjectSettingsComponent(private val project: Project) {
 
     companion object {
         private const val SERVER_DEFAULT_OPTION = "Server default"
+        private const val DEBUGGER_NOTICE =
+            "Attach-time instrumentation is available for active debug sessions. Optional NODE_OPTIONS " +
+                "injection applies to Node.js run/debug configurations; live Context, Span Stack, Fibers, " +
+                "and Breakpoints snapshots remain best-effort while the JetBrains debugger bridge matures."
     }
 }
