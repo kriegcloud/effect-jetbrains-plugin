@@ -84,11 +84,31 @@ class EffectBinaryService {
                 val cacheRoot = managedCacheRoot()
                 val versionRoot = cacheRoot.resolve(version).resolve(platform.packageName)
                 val binaryPath = synchronized(cacheOperationLock) {
-                    if (!versionRoot.resolve(INSTALL_COMPLETE_MARKER).exists()) {
+                    var installed = false
+                    fun reinstall() {
+                        versionRoot.deleteRecursively()
                         status.markDownloadingBinary("Downloading ${platform.packageName}@$version")
                         installManagedPackage(platform, version, versionRoot)
+                        installed = true
                     }
-                    selectManagedBinary(project, versionRoot.resolve("package").resolve("lib"), platform)
+
+                    if (!isManagedInstallationHealthy(versionRoot, version, platform)) {
+                        reinstall()
+                    }
+
+                    try {
+                        selectManagedBinary(project, versionRoot.resolve("package").resolve("lib"), platform)
+                    } catch (error: DamagedManagedPackageException) {
+                        if (installed) {
+                            throw EffectBinaryException(error.message.orEmpty(), error)
+                        }
+                        reinstall()
+                        try {
+                            selectManagedBinary(project, versionRoot.resolve("package").resolve("lib"), platform)
+                        } catch (retryError: DamagedManagedPackageException) {
+                            throw EffectBinaryException(retryError.message.orEmpty(), retryError)
+                        }
+                    }
                         .also(::ensureExecutable)
                 }
 
@@ -182,7 +202,7 @@ class EffectBinaryService {
                         "Tried: ${packagedBinaries.joinToString()}.",
                 )
             }
-            Files.writeString(stagingRoot.resolve(INSTALL_COMPLETE_MARKER), version)
+            writeInstallMarker(stagingRoot, version, platform)
             versionRoot.deleteRecursively()
             EffectFileUtil.atomicMove(stagingRoot, versionRoot)
         } catch (error: Exception) {
@@ -195,6 +215,61 @@ class EffectBinaryService {
             stagingRoot.deleteRecursively()
         }
     }
+
+    private fun writeInstallMarker(versionRoot: Path, version: String, platform: PlatformPackage) {
+        val libRoot = versionRoot.resolve("package").resolve("lib")
+        val marker = EffectJson.mapper.createObjectNode()
+        marker.put("version", version)
+        val files = marker.putObject("files")
+        platform.packagedFileNames.forEach { fileName ->
+            val file = libRoot.resolve(fileName)
+            if (Files.isRegularFile(file)) {
+                files.put(fileName, Files.size(file))
+            }
+        }
+        Files.writeString(versionRoot.resolve(INSTALL_COMPLETE_MARKER), EffectJson.mapper.writeValueAsString(marker))
+    }
+
+    private fun isManagedInstallationHealthy(
+        versionRoot: Path,
+        version: String,
+        platform: PlatformPackage,
+    ): Boolean = runCatching {
+        val markerPath = versionRoot.resolve(INSTALL_COMPLETE_MARKER)
+        if (!Files.isRegularFile(markerPath)) {
+            return@runCatching false
+        }
+
+        val marker = EffectJson.mapper.readTree(Files.readString(markerPath))
+        val files = marker.path("files")
+        if (marker.path("version").asText() != version || !files.isObject) {
+            return@runCatching false
+        }
+
+        val installedFileNames = files.properties().asSequence().map { it.key }.toSet()
+        if (installedFileNames.isEmpty() || installedFileNames.any { it !in platform.packagedFileNames }) {
+            return@runCatching false
+        }
+
+        val libRoot = versionRoot.resolve("package").resolve("lib")
+        if (installedFileNames.any { fileName ->
+                val file = libRoot.resolve(fileName)
+                !Files.isRegularFile(file) || Files.size(file) != files.path(fileName).asLong(-1)
+            }
+        ) {
+            return@runCatching false
+        }
+
+        val modernBinaries = MODERN_BINARY_NAMES.map(platform::executableName)
+        val installedModernBinaries = modernBinaries.filter(installedFileNames::contains)
+        if (installedModernBinaries.isNotEmpty()) {
+            return@runCatching installedModernBinaries.all { binaryName ->
+                "$binaryName.json" in installedFileNames && readBinaryMetadata(libRoot.resolve(binaryName)) != null
+            }
+        }
+
+        platform.executableName("tsgo") in installedFileNames
+    }.getOrDefault(false)
 
     /**
      * Modern platform packages carry binaries for stable and nightly TypeScript together with
@@ -239,13 +314,13 @@ class EffectBinaryService {
         }
 
         if (modernCandidates.isNotEmpty()) {
-            throw EffectBinaryException(
+            throw DamagedManagedPackageException(
                 "The downloaded @effect/tsgo package contains ${modernCandidates.joinToString { it.path.fileName.toString() }}, " +
                     "but their TypeScript compatibility metadata is missing or invalid.",
             )
         }
 
-        throw EffectBinaryException("No supported @effect/tsgo executable was found in $libRoot.")
+        throw DamagedManagedPackageException("No supported @effect/tsgo executable was found in $libRoot.")
     }
 
     private fun readBinaryMetadata(binaryPath: Path): PackagedBinaryMetadata? {
@@ -272,19 +347,21 @@ class EffectBinaryService {
         }.distinct()
 
         val missingGitHeads = mutableListOf<String>()
-        for (packageName in packageNames) {
-            val packageJson = workspaceRoot.resolve("node_modules").resolve(packageName).resolve("package.json")
-            val metadata = runCatching { EffectJson.mapper.readTree(Files.readString(packageJson)) }.getOrNull() ?: continue
-            val version = metadata.path("version").asText().trim()
-            if (!isNativeTypeScriptVersion(version)) {
-                continue
+        for (nodeModulesRoot in nodeModulesRoots(workspaceRoot)) {
+            for (packageName in packageNames) {
+                val packageJson = nodeModulesRoot.resolve(packageName).resolve("package.json")
+                val metadata = runCatching { EffectJson.mapper.readTree(Files.readString(packageJson)) }.getOrNull() ?: continue
+                val version = metadata.path("version").asText().trim()
+                if (!isNativeTypeScriptVersion(version)) {
+                    continue
+                }
+                val gitHead = metadata.path("gitHead").asText().trim()
+                if (gitHead.isBlank()) {
+                    missingGitHeads += "$packageName@$version"
+                    continue
+                }
+                return WorkspaceTypeScript(packageName, version, gitHead)
             }
-            val gitHead = metadata.path("gitHead").asText().trim()
-            if (gitHead.isBlank()) {
-                missingGitHeads += "$packageName@$version"
-                continue
-            }
-            return WorkspaceTypeScript(packageName, version, gitHead)
         }
 
         val detail = if (missingGitHeads.isEmpty()) {
@@ -313,6 +390,10 @@ class EffectBinaryService {
             }
         }
     }
+
+    private fun nodeModulesRoots(workspaceRoot: Path): Sequence<Path> =
+        generateSequence(workspaceRoot.toAbsolutePath().normalize()) { current -> current.parent }
+            .map { ancestor -> ancestor.resolve("node_modules") }
 
     private fun String.isTypeScriptAliasSpecifier(): Boolean {
         val normalized = trim().lowercase()
@@ -518,6 +599,9 @@ private data class PlatformPackage(
 
     val packagedBinaryNames: List<String>
         get() = SUPPORTED_BINARY_NAMES.map(::executableName)
+
+    val packagedFileNames: Set<String>
+        get() = packagedBinaryNames.flatMap { binaryName -> listOf(binaryName, "$binaryName.json") }.toSet()
 }
 
 private data class PackagedBinaryMetadata(
@@ -535,6 +619,8 @@ private data class WorkspaceTypeScript(
     val version: String,
     val gitHead: String,
 )
+
+private class DamagedManagedPackageException(message: String) : RuntimeException(message)
 
 private val MODERN_BINARY_NAMES = listOf("tsc", "tsc-next")
 private val SUPPORTED_BINARY_NAMES = MODERN_BINARY_NAMES + "tsgo"

@@ -140,18 +140,63 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         assertEquals(stableBinaryName, resolution.binaryPath.fileName.toString())
     }
 
-    fun testLatestModeRejectsModernBinaryWhenWorkspaceTypeScriptDoesNotMatch() {
-        writeWorkspacePackage("typescript", "7.0.0", "unmatched-head")
+    fun testLatestModeSupportsAliasedNativeTypeScriptHoistedAtAncestor() {
+        val aliasName = "effect-tsgo-hoisted-native-${System.nanoTime()}"
+        val hoistedPackageRoot = requireNotNull(workspaceRoot().parent)
+            .resolve("node_modules")
+            .resolve(aliasName)
+        writeWorkspaceRootPackage(
+            """{"devDependencies":{"$aliasName":"npm:typescript@7.0.0"}}""",
+        )
+        writePackage(hoistedPackageRoot.resolve("package.json"), "typescript", "7.0.0", STABLE_TYPESCRIPT_HEAD)
         registerModernLatestEndpoints(CURRENT_TSGO_VERSION)
 
         try {
-            resolveLatest()
-            fail("Expected a modern package with no matching TypeScript gitHead to be rejected")
-        } catch (error: EffectBinaryException) {
-            assertTrue(error.message?.contains("unmatched-head") == true)
-            assertTrue(error.message?.contains("$stableBinaryName") == true)
-            assertTrue(error.message?.contains("$nextBinaryName") == true)
+            val resolution = resolveLatest()
+
+            assertEquals(stableBinaryName, resolution.binaryPath.fileName.toString())
+        } finally {
+            deleteRecursively(hoistedPackageRoot)
         }
+    }
+
+    fun testLatestModeRepairsDamagedCachedInstallationOnce() {
+        val metadataRequests = AtomicInteger(0)
+        val tarballRequests = AtomicInteger(0)
+        writeWorkspacePackage("typescript", "7.0.0", STABLE_TYPESCRIPT_HEAD)
+        registerModernLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests, tarballRequests)
+
+        val initial = resolveLatest()
+        val marker = requireNotNull(initial.cacheDirectory).resolve(".install-complete")
+        assertTrue(Files.exists(marker))
+        Files.delete(initial.binaryPath.resolveSibling("$stableBinaryName.json"))
+
+        val repaired = resolveLatest()
+
+        assertEquals(stableBinaryName, repaired.binaryPath.fileName.toString())
+        assertTrue(Files.exists(repaired.binaryPath.resolveSibling("$stableBinaryName.json")))
+        assertEquals(2, metadataRequests.get())
+        assertEquals(2, tarballRequests.get())
+    }
+
+    fun testLatestModeRejectsModernBinaryWhenWorkspaceTypeScriptDoesNotMatch() {
+        val metadataRequests = AtomicInteger(0)
+        val tarballRequests = AtomicInteger(0)
+        writeWorkspacePackage("typescript", "7.0.0", "unmatched-head")
+        registerModernLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests, tarballRequests)
+
+        repeat(2) {
+            try {
+                resolveLatest()
+                fail("Expected a modern package with no matching TypeScript gitHead to be rejected")
+            } catch (error: EffectBinaryException) {
+                assertTrue(error.message?.contains("unmatched-head") == true)
+                assertTrue(error.message?.contains("$stableBinaryName") == true)
+                assertTrue(error.message?.contains("$nextBinaryName") == true)
+            }
+        }
+        assertEquals(1, metadataRequests.get())
+        assertEquals(1, tarballRequests.get())
     }
 
     fun testLatestModeRejectsModernBinaryWhenNoNativeTypeScriptIsInstalled() {
@@ -370,30 +415,45 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         registerPinnedEndpoint(version)
     }
 
-    private fun registerModernLatestEndpoints(version: String) {
+    private fun registerModernLatestEndpoints(
+        version: String,
+        metadataRequests: AtomicInteger? = null,
+        tarballRequests: AtomicInteger? = null,
+    ) {
         server.createContext("/@effect/tsgo") { exchange ->
             respondJson(exchange, """{"dist-tags":{"latest":"$version"}}""")
         }
-        registerModernPinnedEndpoint(version)
+        registerModernPinnedEndpoint(version, metadataRequests, tarballRequests)
     }
 
     private fun registerPinnedEndpoint(version: String) {
         registerPackageEndpoint(version, ::writeLegacyTarball)
     }
 
-    private fun registerModernPinnedEndpoint(version: String) {
-        registerPackageEndpoint(version, ::writeModernTarball)
+    private fun registerModernPinnedEndpoint(
+        version: String,
+        metadataRequests: AtomicInteger? = null,
+        tarballRequests: AtomicInteger? = null,
+    ) {
+        registerPackageEndpoint(version, ::writeModernTarball, metadataRequests, tarballRequests)
     }
 
-    private fun registerPackageEndpoint(version: String, writeArchive: (Path) -> Unit) {
+    private fun registerPackageEndpoint(
+        version: String,
+        writeArchive: (Path) -> Unit,
+        metadataRequests: AtomicInteger? = null,
+        tarballRequests: AtomicInteger? = null,
+    ) {
         val tarballName = "${platformPackage.substringAfter('/')}-${version}.tgz"
         val tarballPath = tempDir.resolve(tarballName)
         writeArchive(tarballPath)
 
         server.createContext("/$platformPackage/$version") { exchange ->
+            metadataRequests?.incrementAndGet()
             respondJson(exchange, metadataJson(version, tarballName, tarballPath))
         }
         server.createContext("/tarballs/$tarballName") { exchange ->
+            tarballRequests?.incrementAndGet()
             val bytes = Files.readAllBytes(tarballPath)
             exchange.sendResponseHeaders(200, bytes.size.toLong())
             exchange.responseBody.use { it.write(bytes) }
@@ -452,11 +512,20 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
     private fun writeWorkspacePackage(packageName: String, version: String, gitHead: String, actualName: String = packageName) {
         val workspaceRoot = workspaceRoot()
         val packageJson = workspaceRoot.resolve("node_modules").resolve(packageName).resolve("package.json")
+        writePackage(packageJson, actualName, version, gitHead)
+    }
+
+    private fun writePackage(packageJson: Path, actualName: String, version: String, gitHead: String) {
         Files.createDirectories(packageJson.parent)
         Files.writeString(
             packageJson,
             """{"name":"$actualName","version":"$version","gitHead":"$gitHead"}""",
         )
+    }
+
+    private fun deleteRecursively(root: Path) {
+        if (!Files.exists(root)) return
+        Files.walk(root).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists) }
     }
 
     private fun resetWorkspacePackages() {

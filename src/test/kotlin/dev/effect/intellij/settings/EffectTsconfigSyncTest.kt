@@ -1,7 +1,11 @@
 package dev.effect.intellij.settings
 
+import com.intellij.json.psi.JsonArray
 import com.intellij.json.psi.JsonFile
+import com.intellij.json.psi.JsonObject
+import com.intellij.json.psi.JsonStringLiteral
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import dev.effect.intellij.core.EffectJson
 
@@ -64,6 +68,46 @@ class EffectTsconfigSyncTest : BasePlatformTestCase() {
         assertTrue(effect.path("inlays").asBoolean())
         assertEquals("keep", effect.path("existing").asText())
         assertEquals("error", effect.path("diagnosticSeverity").path("redundantOrDie").asText())
+    }
+
+    fun testAppendsEffectEntryAfterUnrelatedPluginPreservingJsonc() {
+        val input = """
+            {
+              "compilerOptions": {
+                "plugins": [
+                  // keep this unrelated plugin configuration
+                  { "name": "other-plugin", "foo": 1, "enabled": true }
+                ]
+              }
+            }
+        """.trimIndent()
+        val file = myFixture.configureByText("tsconfig.json", input) as JsonFile
+        var result: EffectTsconfigSync.SyncResult? = null
+        WriteCommandAction.runWriteCommandAction(project) {
+            result = EffectTsconfigSync.apply(file, settings(inlays = true))
+        }
+
+        assertTrue(result!!.changed)
+        assertNull(result!!.errorMessage)
+        assertFalse(PsiTreeUtil.hasErrorElements(file))
+        assertTrue(file.text.contains("// keep this unrelated plugin configuration"))
+
+        val root = file.topLevelValue as JsonObject
+        val compilerOptions = root.findProperty("compilerOptions")!!.value as JsonObject
+        val plugins = compilerOptions.findProperty("plugins")!!.value as JsonArray
+        assertEquals(2, plugins.valueList.size)
+
+        val unrelated = plugins.valueList[0] as JsonObject
+        assertEquals("other-plugin", (unrelated.findProperty("name")!!.value as JsonStringLiteral).value)
+        assertEquals("1", unrelated.findProperty("foo")!!.value!!.text)
+        assertEquals("true", unrelated.findProperty("enabled")!!.value!!.text)
+
+        val effect = plugins.valueList[1] as JsonObject
+        assertEquals(
+            EffectTsconfigSync.EFFECT_PLUGIN_NAME,
+            (effect.findProperty("name")!!.value as JsonStringLiteral).value,
+        )
+        assertEquals("true", effect.findProperty("inlays")!!.value!!.text)
     }
 
     fun testPreservesJsoncCommentsAndUnrelatedFormatting() {
