@@ -157,13 +157,11 @@ private class EffectProjectSettingsComponent(private val project: Project) {
                 }
                 row {
                     button("Sync to tsconfig.json") { syncCurrentSettings() }
-                }
-                row {
-                    comment(
-                        "Current @effect/tsgo builds read these typed language-service options from " +
-                            "tsconfig.json > compilerOptions.plugins > @effect/language-service. Sync writes " +
-                            "the visible form values without applying the rest of this Settings page.",
-                    )
+                        .comment(
+                            "Current @effect/tsgo builds read these typed language-service options from " +
+                                "tsconfig.json > compilerOptions.plugins > @effect/language-service. Sync writes " +
+                                "the visible form values without applying the rest of this Settings page.",
+                        )
                 }
                 collapsibleGroup("Advanced language-server settings", false) {
                     row("Extra environment (KEY=VALUE per line)") {
@@ -205,9 +203,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             group("Debugger") {
                 row {
                     cell(injectNodeOptions)
-                }
-                row {
-                    comment(DEBUGGER_NOTICE)
+                        .comment(DEBUGGER_NOTICE)
                 }
                 collapsibleGroup("Advanced debugger settings", false) {
                     row("Run/debug configuration types") {
