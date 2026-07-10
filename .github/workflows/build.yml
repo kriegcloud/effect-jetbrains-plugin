@@ -135,7 +135,7 @@ jobs:
           cache-read-only: true
 
       - name: Run Qodana
-        run: ./gradlew qodanaScan --no-configuration-cache
+        run: ./gradlew qodanaScan --no-configuration-cache --project-cache-dir="$RUNNER_TEMP/qodana-gradle-project-cache"
 
       - name: Upload Qodana reports
         if: ${{ always() }}

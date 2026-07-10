@@ -2,9 +2,15 @@
 
 ## [0.1.1]
 
-- Added JetBrains-side support for Effect diagnostic directive comments before LSP diagnostics become editor annotations.
+- Updated managed binary support and compatibility coverage to `@effect/tsgo` 0.19.0 with `effect` 4.0.0-beta.97, including complete platform-package extraction, TypeScript stable/nightly backend matching, native TypeScript package discovery, legacy `lib/tsgo` fallback, and actionable mismatch errors.
+- Reworked the Effect Settings page into a scrollable, grouped form with mode-specific binary fields, naturally sized multiline editors, wrapped status text, and collapsed advanced options.
+- Added Settings-page synchronization of the current form values to the `@effect/language-service` entry in `tsconfig.json`, using targeted JSON PSI edits that preserve JSONC comments, formatting, unrelated compiler options, other plugins, and manually managed Effect keys.
+- Added JetBrains-side support and completion for Effect diagnostic directive comments before LSP diagnostics become editor annotations, with updated real-binary diagnostic and code-action coverage including `flatMapToMap`.
+- Fixed Effect v4 metrics, debugger instrumentation, failed-span decoding, and Layer Mermaid preview handling against the upstream runtime wire shapes.
+- Added Effect construct gutter markers, `egen`/`eservice`/`elayer`/`eschema` live templates, and tracer export to JSON.
 - Changed plugin metadata to require an IDE restart for install, update, and uninstall so LSP and tool-window extension points are registered on startup.
-- Documented local install checks for Settings Sync, the installed plugin directory, and restart behavior.
+- Documented local install checks, Effect language-service option ownership, upstream reference revisions, diagnostic behavior, and restart troubleshooting.
+- Fixed cross-platform binary permission tests on Windows and isolated Qodana's nested Gradle project cache in CI to avoid project-cache lock contention.
 
 ## [0.1.0]
 
