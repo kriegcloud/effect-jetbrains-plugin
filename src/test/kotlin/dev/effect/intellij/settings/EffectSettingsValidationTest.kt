@@ -5,9 +5,9 @@ import com.intellij.openapi.util.SystemInfo
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.ui.JBSplitter
+import com.intellij.util.ui.UIUtil
 import dev.effect.intellij.core.EffectJson
 import java.awt.Component
-import java.awt.Container
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
 import javax.swing.JButton
@@ -284,26 +284,10 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
     }
 
     private fun findTextComponents(component: Component): List<JTextComponent> =
-        buildList {
-            collectTextComponents(component, this)
-        }
+        collectComponents(component).filterIsInstance<JTextComponent>()
 
     private fun collectComponents(component: Component): List<Component> =
-        buildList {
-            add(component)
-            if (component is Container) {
-                component.components.forEach { child -> addAll(collectComponents(child)) }
-            }
-        }
-
-    private fun collectTextComponents(component: Component, result: MutableList<JTextComponent>) {
-        if (component is JTextComponent) {
-            result += component
-        }
-        if (component is Container) {
-            component.components.forEach { child -> collectTextComponents(child, result) }
-        }
-    }
+        UIUtil.uiTraverser(component).toList()
 
     private fun clickIgnoringMissingTestNotificationGroup(button: JButton) {
         try {

@@ -17,14 +17,13 @@ import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.panel as uiPanel
 import com.intellij.ui.dsl.builder.rows
 import com.intellij.util.ui.JBUI
-import java.awt.BorderLayout
 import javax.swing.JComponent
 import javax.swing.JCheckBox
-import javax.swing.JPanel
 import javax.swing.JSpinner
 import javax.swing.ScrollPaneConstants
 import javax.swing.SpinnerNumberModel
 import javax.swing.event.DocumentEvent
+import javax.swing.text.JTextComponent
 
 class EffectProjectSettingsConfigurable(private val project: Project) : SearchableConfigurable {
     private val settingsService = EffectProjectSettingsService.getInstance(project)
@@ -102,27 +101,21 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         manualBinaryPath.addBrowseFolderListener(TextBrowseFolderListener(manualBinaryDescriptor, project))
 
         binaryMode.addActionListener { updateBinaryFieldState() }
-        listOf(
+        val clearProblemsListener = object : DocumentAdapter() {
+            override fun textChanged(event: DocumentEvent) {
+                clearProblems()
+            }
+        }
+        listOf<JTextComponent>(
             extraEnv,
             initializationOptions,
             workspaceConfiguration,
             lspDiagnosticSeverity,
             injectDebugConfigurationTypes,
             spanStackIgnoreList,
-        ).forEach { area ->
-            area.document.addDocumentListener(object : DocumentAdapter() {
-                override fun textChanged(event: DocumentEvent) {
-                    clearProblems()
-                }
-            })
-        }
-        listOf(lspMermaidProvider, lspLayerGraphFollowDepth).forEach { field ->
-            field.document.addDocumentListener(object : DocumentAdapter() {
-                override fun textChanged(event: DocumentEvent) {
-                    clearProblems()
-                }
-            })
-        }
+            lspMermaidProvider,
+            lspLayerGraphFollowDepth,
+        ).forEach { field -> field.document.addDocumentListener(clearProblemsListener) }
         updateBinaryFieldState()
         clearProblems()
     }
@@ -239,16 +232,13 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             }
         }
 
-        val scrollPane = JBScrollPane(
+        return JBScrollPane(
             content,
             ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
             ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER,
         ).apply {
             border = JBUI.Borders.empty()
             viewport.background = content.background
-        }
-        return JPanel(BorderLayout()).apply {
-            add(scrollPane, BorderLayout.CENTER)
         }
     }
 
@@ -304,15 +294,13 @@ private class EffectProjectSettingsComponent(private val project: Project) {
 
     private fun syncCurrentSettings() {
         val settings = toSettings()
-        val problems = settingsService().validate(settings)
+        val problems = EffectProjectSettingsService.getInstance(project).validate(settings)
         showProblems(problems)
         if (problems.any { it.severity == SettingSeverity.ERROR }) {
             return
         }
         EffectTsconfigSyncService.getInstance(project).sync(settings)
     }
-
-    private fun settingsService(): EffectProjectSettingsService = EffectProjectSettingsService.getInstance(project)
 
     private fun clearProblems() {
         validationLabel.text = "All user-visible Effect features are project-scoped."

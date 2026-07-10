@@ -1,5 +1,6 @@
 package dev.effect.intellij.binary
 
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
@@ -245,7 +246,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
     }
 
     fun testManualModeRejectsNonExecutableBinaryWithoutMutatingIt() {
-        assumeFalse("Windows does not expose POSIX executable permission semantics", isWindows())
+        assumeFalse("Windows does not expose POSIX executable permission semantics", SystemInfo.isWindows)
         val manual = Files.createTempFile(tempDir, "manual-non-exec", ".tmp")
         Files.writeString(manual, "manual")
         makeNonExecutable(manual)
@@ -377,27 +378,17 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
     }
 
     private fun registerPinnedEndpoint(version: String) {
-        val tarballName = "${platformPackage.substringAfter('/')}-${version}.tgz"
-        val tarballPath = tempDir.resolve(tarballName)
-        writeLegacyTarball(tarballPath)
-
-        server.createContext("/$platformPackage/$version") { exchange ->
-            respondJson(
-                exchange,
-                metadataJson(version, tarballName, tarballPath),
-            )
-        }
-        server.createContext("/tarballs/$tarballName") { exchange ->
-            val bytes = Files.readAllBytes(tarballPath)
-            exchange.sendResponseHeaders(200, bytes.size.toLong())
-            exchange.responseBody.use { it.write(bytes) }
-        }
+        registerPackageEndpoint(version, ::writeLegacyTarball)
     }
 
     private fun registerModernPinnedEndpoint(version: String) {
+        registerPackageEndpoint(version, ::writeModernTarball)
+    }
+
+    private fun registerPackageEndpoint(version: String, writeArchive: (Path) -> Unit) {
         val tarballName = "${platformPackage.substringAfter('/')}-${version}.tgz"
         val tarballPath = tempDir.resolve(tarballName)
-        writeModernTarball(tarballPath)
+        writeArchive(tarballPath)
 
         server.createContext("/$platformPackage/$version") { exchange ->
             respondJson(exchange, metadataJson(version, tarballName, tarballPath))
@@ -516,6 +507,4 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
             ),
         )
     }
-
-    private fun isWindows(): Boolean = System.getProperty("os.name").contains("win", ignoreCase = true)
 }

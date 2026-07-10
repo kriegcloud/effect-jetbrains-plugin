@@ -202,12 +202,15 @@ class EffectBinaryService {
      * older packages without metadata retain their dedicated `tsgo` executable.
      */
     private fun selectManagedBinary(project: Project, libRoot: Path, platform: PlatformPackage): Path {
-        val modernCandidates = listOf("tsc", "tsc-next")
-            .map { binaryName ->
+        val modernCandidates = MODERN_BINARY_NAMES
+            .mapNotNull { binaryName ->
                 val path = libRoot.resolve(platform.executableName(binaryName))
-                PackagedBinaryCandidate(binaryName, path, readBinaryMetadata(path))
+                if (Files.isRegularFile(path)) {
+                    PackagedBinaryCandidate(path, readBinaryMetadata(path))
+                } else {
+                    null
+                }
             }
-            .filter { candidate -> candidate.path.exists() }
 
         if (modernCandidates.any { candidate -> candidate.metadata != null }) {
             val workspaceTypeScript = resolveWorkspaceTypeScript(project)
@@ -246,13 +249,7 @@ class EffectBinaryService {
     }
 
     private fun readBinaryMetadata(binaryPath: Path): PackagedBinaryMetadata? {
-        if (!binaryPath.exists()) {
-            return null
-        }
         val metadataPath = binaryPath.resolveSibling("${binaryPath.fileName}.json")
-        if (!metadataPath.exists()) {
-            return null
-        }
         return runCatching {
             val json = EffectJson.mapper.readTree(Files.readString(metadataPath))
             val tsVersion = json.path("tsVersion").asText().trim()
@@ -263,7 +260,7 @@ class EffectBinaryService {
     }
 
     private fun resolveWorkspaceTypeScript(project: Project): WorkspaceTypeScript {
-        val workspaceRoot = project.basePath?.takeIf(String::isNotBlank)?.let(::parseWorkspacePath)
+        val workspaceRoot = project.basePath?.takeIf(String::isNotBlank)?.let { parsePath(it, "Project workspace") }
             ?: throw EffectBinaryException(
                 "Cannot select a compatible @effect/tsgo binary because the project has no workspace path.",
             )
@@ -277,9 +274,6 @@ class EffectBinaryService {
         val missingGitHeads = mutableListOf<String>()
         for (packageName in packageNames) {
             val packageJson = workspaceRoot.resolve("node_modules").resolve(packageName).resolve("package.json")
-            if (!Files.isRegularFile(packageJson)) {
-                continue
-            }
             val metadata = runCatching { EffectJson.mapper.readTree(Files.readString(packageJson)) }.getOrNull() ?: continue
             val version = metadata.path("version").asText().trim()
             if (!isNativeTypeScriptVersion(version)) {
@@ -306,9 +300,6 @@ class EffectBinaryService {
 
     private fun readTypeScriptAliases(workspaceRoot: Path): List<String> {
         val packageJson = workspaceRoot.resolve("package.json")
-        if (!Files.isRegularFile(packageJson)) {
-            return emptyList()
-        }
         val root = runCatching { EffectJson.mapper.readTree(Files.readString(packageJson)) }.getOrNull() ?: return emptyList()
         return TYPESCRIPT_DEPENDENCY_SECTIONS.flatMap { section ->
             val dependencies = root.path(section)
@@ -332,13 +323,6 @@ class EffectBinaryService {
 
     private fun isNativeTypeScriptVersion(version: String): Boolean =
         version.substringBefore('.').toIntOrNull()?.let { it >= 7 } == true
-
-    private fun parseWorkspacePath(raw: String): Path =
-        try {
-            Path.of(raw)
-        } catch (error: InvalidPathException) {
-            throw EffectBinaryException("Project workspace is not a valid filesystem path: $raw", error)
-        }
 
     private fun extractArchive(archivePath: Path, destinationRoot: Path) {
         destinationRoot.deleteRecursively()
@@ -533,7 +517,7 @@ private data class PlatformPackage(
     fun executableName(baseName: String): String = "$baseName$executableSuffix"
 
     val packagedBinaryNames: List<String>
-        get() = listOf("tsc", "tsc-next", "tsgo").map(::executableName)
+        get() = SUPPORTED_BINARY_NAMES.map(::executableName)
 }
 
 private data class PackagedBinaryMetadata(
@@ -542,7 +526,6 @@ private data class PackagedBinaryMetadata(
 )
 
 private data class PackagedBinaryCandidate(
-    val binaryName: String,
     val path: Path,
     val metadata: PackagedBinaryMetadata?,
 )
@@ -552,3 +535,6 @@ private data class WorkspaceTypeScript(
     val version: String,
     val gitHead: String,
 )
+
+private val MODERN_BINARY_NAMES = listOf("tsc", "tsc-next")
+private val SUPPORTED_BINARY_NAMES = MODERN_BINARY_NAMES + "tsgo"

@@ -34,7 +34,7 @@ object EffectTsconfigSync {
      * This method mutates PSI and must run inside a write action.
      */
     fun apply(tsconfigFile: JsonFile, settings: EffectProjectSettings): SyncResult? {
-        if (!settings.hasSyncableOptions()) {
+        if (!settings.hasTypedLspSettings()) {
             return null
         }
         if (PsiTreeUtil.hasErrorElements(tsconfigFile)) {
@@ -51,11 +51,7 @@ object EffectTsconfigSync {
         return try {
             val compilerOptions = editor.objectProperty(root, "compilerOptions")
             val plugins = editor.arrayProperty(compilerOptions, "plugins")
-            val entry = plugins.valueList
-                .filterIsInstance<JsonObject>()
-                .firstOrNull { candidate ->
-                    (candidate.findProperty("name")?.value as? JsonStringLiteral)?.value == EFFECT_PLUGIN_NAME
-                }
+            val entry = findEffectPlugin(plugins)
                 ?: editor.appendObject(
                     plugins,
                     editor.generator.createObject(
@@ -92,12 +88,7 @@ object EffectTsconfigSync {
         if (settings.lspDiagnosticSeverity.isEmpty()) {
             return null
         }
-        val entry = plugins.valueList
-            .filterIsInstance<JsonObject>()
-            .firstOrNull { candidate ->
-                (candidate.findProperty("name")?.value as? JsonStringLiteral)?.value == EFFECT_PLUGIN_NAME
-            }
-            ?: return null
+        val entry = findEffectPlugin(plugins) ?: return null
         val diagnosticSeverity = entry.findProperty("diagnosticSeverity")?.value ?: return null
         return if (diagnosticSeverity is JsonObject) {
             null
@@ -105,6 +96,13 @@ object EffectTsconfigSync {
             "tsconfig.json 'diagnosticSeverity' must be a JSON object."
         }
     }
+
+    private fun findEffectPlugin(plugins: JsonArray): JsonObject? =
+        plugins.valueList
+            .filterIsInstance<JsonObject>()
+            .firstOrNull { candidate ->
+                (candidate.findProperty("name")?.value as? JsonStringLiteral)?.value == EFFECT_PLUGIN_NAME
+            }
 
     private class PsiEditor(private val root: JsonObject) {
         val generator = JsonElementGenerator(root.project)
@@ -168,10 +166,3 @@ object EffectTsconfigSync {
 
     private class InvalidTsconfigStructure(message: String) : IllegalArgumentException(message)
 }
-
-private fun EffectProjectSettings.hasSyncableOptions(): Boolean =
-    lspInlays != null ||
-        lspMermaidProvider.isNotBlank() ||
-        lspNoExternal != null ||
-        lspLayerGraphFollowDepth != null ||
-        lspDiagnosticSeverity.isNotEmpty()
