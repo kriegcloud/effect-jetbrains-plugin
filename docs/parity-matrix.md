@@ -1,22 +1,22 @@
 # VS Code And Zed Parity Matrix
 
-Last checked: June 30, 2026 (against `@effect/tsgo@0.15.0` and `effect@4.0.0-beta.92`).
+Last checked: July 10, 2026 (against `@effect/tsgo@0.19.0` and `effect@4.0.0-beta.97`).
 
 This matrix tracks behavioral parity, not literal UI cloning. VS Code is the runtime Dev Tools
 reference. Zed is the direct `@effect/tsgo` language-server launch reference.
 
 | Capability | Upstream reference | JetBrains status | Evidence |
 | --- | --- | --- | --- |
-| Native `tsgo --lsp --stdio` launch | Zed | Implemented | `EffectLspProjectService`, real-binary smoke |
+| Native Effect-patched `tsc` / legacy `tsgo --lsp --stdio` launch | Zed | Implemented | `EffectLspProjectService`, real-binary smoke |
 | Manual native binary path | Zed | Implemented | Settings validation and manual-mode tests |
 | Managed latest/pinned npm package install | Zed | Implemented; JetBrains also validates npm integrity | Binary service tests |
-| Platform package resolution | Zed | Implemented | Linux/macOS/Windows package naming tests |
+| Platform package resolution | Zed/tsgo | Implemented; selects `tsc` or `tsc-next` by workspace TypeScript `gitHead` and retains legacy `tsgo` fallback | Linux/macOS/Windows package naming and metadata-selection tests |
 | Initialization options passthrough | Zed | Implemented | LSP descriptor tests |
 | Workspace configuration passthrough | Zed | Implemented | LSP descriptor tests |
 | Typed common `@effect/tsgo` settings | Zed/tsgo | Implemented with raw JSON escape hatch | Settings merge tests |
-| Diagnostics/code actions/completion/hover/symbols | tsgo | Implemented through LSP | Real-binary verifier |
+| Diagnostics/code actions/completion/hover/symbols | tsgo | Implemented through LSP, including `catchToIgnore` and `flatMapToMap` directive completion | Completion tests and real-binary verifier |
 | Hover Mermaid links | tsgo | Implemented through LSP hover | Real-binary verifier |
-| Local Layer Mermaid preview | tsgo hover link | Implemented; decodes the `mermaid.live` `pako:` link from Layer hover into a local `.mmd` (requires `noExternal=false`). Execute-command probe kept as a forward-compatible path (no such command ships in 0.15.0). | `EffectLayerMermaidService` + decoder test; real-binary hover smoke |
+| Local Layer Mermaid preview | tsgo hover link | Implemented; decodes the `mermaid.live` `pako:` link from Layer hover into a local `.mmd` (requires `noExternal=false`). Execute-command probe kept as a forward-compatible path (no such command ships in 0.19.0). | `EffectLayerMermaidService` + decoder test; real-binary hover smoke |
 | Runtime Dev Tools server | VS Code | Implemented | Dev Tools service tests |
 | Runtime clients and active selection | VS Code | Implemented | Dev Tools service tests |
 | Metrics polling/reset | VS Code | Implemented | Dev Tools service tests |

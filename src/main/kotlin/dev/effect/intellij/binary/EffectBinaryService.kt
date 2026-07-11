@@ -29,6 +29,10 @@ import java.security.MessageDigest
 import java.time.Duration
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.withLock
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.inputStream
@@ -36,7 +40,9 @@ import kotlin.io.path.inputStream
 @Service(Service.Level.APP)
 class EffectBinaryService {
     private val log = logger<EffectBinaryService>()
-    private val cacheOperationLock = Any()
+    private val cacheLifecycleLock = ReentrantReadWriteLock()
+    // Keep lock identities stable for the service lifetime so queued installers cannot split across replacement locks.
+    private val versionRootLocks = ConcurrentHashMap<Path, ReentrantLock>()
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .followRedirects(HttpClient.Redirect.NORMAL)
         .connectTimeout(Duration.ofSeconds(20))
@@ -66,7 +72,7 @@ class EffectBinaryService {
 
             EffectBinaryMode.LATEST,
             EffectBinaryMode.PINNED,
-            -> {
+            -> cacheLifecycleLock.readLock().withLock {
                 status.markResolvingBinary("Resolving @effect/tsgo")
                 val platform = currentPlatformPackage()
                 val version = when (settings.binaryMode) {
@@ -83,14 +89,33 @@ class EffectBinaryService {
 
                 val cacheRoot = managedCacheRoot()
                 val versionRoot = cacheRoot.resolve(version).resolve(platform.packageName)
-                val binaryPath = versionRoot.resolve("package").resolve("lib").resolve(platform.binaryName)
-
-                synchronized(cacheOperationLock) {
-                    if (!binaryPath.exists()) {
+                val binaryPath = versionRootLock(versionRoot).withLock {
+                    var installed = false
+                    fun reinstall() {
+                        versionRoot.deleteRecursively()
                         status.markDownloadingBinary("Downloading ${platform.packageName}@$version")
-                        installManagedPackage(platform.packageName, version, versionRoot, binaryPath)
+                        installManagedPackage(platform, version, versionRoot)
+                        installed = true
                     }
-                    ensureExecutable(binaryPath)
+
+                    if (!isManagedInstallationHealthy(versionRoot, version, platform)) {
+                        reinstall()
+                    }
+
+                    try {
+                        selectManagedBinary(project, versionRoot.resolve("package").resolve("lib"), platform)
+                    } catch (error: DamagedManagedPackageException) {
+                        if (installed) {
+                            throw EffectBinaryException(error.message.orEmpty(), error)
+                        }
+                        reinstall()
+                        try {
+                            selectManagedBinary(project, versionRoot.resolve("package").resolve("lib"), platform)
+                        } catch (retryError: DamagedManagedPackageException) {
+                            throw EffectBinaryException(retryError.message.orEmpty(), retryError)
+                        }
+                    }
+                        .also(::ensureExecutable)
                 }
 
                 BinaryResolution(
@@ -111,7 +136,7 @@ class EffectBinaryService {
             return
         }
 
-        synchronized(cacheOperationLock) {
+        cacheLifecycleLock.writeLock().withLock {
             val cacheRoot = managedCacheRoot()
             val version = settings.pinnedVersion.takeIf { it.isNotBlank() }
             if (settings.binaryMode == EffectBinaryMode.PINNED && version != null) {
@@ -121,6 +146,9 @@ class EffectBinaryService {
             }
         }
     }
+
+    private fun versionRootLock(versionRoot: Path): ReentrantLock =
+        versionRootLocks.computeIfAbsent(versionRoot.toAbsolutePath().normalize()) { ReentrantLock() }
 
     private fun validateManualBinary(path: Path) {
         when {
@@ -151,7 +179,8 @@ class EffectBinaryService {
         }
     }
 
-    private fun installManagedPackage(packageName: String, version: String, versionRoot: Path, binaryPath: Path) {
+    private fun installManagedPackage(platform: PlatformPackage, version: String, versionRoot: Path) {
+        val packageName = platform.packageName
         val metadataUrl = "${registryBaseUrl.trimEnd('/')}/${encodePackageName(packageName)}/$version"
         val metadataResponse = sendStringRequest(HttpRequest.newBuilder(URI.create(metadataUrl)).GET().build())
         val metadataJson = EffectJson.mapper.readTree(metadataResponse.body())
@@ -165,7 +194,6 @@ class EffectBinaryService {
         val tempRoot = Files.createTempDirectory("effect-tsgo-download")
         val archivePath = tempRoot.resolve("package.tgz")
         val stagingRoot = versionRoot.resolveSibling("${versionRoot.fileName}.staging-${UUID.randomUUID()}")
-        val stagedBinary = stagingRoot.resolve("package").resolve("lib").resolve(binaryPath.fileName.toString())
         val archiveResponse = sendFileRequest(HttpRequest.newBuilder(URI.create(tarballUrl)).GET().build(), archivePath)
         if (archiveResponse.statusCode() !in 200..299) {
             archivePath.deleteIfExists()
@@ -175,12 +203,15 @@ class EffectBinaryService {
 
         try {
             extractArchive(archivePath, stagingRoot)
-            if (!stagedBinary.exists()) {
+            val stagedLib = stagingRoot.resolve("package").resolve("lib")
+            val packagedBinaries = platform.packagedBinaryNames.map(stagedLib::resolve)
+            if (packagedBinaries.none(Files::isRegularFile)) {
                 throw EffectBinaryException(
-                    "Downloaded $packageName@$version successfully, but the native binary was not found at $stagedBinary.",
+                    "Downloaded $packageName@$version successfully, but no supported native binary was found in $stagedLib. " +
+                        "Tried: ${packagedBinaries.joinToString()}.",
                 )
             }
-            ensureExecutable(stagedBinary)
+            writeInstallMarker(stagingRoot, version, platform)
             versionRoot.deleteRecursively()
             EffectFileUtil.atomicMove(stagingRoot, versionRoot)
         } catch (error: Exception) {
@@ -193,6 +224,195 @@ class EffectBinaryService {
             stagingRoot.deleteRecursively()
         }
     }
+
+    private fun writeInstallMarker(versionRoot: Path, version: String, platform: PlatformPackage) {
+        val libRoot = versionRoot.resolve("package").resolve("lib")
+        val marker = EffectJson.mapper.createObjectNode()
+        marker.put("version", version)
+        val files = marker.putObject("files")
+        platform.packagedFileNames.forEach { fileName ->
+            val file = libRoot.resolve(fileName)
+            if (Files.isRegularFile(file)) {
+                files.put(fileName, Files.size(file))
+            }
+        }
+        Files.writeString(versionRoot.resolve(INSTALL_COMPLETE_MARKER), EffectJson.mapper.writeValueAsString(marker))
+    }
+
+    private fun isManagedInstallationHealthy(
+        versionRoot: Path,
+        version: String,
+        platform: PlatformPackage,
+    ): Boolean = runCatching {
+        val markerPath = versionRoot.resolve(INSTALL_COMPLETE_MARKER)
+        if (!Files.isRegularFile(markerPath)) {
+            return@runCatching false
+        }
+
+        val marker = EffectJson.mapper.readTree(Files.readString(markerPath))
+        val files = marker.path("files")
+        if (marker.path("version").asText() != version || !files.isObject) {
+            return@runCatching false
+        }
+
+        val installedFileNames = files.properties().asSequence().map { it.key }.toSet()
+        if (installedFileNames.isEmpty() || installedFileNames.any { it !in platform.packagedFileNames }) {
+            return@runCatching false
+        }
+
+        val libRoot = versionRoot.resolve("package").resolve("lib")
+        if (installedFileNames.any { fileName ->
+                val file = libRoot.resolve(fileName)
+                !Files.isRegularFile(file) || Files.size(file) != files.path(fileName).asLong(-1)
+            }
+        ) {
+            return@runCatching false
+        }
+
+        val modernBinaries = MODERN_BINARY_NAMES.map(platform::executableName)
+        val installedModernBinaries = modernBinaries.filter(installedFileNames::contains)
+        if (installedModernBinaries.isNotEmpty()) {
+            return@runCatching installedModernBinaries.all { binaryName ->
+                "$binaryName.json" in installedFileNames && readBinaryMetadata(libRoot.resolve(binaryName)) != null
+            }
+        }
+
+        platform.executableName("tsgo") in installedFileNames
+    }.getOrDefault(false)
+
+    /**
+     * Modern platform packages carry binaries for stable and nightly TypeScript together with
+     * adjacent metadata. Select the binary built from the workspace's exact TypeScript git head;
+     * older packages without metadata retain their dedicated `tsgo` executable.
+     */
+    private fun selectManagedBinary(project: Project, libRoot: Path, platform: PlatformPackage): Path {
+        val modernCandidates = MODERN_BINARY_NAMES
+            .mapNotNull { binaryName ->
+                val path = libRoot.resolve(platform.executableName(binaryName))
+                if (Files.isRegularFile(path)) {
+                    PackagedBinaryCandidate(path, readBinaryMetadata(path))
+                } else {
+                    null
+                }
+            }
+
+        if (modernCandidates.any { candidate -> candidate.metadata != null }) {
+            val workspaceTypeScript = resolveWorkspaceTypeScript(project)
+            modernCandidates.firstOrNull { candidate ->
+                candidate.metadata?.tsGitHead == workspaceTypeScript.gitHead
+            }?.let { return it.path }
+
+            val tried = modernCandidates.joinToString(separator = "\n") { candidate ->
+                val metadata = candidate.metadata
+                if (metadata == null) {
+                    "  ${candidate.path.fileName}: metadata missing or invalid"
+                } else {
+                    "  ${candidate.path.fileName}: TypeScript ${metadata.tsVersion}, gitHead ${metadata.tsGitHead}"
+                }
+            }
+            throw EffectBinaryException(
+                "No packaged @effect/tsgo binary matches ${workspaceTypeScript.packageName}@${workspaceTypeScript.version} " +
+                    "gitHead ${workspaceTypeScript.gitHead}. Tried:\n$tried\n" +
+                    "Install matching TypeScript and @effect/tsgo versions, or select a compatible executable in MANUAL mode.",
+            )
+        }
+
+        val legacyBinary = libRoot.resolve(platform.executableName("tsgo"))
+        if (legacyBinary.exists()) {
+            return legacyBinary
+        }
+
+        if (modernCandidates.isNotEmpty()) {
+            throw DamagedManagedPackageException(
+                "The downloaded @effect/tsgo package contains ${modernCandidates.joinToString { it.path.fileName.toString() }}, " +
+                    "but their TypeScript compatibility metadata is missing or invalid.",
+            )
+        }
+
+        throw DamagedManagedPackageException("No supported @effect/tsgo executable was found in $libRoot.")
+    }
+
+    private fun readBinaryMetadata(binaryPath: Path): PackagedBinaryMetadata? {
+        val metadataPath = binaryPath.resolveSibling("${binaryPath.fileName}.json")
+        return runCatching {
+            val json = EffectJson.mapper.readTree(Files.readString(metadataPath))
+            val tsVersion = json.path("tsVersion").asText().trim()
+            val tsGitHead = json.path("tsGitHead").asText().trim()
+            require(tsVersion.isNotBlank() && tsGitHead.isNotBlank())
+            PackagedBinaryMetadata(tsVersion, tsGitHead)
+        }.getOrNull()
+    }
+
+    private fun resolveWorkspaceTypeScript(project: Project): WorkspaceTypeScript {
+        val workspaceRoot = project.basePath?.takeIf(String::isNotBlank)?.let { parsePath(it, "Project workspace") }
+            ?: throw EffectBinaryException(
+                "Cannot select a compatible @effect/tsgo binary because the project has no workspace path.",
+            )
+        val packageNames = buildList {
+            add("typescript")
+            addAll(readTypeScriptAliases(workspaceRoot))
+            add("@typescript/native")
+            add("@typescript/native-preview")
+        }.distinct()
+
+        val missingGitHeads = mutableListOf<String>()
+        for (nodeModulesRoot in nodeModulesRoots(workspaceRoot)) {
+            for (packageName in packageNames) {
+                val packageJson = nodeModulesRoot.resolve(packageName).resolve("package.json")
+                val metadata = runCatching { EffectJson.mapper.readTree(Files.readString(packageJson)) }.getOrNull() ?: continue
+                val version = metadata.path("version").asText().trim()
+                if (!isNativeTypeScriptVersion(version)) {
+                    continue
+                }
+                val gitHead = metadata.path("gitHead").asText().trim()
+                if (gitHead.isBlank()) {
+                    missingGitHeads += "$packageName@$version"
+                    continue
+                }
+                return WorkspaceTypeScript(packageName, version, gitHead)
+            }
+        }
+
+        val detail = if (missingGitHeads.isEmpty()) {
+            "None of ${packageNames.joinToString()} is installed with a native TypeScript 7+ version."
+        } else {
+            "Missing gitHead metadata for ${missingGitHeads.joinToString()}."
+        }
+        throw EffectBinaryException(
+            "Cannot select a compatible @effect/tsgo binary for $workspaceRoot. $detail " +
+                "Install typescript >= 7 (or a native TypeScript alias), then retry.",
+        )
+    }
+
+    private fun readTypeScriptAliases(workspaceRoot: Path): List<String> {
+        val packageJson = workspaceRoot.resolve("package.json")
+        val root = runCatching { EffectJson.mapper.readTree(Files.readString(packageJson)) }.getOrNull() ?: return emptyList()
+        return TYPESCRIPT_DEPENDENCY_SECTIONS.flatMap { section ->
+            val dependencies = root.path(section)
+            if (!dependencies.isObject) {
+                emptyList()
+            } else {
+                dependencies.properties().asSequence()
+                    .filter { (_, version) -> version.asText().isTypeScriptAliasSpecifier() }
+                    .map { (name, _) -> name }
+                    .toList()
+            }
+        }
+    }
+
+    private fun nodeModulesRoots(workspaceRoot: Path): Sequence<Path> =
+        generateSequence(workspaceRoot.toAbsolutePath().normalize()) { current -> current.parent }
+            .map { ancestor -> ancestor.resolve("node_modules") }
+
+    private fun String.isTypeScriptAliasSpecifier(): Boolean {
+        val normalized = trim().lowercase()
+        return normalized.startsWith("npm:typescript@") ||
+            normalized.startsWith("npm:@typescript/native@") ||
+            normalized.startsWith("npm:@typescript/native-preview@")
+    }
+
+    private fun isNativeTypeScriptVersion(version: String): Boolean =
+        version.substringBefore('.').toIntOrNull()?.let { it >= 7 } == true
 
     private fun extractArchive(archivePath: Path, destinationRoot: Path) {
         destinationRoot.deleteRecursively()
@@ -330,10 +550,9 @@ class EffectBinaryService {
             else -> throw EffectBinaryException("Unsupported architecture for @effect/tsgo: $archName")
         }
 
-        val binaryName = if (os == "win32") "tsgo.exe" else "tsgo"
         return PlatformPackage(
             packageName = "$BASE_PACKAGE_NAME-$os-$arch",
-            binaryName = binaryName,
+            executableSuffix = if (os == "win32") ".exe" else "",
         )
     }
 
@@ -369,6 +588,13 @@ class EffectBinaryService {
     companion object {
         private const val DEFAULT_REGISTRY_BASE_URL = "https://registry.npmjs.org"
         private const val BASE_PACKAGE_NAME = "@effect/tsgo"
+        private const val INSTALL_COMPLETE_MARKER = ".install-complete"
+        private val TYPESCRIPT_DEPENDENCY_SECTIONS = listOf(
+            "dependencies",
+            "devDependencies",
+            "optionalDependencies",
+            "peerDependencies",
+        )
 
         fun getInstance(): EffectBinaryService = ApplicationManager.getApplication().getService(EffectBinaryService::class.java)
     }
@@ -376,5 +602,34 @@ class EffectBinaryService {
 
 private data class PlatformPackage(
     val packageName: String,
-    val binaryName: String,
+    val executableSuffix: String,
+) {
+    fun executableName(baseName: String): String = "$baseName$executableSuffix"
+
+    val packagedBinaryNames: List<String>
+        get() = SUPPORTED_BINARY_NAMES.map(::executableName)
+
+    val packagedFileNames: Set<String>
+        get() = packagedBinaryNames.flatMap { binaryName -> listOf(binaryName, "$binaryName.json") }.toSet()
+}
+
+private data class PackagedBinaryMetadata(
+    val tsVersion: String,
+    val tsGitHead: String,
 )
+
+private data class PackagedBinaryCandidate(
+    val path: Path,
+    val metadata: PackagedBinaryMetadata?,
+)
+
+private data class WorkspaceTypeScript(
+    val packageName: String,
+    val version: String,
+    val gitHead: String,
+)
+
+private class DamagedManagedPackageException(message: String) : RuntimeException(message)
+
+private val MODERN_BINARY_NAMES = listOf("tsc", "tsc-next")
+private val SUPPORTED_BINARY_NAMES = MODERN_BINARY_NAMES + "tsgo"

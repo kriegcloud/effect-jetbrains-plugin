@@ -273,7 +273,7 @@ private fun parseOptionalBoolean(raw: String): Boolean? =
         else -> null
     }
 
-private fun EffectProjectSettings.hasTypedLspSettings(): Boolean =
+internal fun EffectProjectSettings.hasTypedLspSettings(): Boolean =
     lspInlays != null ||
         lspMermaidProvider.isNotBlank() ||
         lspNoExternal != null ||

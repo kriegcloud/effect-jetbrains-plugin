@@ -1,90 +1,174 @@
 package dev.effect.intellij.settings
 
-import com.fasterxml.jackson.core.json.JsonReadFeature
-import com.fasterxml.jackson.databind.json.JsonMapper
-import com.fasterxml.jackson.databind.node.ArrayNode
-import com.fasterxml.jackson.databind.node.ObjectNode
+import com.intellij.json.psi.JsonArray
+import com.intellij.json.psi.JsonElementGenerator
+import com.intellij.json.psi.JsonFile
+import com.intellij.json.psi.JsonObject
+import com.intellij.json.psi.JsonProperty
+import com.intellij.json.psi.JsonPsiUtil
+import com.intellij.json.psi.JsonStringLiteral
+import com.intellij.json.psi.JsonValue
+import com.intellij.psi.util.PsiTreeUtil
+import dev.effect.intellij.core.EffectJson
 
 /**
- * Pure merge logic that writes the plugin's typed Effect language-service options into a
- * `tsconfig.json` `compilerOptions.plugins` `@effect/language-service` entry.
+ * Targeted JSON PSI merge for the Effect language-service entry in `tsconfig.json`.
  *
- * This exists because `@effect/tsgo` reads Effect options only from the tsconfig plugin entry
- * (`program.Options().Effect` / `ParseFromPlugins`), not from LSP `initializationOptions` or
- * `workspace/configuration`. The merge is additive: it adds or updates keys that are explicitly set
- * in the IDE settings and never removes keys a user placed in tsconfig by hand.
+ * `@effect/tsgo` reads these options from `compilerOptions.plugins`, rather than LSP
+ * `initializationOptions` or `workspace/configuration`. Updating individual PSI nodes keeps JSONC
+ * comments, whitespace, unrelated compiler options, other plugins, and manually managed Effect
+ * keys intact.
  */
 object EffectTsconfigSync {
     const val EFFECT_PLUGIN_NAME = "@effect/language-service"
 
-    private val reader: JsonMapper = JsonMapper.builder()
-        .enable(JsonReadFeature.ALLOW_JAVA_COMMENTS)
-        .enable(JsonReadFeature.ALLOW_TRAILING_COMMA)
-        .build()
-
     data class SyncResult(
-        val updatedJson: String,
         val changed: Boolean,
-        val hadComments: Boolean,
+        val errorMessage: String? = null,
     )
 
     /**
-     * Returns the updated tsconfig text, or `null` when the input is not a JSON object or there are no
-     * typed options to write. Comments and exact formatting are not preserved (the file is
-     * re-serialized), so callers should warn when [SyncResult.hadComments] is true.
+     * Adds or updates explicitly configured typed options. A `null` result means that the settings
+     * contain no typed options to sync. Invalid JSON or incompatible tsconfig structures are
+     * reported without changing the file.
+     *
+     * This method mutates PSI and must run inside a write action.
      */
-    fun apply(tsconfigJson: String, settings: EffectProjectSettings): SyncResult? {
-        if (!settings.hasSyncableOptions()) {
+    fun apply(tsconfigFile: JsonFile, settings: EffectProjectSettings): SyncResult? {
+        if (!settings.hasTypedLspSettings()) {
             return null
         }
-        val hadComments = containsJsonComment(tsconfigJson)
-        val root = runCatching { reader.readTree(tsconfigJson) }.getOrNull() as? ObjectNode ?: return null
-        val before = root.toString()
-
-        val compilerOptions = (root.get("compilerOptions") as? ObjectNode) ?: root.putObject("compilerOptions")
-        val plugins = (compilerOptions.get("plugins") as? ArrayNode) ?: compilerOptions.putArray("plugins")
-        val entry = plugins.firstOrNull { it.isObject && it.path("name").asText() == EFFECT_PLUGIN_NAME } as? ObjectNode
-            ?: reader.createObjectNode().put("name", EFFECT_PLUGIN_NAME).also(plugins::add)
-
-        settings.lspInlays?.let { entry.put("inlays", it) }
-        settings.lspMermaidProvider.trim().takeIf(String::isNotBlank)?.let { entry.put("mermaidProvider", it) }
-        settings.lspNoExternal?.let { entry.put("noExternal", it) }
-        settings.lspLayerGraphFollowDepth?.let { entry.put("layerGraphFollowDepth", it) }
-        if (settings.lspDiagnosticSeverity.isNotEmpty()) {
-            val severity = (entry.get("diagnosticSeverity") as? ObjectNode) ?: entry.putObject("diagnosticSeverity")
-            settings.lspDiagnosticSeverity.toSortedMap().forEach { (rule, value) -> severity.put(rule, value) }
+        if (PsiTreeUtil.hasErrorElements(tsconfigFile)) {
+            return SyncResult(changed = false, errorMessage = "tsconfig.json contains invalid JSON.")
         }
 
-        val updated = reader.writerWithDefaultPrettyPrinter().writeValueAsString(root) + "\n"
-        return SyncResult(updatedJson = updated, changed = root.toString() != before, hadComments = hadComments)
-    }
+        val root = tsconfigFile.topLevelValue as? JsonObject
+            ?: return SyncResult(changed = false, errorMessage = "tsconfig.json must contain a JSON object.")
+        validateExistingStructure(root, settings)?.let { problem ->
+            return SyncResult(changed = false, errorMessage = problem)
+        }
+        val editor = PsiEditor(root)
 
-    /** Heuristic scan for `//` or block comments outside of JSON string literals. */
-    private fun containsJsonComment(text: String): Boolean {
-        var index = 0
-        var inString = false
-        var escaped = false
-        while (index < text.length) {
-            val c = text[index]
-            when {
-                inString -> when {
-                    escaped -> escaped = false
-                    c == '\\' -> escaped = true
-                    c == '"' -> inString = false
-                }
+        return try {
+            val compilerOptions = editor.objectProperty(root, "compilerOptions")
+            val plugins = editor.arrayProperty(compilerOptions, "plugins")
+            val entry = findEffectPlugin(plugins)
+                ?: editor.appendObject(
+                    plugins,
+                    editor.generator.createObject(
+                        "\"name\": ${editor.stringLiteral(EFFECT_PLUGIN_NAME)}",
+                    ),
+                )
 
-                c == '"' -> inString = true
-                c == '/' && index + 1 < text.length && (text[index + 1] == '/' || text[index + 1] == '*') -> return true
+            settings.lspInlays?.let { editor.setValue(entry, "inlays", it.toString()) }
+            settings.lspMermaidProvider.trim().takeIf(String::isNotBlank)?.let { provider ->
+                editor.setValue(entry, "mermaidProvider", editor.stringLiteral(provider))
             }
-            index++
-        }
-        return false
-    }
-}
+            settings.lspNoExternal?.let { editor.setValue(entry, "noExternal", it.toString()) }
+            settings.lspLayerGraphFollowDepth?.let { editor.setValue(entry, "layerGraphFollowDepth", it.toString()) }
+            if (settings.lspDiagnosticSeverity.isNotEmpty()) {
+                val severity = editor.objectProperty(entry, "diagnosticSeverity")
+                settings.lspDiagnosticSeverity.toSortedMap().forEach { (rule, value) ->
+                    editor.setValue(severity, rule, editor.stringLiteral(value))
+                }
+            }
 
-private fun EffectProjectSettings.hasSyncableOptions(): Boolean =
-    lspInlays != null ||
-        lspMermaidProvider.isNotBlank() ||
-        lspNoExternal != null ||
-        lspLayerGraphFollowDepth != null ||
-        lspDiagnosticSeverity.isNotEmpty()
+            SyncResult(changed = editor.changed)
+        } catch (error: InvalidTsconfigStructure) {
+            SyncResult(changed = false, errorMessage = error.message)
+        }
+    }
+
+    private fun validateExistingStructure(root: JsonObject, settings: EffectProjectSettings): String? {
+        val compilerOptionsValue = root.findProperty("compilerOptions")?.value ?: return null
+        val compilerOptions = compilerOptionsValue as? JsonObject
+            ?: return "tsconfig.json 'compilerOptions' must be a JSON object."
+        val pluginsValue = compilerOptions.findProperty("plugins")?.value ?: return null
+        val plugins = pluginsValue as? JsonArray
+            ?: return "tsconfig.json 'plugins' must be a JSON array."
+        if (settings.lspDiagnosticSeverity.isEmpty()) {
+            return null
+        }
+        val entry = findEffectPlugin(plugins) ?: return null
+        val diagnosticSeverity = entry.findProperty("diagnosticSeverity")?.value ?: return null
+        return if (diagnosticSeverity is JsonObject) {
+            null
+        } else {
+            "tsconfig.json 'diagnosticSeverity' must be a JSON object."
+        }
+    }
+
+    private fun findEffectPlugin(plugins: JsonArray): JsonObject? =
+        plugins.valueList
+            .filterIsInstance<JsonObject>()
+            .firstOrNull { candidate ->
+                (candidate.findProperty("name")?.value as? JsonStringLiteral)?.value == EFFECT_PLUGIN_NAME
+            }
+
+    private class PsiEditor(private val root: JsonObject) {
+        val generator = JsonElementGenerator(root.project)
+        var changed: Boolean = false
+            private set
+
+        fun stringLiteral(value: String): String = EffectJson.mapper.writeValueAsString(value)
+
+        fun objectProperty(parent: JsonObject, name: String): JsonObject {
+            val existing = parent.findProperty(name)
+            if (existing == null) {
+                return (addProperty(parent, name, "{}").value as JsonObject)
+            }
+            return existing.value as? JsonObject
+                ?: throw InvalidTsconfigStructure("tsconfig.json '$name' must be a JSON object.")
+        }
+
+        fun arrayProperty(parent: JsonObject, name: String): JsonArray {
+            val existing = parent.findProperty(name)
+            if (existing == null) {
+                return (addProperty(parent, name, "[]").value as JsonArray)
+            }
+            return existing.value as? JsonArray
+                ?: throw InvalidTsconfigStructure("tsconfig.json '$name' must be a JSON array.")
+        }
+
+        fun appendObject(parent: JsonArray, value: JsonObject): JsonObject {
+            val lastValue = parent.valueList.lastOrNull()
+            val inserted = if (lastValue == null) {
+                parent.addAfter(value, parent.firstChild)
+            } else {
+                parent.addAfter(value, lastValue).also { added ->
+                    parent.addBefore(generator.createComma(), added)
+                }
+            } as JsonObject
+            changed = true
+            return inserted
+        }
+
+        fun setValue(parent: JsonObject, name: String, valueText: String) {
+            val existing = parent.findProperty(name)
+            if (existing == null) {
+                addProperty(parent, name, valueText)
+                return
+            }
+
+            val currentValue = existing.value
+            if (currentValue?.text == valueText) {
+                return
+            }
+            currentValue?.replace(generator.createValue<JsonValue>(valueText))
+                ?: existing.replace(createProperty(name, valueText))
+            changed = true
+        }
+
+        private fun addProperty(parent: JsonObject, name: String, valueText: String): JsonProperty {
+            changed = true
+            return JsonPsiUtil.addProperty(parent, createProperty(name, valueText), false) as JsonProperty
+        }
+
+        private fun createProperty(name: String, valueText: String): JsonProperty {
+            val encodedName = EffectJson.mapper.writeValueAsString(name).removeSurrounding("\"")
+            return generator.createProperty(encodedName, valueText)
+        }
+    }
+
+    private class InvalidTsconfigStructure(message: String) : IllegalArgumentException(message)
+}

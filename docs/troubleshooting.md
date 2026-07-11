@@ -36,9 +36,10 @@ cached `effect-jetbrains-plugin.zip`, install from disk again, apply the plugin 
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| Widget says `Not Configured` or manual mode will not apply | The default `MANUAL` mode has no valid executable path yet | Provide a valid executable native `tsgo` path or explicitly switch to a managed mode |
+| Widget says `Not Configured` or manual mode will not apply | The default `MANUAL` mode has no valid executable path yet | Provide a valid Effect-patched native `tsc` or legacy `tsgo` path, or explicitly switch to a managed mode |
 | Widget stays on `Resolving Binary` or moves to `Error` in `LATEST` or `PINNED` mode | The plugin cannot reach npm, the version is wrong, the npm integrity check failed, or your platform is unsupported by the published package | Recheck connectivity and the configured version, then restart the server |
-| Manual mode will not apply | The path is blank, invalid, missing, not a file, or not executable | Provide a valid executable native `tsgo` path |
+| Managed mode reports that no compatible binary matches the workspace | The workspace has no native TypeScript package metadata, or its TypeScript `gitHead` matches neither packaged `tsc` nor `tsc-next` | Install a supported `typescript >= 7`, `@typescript/native`, alias, or legacy native-preview version that matches the selected `@effect/tsgo` release; do not force an arbitrary binary |
+| Manual mode will not apply | The path is blank, invalid, missing, not a file, or not executable | Provide a valid executable Effect-patched native `tsc` or legacy `tsgo` path |
 | Widget reaches `Restart Required` | LSP-relevant settings changed | Use the widget restart action after applying settings |
 | No LSP startup when a file opens | The file is not a supported TypeScript extension or the server failed before startup completed | Use a supported file and inspect the widget state plus logs |
 
@@ -59,7 +60,7 @@ cached `effect-jetbrains-plugin.zip`, install from disk again, apply the plugin 
 
 ### `MANUAL`
 
-- Requires an executable native `tsgo` path
+- Requires an executable Effect-patched native `tsc` or legacy `tsgo` path
 - Does not rely on the plugin-managed download/cache path
 
 ## Managed Cache Issues
@@ -71,6 +72,10 @@ If a managed install looks stale or corrupted:
 1. Close the IDE or stop using the project
 2. Remove the `effect-tsgo` cache directory from the IDE system path
 3. Reopen the project and let the plugin resolve the binary again
+
+If the cache is intact but resolution reports a TypeScript compatibility mismatch, clearing it will
+not change the result. Align the workspace's native TypeScript package with the selected
+`@effect/tsgo` version instead.
 
 ## Runtime Dev Tools Issues
 

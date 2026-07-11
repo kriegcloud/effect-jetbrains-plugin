@@ -7,6 +7,10 @@ export const recover = Effect.fail("error").pipe(
   Effect.catch(() => Effect.succeed(42))
 )
 
+export const increment = Effect.succeed(1).pipe(
+  Effect.flatMap((value) => Effect.succeed(value + 1))
+)
+
 export const dieLater = Effect.gen(function*() {
   const one = yield* first.pipe(Effect.orDie)
   const two = yield* second.pipe(Effect.orDie)

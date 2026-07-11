@@ -49,7 +49,8 @@ class LspClient {
       this.stderr += chunk.toString("utf8")
     })
     this.process.on("error", (error) => {
-      for (const { reject } of this.pending.values()) {
+      for (const { reject, timeout } of this.pending.values()) {
+        clearTimeout(timeout)
         reject(error)
       }
       this.pending.clear()
@@ -59,7 +60,8 @@ class LspClient {
     })
     this.process.on("exit", (code, signal) => {
       const error = new Error(`LSP process exited early (code=${code}, signal=${signal})\n${this.stderr}`)
-      for (const { reject } of this.pending.values()) {
+      for (const { reject, timeout } of this.pending.values()) {
+        clearTimeout(timeout)
         reject(error)
       }
       this.pending.clear()
@@ -78,12 +80,12 @@ class LspClient {
   request(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
     const id = this.nextId++
     const promise = new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
-      setTimeout(() => {
+      const timeout = setTimeout(() => {
         if (this.pending.delete(id)) {
           reject(new Error(`Timed out waiting for ${method}\n${this.stderr}`))
         }
       }, timeoutMs)
+      this.pending.set(id, { resolve, reject, timeout })
     })
     this.send({
       jsonrpc: "2.0",
@@ -165,6 +167,7 @@ class LspClient {
         return
       }
       this.pending.delete(message.id)
+      clearTimeout(pending.timeout)
       if (Object.hasOwn(message, "error")) {
         pending.reject(new Error(JSON.stringify(message.error)))
       } else {
@@ -240,8 +243,11 @@ async function runCommand(command, args, cwd) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
     })
+    child.stdout.pipe(process.stderr)
+    child.stderr.pipe(process.stderr)
+    child.on("error", reject)
     child.on("exit", (code) => {
       if (code === 0) {
         resolve()
@@ -411,10 +417,9 @@ Layer.`
         text: completionText,
       },
     })
-    await Promise.race([
-      client.waitForNotification("textDocument/publishDiagnostics", (params) => params.uri === indexUri, 10_000),
-      new Promise((resolve) => setTimeout(resolve, 5_000)),
-    ])
+    await client
+      .waitForNotification("textDocument/publishDiagnostics", (params) => params.uri === indexUri, 5_000)
+      .catch(() => {})
 
     const documentSymbols = await requestWithRetries(client, "textDocument/documentSymbol", {
       textDocument: { uri: indexUri },
@@ -546,12 +551,17 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       (candidateDiagnostics) => {
         const messages = diagnosticMessages(candidateDiagnostics)
         return messages.some((message) => message.includes("effect(catchToOrElseSucceed)")) &&
+          messages.some((message) => message.includes("effect(flatMapToMap)")) &&
           messages.some((message) => message.includes("effect(redundantOrDie)")) &&
           messages.some((message) => message.includes("effect(schemaNumber)")) &&
           messages.some((message) => message.includes("effect(newSchemaClass)"))
       },
     )
     const messages = diagnosticMessages(diagnostics)
+    assert(
+      messages.some((message) => message.includes("effect(flatMapToMap)")),
+      "Expected flatMapToMap diagnostic from @effect/tsgo 0.19.0",
+    )
     assert(
       messages.some((message) => message.includes("effect(newSchemaClass)")),
       "Expected newSchemaClass diagnostic (v4-only, enabled via tsconfig diagnosticSeverity)",
@@ -571,6 +581,10 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
     assert(
       codeActionTitles.some((title) => title.includes("Effect.orElseSucceed")),
       "Expected catchToOrElseSucceed code action to mention Effect.orElseSucceed",
+    )
+    assert(
+      codeActionTitles.some((title) => title.includes("Effect.map")),
+      "Expected flatMapToMap code action to mention Effect.map",
     )
     assert(
       codeActionTitles.some((title) => title.includes("Schema.Finite")),
@@ -747,7 +761,9 @@ async function main() {
     throw new Error(`Invalid --only value: ${only}`)
   }
 
-  const workspaceDependencies = ["typescript", "effect@beta", "@effect/language-service"]
+  // typescript@7.0.2 has gitHead 2bd066d87f5bafd315be9f40889d0a60b9e58e0b,
+  // matching the native backend used for the recorded @effect/tsgo@0.19.0 smoke.
+  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-beta.97"]
   const result = {}
 
   if (only === "all" || only === "healthy") {

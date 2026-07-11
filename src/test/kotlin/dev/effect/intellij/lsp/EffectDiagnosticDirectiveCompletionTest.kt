@@ -3,6 +3,7 @@ package dev.effect.intellij.lsp
 import dev.effect.intellij.lsp.EffectDiagnosticDirectiveCompletionContributor.Companion.completionFor
 import dev.effect.intellij.lsp.EffectDiagnosticDirectiveCompletionContributor.DirectiveCompletionKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -51,8 +52,12 @@ class EffectDiagnosticDirectiveCompletionTest {
 
     @Test
     fun exposesKnownRulesAndSeverities() {
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("catchToIgnore"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("flatMapToMap"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("schemaNumber"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("newSchemaClass"))
+        assertFalse(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("setInterval"))
+        assertFalse(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("setTimeout"))
         assertEquals(
             listOf("off", "warning", "error", "suggestion", "message", "skip-file"),
             EffectDiagnosticDirectiveCompletionContributor.SEVERITIES,

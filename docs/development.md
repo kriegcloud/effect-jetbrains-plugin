@@ -28,10 +28,16 @@ timeout 90s ./gradlew runIde
 The repository also carries a real-binary probe script for `@effect/tsgo`:
 
 ```bash
-node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo
-node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo --only new-diagnostics
-node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsgo --only diagnostic-directives
+node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc
+node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only new-diagnostics
+node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only diagnostic-directives
 ```
+
+The verifier copies its fixtures to temporary directories and installs the validated
+`typescript@7.0.2` package (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) plus
+`effect@4.0.0-beta.97`. It does not install `@effect/language-service`: that string is the
+`compilerOptions.plugins[].name` consumed by the language service already compiled into
+`@effect/tsgo`.
 
 ## Documentation Maintenance Rules
 
@@ -71,8 +77,10 @@ git clone https://github.com/Effect-TS/tsgo ../effect-tsgo-canary
 (cd ../effect-tsgo-canary && bash _tools/setup-repo.sh --ci && pnpm run build)
 ```
 
-Use the resulting `../effect-tsgo-canary/tsgo` path in `MANUAL` mode. This is the route for validating
-the `_effectGetLayerMermaid` execute-command bridge before it exists in a published package.
+Use the resulting Effect-patched native binary path in `MANUAL` mode. Current published packages call
+their binaries `tsc` and `tsc-next`; older source builds may still produce `tsgo`. This is the route
+for validating the `_effectGetLayerMermaid` execute-command bridge before it exists in a published
+package.
 
 ## Current Verification Posture
 
