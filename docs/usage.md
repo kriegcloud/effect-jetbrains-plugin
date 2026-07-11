@@ -48,8 +48,9 @@ for diagnostics that the source has explicitly disabled.
 
 ### Current TSGO Smoke Targets
 
-The current real-binary smoke target is `@effect/tsgo@0.19.0` (npm `latest`) with
-`typescript@latest` and `effect@4.0.0-beta.97`. In addition to the existing
+The current recorded real-binary smoke target is `@effect/tsgo@0.19.0` with
+`typescript@7.0.2` (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) and
+`effect@4.0.0-beta.97`. In addition to the existing
 `catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, and `newSchemaClass` coverage,
 `catchToIgnore` is published as of 0.16.0 and 0.19.0 adds the fixable `flatMapToMap` diagnostic.
 `newSchemaClass` remains off by default. Effect v4 samples must install the explicit beta (or
@@ -90,7 +91,8 @@ Equivalent raw JSON example:
 ### Recorded Real-Binary Smoke
 
 On July 10, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
-for `@effect/tsgo@0.19.0`; fixture workspaces install `typescript@latest` and the explicit
+for `@effect/tsgo@0.19.0`; fixture workspaces install the validated `typescript@7.0.2` package
+(`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) and the explicit
 `effect@4.0.0-beta.97` release.
 
 Command:

@@ -29,6 +29,10 @@ import java.security.MessageDigest
 import java.time.Duration
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.withLock
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.inputStream
@@ -36,7 +40,9 @@ import kotlin.io.path.inputStream
 @Service(Service.Level.APP)
 class EffectBinaryService {
     private val log = logger<EffectBinaryService>()
-    private val cacheOperationLock = Any()
+    private val cacheLifecycleLock = ReentrantReadWriteLock()
+    // Keep lock identities stable for the service lifetime so queued installers cannot split across replacement locks.
+    private val versionRootLocks = ConcurrentHashMap<Path, ReentrantLock>()
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .followRedirects(HttpClient.Redirect.NORMAL)
         .connectTimeout(Duration.ofSeconds(20))
@@ -66,7 +72,7 @@ class EffectBinaryService {
 
             EffectBinaryMode.LATEST,
             EffectBinaryMode.PINNED,
-            -> {
+            -> cacheLifecycleLock.readLock().withLock {
                 status.markResolvingBinary("Resolving @effect/tsgo")
                 val platform = currentPlatformPackage()
                 val version = when (settings.binaryMode) {
@@ -83,7 +89,7 @@ class EffectBinaryService {
 
                 val cacheRoot = managedCacheRoot()
                 val versionRoot = cacheRoot.resolve(version).resolve(platform.packageName)
-                val binaryPath = synchronized(cacheOperationLock) {
+                val binaryPath = versionRootLock(versionRoot).withLock {
                     var installed = false
                     fun reinstall() {
                         versionRoot.deleteRecursively()
@@ -130,7 +136,7 @@ class EffectBinaryService {
             return
         }
 
-        synchronized(cacheOperationLock) {
+        cacheLifecycleLock.writeLock().withLock {
             val cacheRoot = managedCacheRoot()
             val version = settings.pinnedVersion.takeIf { it.isNotBlank() }
             if (settings.binaryMode == EffectBinaryMode.PINNED && version != null) {
@@ -140,6 +146,9 @@ class EffectBinaryService {
             }
         }
     }
+
+    private fun versionRootLock(versionRoot: Path): ReentrantLock =
+        versionRootLocks.computeIfAbsent(versionRoot.toAbsolutePath().normalize()) { ReentrantLock() }
 
     private fun validateManualBinary(path: Path) {
         when {

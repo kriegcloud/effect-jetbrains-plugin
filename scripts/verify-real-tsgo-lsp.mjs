@@ -761,7 +761,9 @@ async function main() {
     throw new Error(`Invalid --only value: ${only}`)
   }
 
-  const workspaceDependencies = ["typescript@latest", "effect@4.0.0-beta.97"]
+  // typescript@7.0.2 has gitHead 2bd066d87f5bafd315be9f40889d0a60b9e58e0b,
+  // matching the native backend used for the recorded @effect/tsgo@0.19.0 smoke.
+  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-beta.97"]
   const result = {}
 
   if (only === "all" || only === "healthy") {

@@ -9,6 +9,7 @@ import com.intellij.json.psi.JsonPsiUtil
 import com.intellij.json.psi.JsonStringLiteral
 import com.intellij.json.psi.JsonValue
 import com.intellij.psi.util.PsiTreeUtil
+import dev.effect.intellij.core.EffectJson
 
 /**
  * Targeted JSON PSI merge for the Effect language-service entry in `tsconfig.json`.
@@ -109,7 +110,7 @@ object EffectTsconfigSync {
         var changed: Boolean = false
             private set
 
-        fun stringLiteral(value: String): String = generator.createStringLiteral(value).text
+        fun stringLiteral(value: String): String = EffectJson.mapper.writeValueAsString(value)
 
         fun objectProperty(parent: JsonObject, name: String): JsonObject {
             val existing = parent.findProperty(name)
@@ -154,13 +155,18 @@ object EffectTsconfigSync {
                 return
             }
             currentValue?.replace(generator.createValue<JsonValue>(valueText))
-                ?: existing.replace(generator.createProperty(name, valueText))
+                ?: existing.replace(createProperty(name, valueText))
             changed = true
         }
 
         private fun addProperty(parent: JsonObject, name: String, valueText: String): JsonProperty {
             changed = true
-            return JsonPsiUtil.addProperty(parent, generator.createProperty(name, valueText), false) as JsonProperty
+            return JsonPsiUtil.addProperty(parent, createProperty(name, valueText), false) as JsonProperty
+        }
+
+        private fun createProperty(name: String, valueText: String): JsonProperty {
+            val encodedName = EffectJson.mapper.writeValueAsString(name).removeSurrounding("\"")
+            return generator.createProperty(encodedName, valueText)
         }
     }
 

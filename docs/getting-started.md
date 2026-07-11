@@ -16,10 +16,12 @@
   - `.cjs`
   - `.mjs`
 - One of the following binary strategies:
-  - A `MANUAL` path to an executable Effect-patched native `tsc` (or legacy `tsgo`) binary
-  - Plugin-managed `LATEST` or `PINNED` after you explicitly choose managed npm downloads
-- A native TypeScript package in the project: `typescript >= 7`, `@typescript/native`, an npm alias,
-  or the legacy `@typescript/native-preview` package
+  - A `MANUAL` path to an executable Effect-patched native `tsc` (or legacy `tsgo`) binary; this
+    mode does not require a native TypeScript package in the workspace
+  - Plugin-managed `LATEST` or `PINNED` after you explicitly choose managed npm downloads; these
+    modes require `typescript >= 7`, `@typescript/native`, an npm alias, or the legacy
+    `@typescript/native-preview` package whose workspace `gitHead` metadata exactly matches the
+    selected packaged `tsc` or `tsc-next` metadata
 
 Community Edition and Android Studio are out of scope for this plugin.
 
@@ -50,8 +52,8 @@ project-managed TypeScript binaries.
 | Mode | When to use it | Requirements |
 | --- | --- | --- |
 | `MANUAL` | You already manage the binary yourself, or want no plugin-managed download | An executable Effect-patched native `tsc` or legacy `tsgo` path |
-| `LATEST` | You want the newest published `@effect/tsgo` for your platform | Network access to npm during resolution and download |
-| `PINNED` | You need a stable version across projects or teammates | A specific `@effect/tsgo` version string and network access to npm |
+| `LATEST` | You want the newest published `@effect/tsgo` for your platform | Network access to npm and a supported workspace native TypeScript package whose `gitHead` exactly matches packaged binary metadata |
+| `PINNED` | You need a stable version across projects or teammates | A specific `@effect/tsgo` version, network access to npm, and a supported workspace native TypeScript package whose `gitHead` exactly matches packaged binary metadata |
 
 The plugin validates pinned versions, manual paths, JSON fields, the runtime server port, and the
 metrics polling interval before applying settings.

@@ -15,11 +15,44 @@ plain `git clone`s (not tracked subtrees), so they can be refreshed without touc
 ## Refreshing the local clones
 
 ```bash
-git clone --depth 1 --single-branch https://github.com/Effect-TS/effect-smol.git      .repos/effect-v4
-git clone --depth 1 --single-branch https://github.com/effect-ts/vscode-extension.git .repos/effect-vscode-extension
-git clone --depth 1 --single-branch https://github.com/RATIU5/zed-effect-tsgo.git      .repos/effect-zed-tsgo-extension
-git clone --depth 1 --single-branch https://github.com/Effect-TS/tsgo.git             .repos/effect-tsgo-upstream
+set -eu
+mkdir -p .repos
+
+checkout_reference() {
+  remote="$1"
+  directory="$2"
+  revision="$3"
+
+  if [ ! -d "$directory/.git" ]; then
+    git clone --filter=blob:none --no-checkout "$remote" "$directory"
+  fi
+
+  git -C "$directory" remote set-url origin "$remote"
+  git -C "$directory" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+  if [ "$(git -C "$directory" rev-parse --is-shallow-repository)" = "true" ]; then
+    git -C "$directory" fetch --unshallow --prune --tags origin
+  else
+    git -C "$directory" fetch --prune --tags origin
+  fi
+  git -C "$directory" checkout --detach "$revision"
+  test "$(git -C "$directory" rev-parse HEAD)" = "$revision"
+}
+
+checkout_reference https://github.com/Effect-TS/effect-smol.git \
+  .repos/effect-v4 5946da3804a1be5e752b05b96bd058cdba50a1bf
+checkout_reference https://github.com/effect-ts/vscode-extension.git \
+  .repos/effect-vscode-extension c49b1c29e8343b282c025d838176758d59ee36af
+checkout_reference https://github.com/RATIU5/zed-effect-tsgo.git \
+  .repos/effect-zed-tsgo-extension 0c4f302c861359b4f9d23f58ac146101030c6229
+checkout_reference https://github.com/Effect-TS/tsgo.git \
+  .repos/effect-tsgo-upstream f0d48a67515048d277feb2c184c41cd7cffa51a4
 ```
+
+The full-history fetch makes the recorded commit available even when it is no longer the depth-1
+default-branch tip, and each checkout remains detached so it cannot silently advance. For a future
+refresh, inspect and validate the new upstream commits first, then replace the four revision
+arguments above and the matching table entries (including the checked date) together. Do not use
+`git pull` as a refresh step for these pinned checkouts.
 
 The pre-existing `.repos/effect-tsgo` directory (a locally-built tsgo working tree, including the
 native binary that `MANUAL` binary mode may point at) is left untouched by a refresh; the fresh
@@ -36,8 +69,8 @@ zlib-compressed `{"code": "<mermaid>"}`), gated on `noExternal=false`. The plugi
 Mermaid Graph" action therefore decodes that hover link into a local `.mmd` preview and keeps the
 execute-command probe only as a forward-compatible path.
 
-`@effect/tsgo@0.19.0` platform packages ship `lib/tsc` (built against `typescript@latest`) and
-`lib/tsc-next` (built against `typescript@next`), plus adjacent JSON files containing the TypeScript
+`@effect/tsgo@0.19.0` platform packages ship `lib/tsc` (built against the stable TypeScript backend)
+and `lib/tsc-next` (built against the nightly backend), plus adjacent JSON files containing the TypeScript
 version and `gitHead` used to build each binary. Managed resolution must select the candidate whose
 metadata matches the workspace's native TypeScript package; blindly choosing either executable can
 mix incompatible TypeScript-Go revisions. A native backend can come from `typescript >= 7`,

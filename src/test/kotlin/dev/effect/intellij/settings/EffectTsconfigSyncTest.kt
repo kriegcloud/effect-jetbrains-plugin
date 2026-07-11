@@ -70,6 +70,30 @@ class EffectTsconfigSyncTest : BasePlatformTestCase() {
         assertEquals("error", effect.path("diagnosticSeverity").path("redundantOrDie").asText())
     }
 
+    fun testEscapesDynamicDiagnosticRuleKeysAndStringValues() {
+        val severity = mapOf(
+            "rule\"quoted" to "warning",
+            "rule\\path" to "error",
+            "rule\nline" to "suggestion",
+        )
+        val mermaidProvider = "https://example.test/\"quoted\"\\path"
+
+        val (result, updatedJson) = apply(
+            """{ "compilerOptions": {} }""",
+            settings(mermaid = mermaidProvider, severity = severity),
+        )
+
+        assertTrue(result!!.changed)
+        assertNull(result.errorMessage)
+        val entry = EffectJson.mapper.readTree(updatedJson)
+            .path("compilerOptions")
+            .path("plugins")[0]
+        assertEquals(mermaidProvider, entry.path("mermaidProvider").asText())
+        severity.forEach { (rule, expectedSeverity) ->
+            assertEquals(expectedSeverity, entry.path("diagnosticSeverity").path(rule).asText())
+        }
+    }
+
     fun testAppendsEffectEntryAfterUnrelatedPluginPreservingJsonc() {
         val input = """
             {

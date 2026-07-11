@@ -10,9 +10,10 @@ vscode-extension `c49b1c29` (unchanged), and zed `0c4f302c`.
 
 - `@effect/tsgo@0.19.0` publishes `flatMapToMap` with a `Replace with Effect.map` quick fix;
   `catchToIgnore` has been published since 0.16.0.
-- Platform packages now contain `tsc` (built against `typescript@latest`) and `tsc-next` (built
-  against `typescript@next`) with adjacent `{ tsVersion, tsGitHead }` metadata. Binary selection must
-  match the workspace TypeScript package's `gitHead`; 0.18 also added native-package alias support.
+- Platform packages now contain `tsc` (built against the stable TypeScript backend) and `tsc-next`
+  (built against the nightly backend) with adjacent `{ tsVersion, tsGitHead }` metadata. Binary
+  selection must match the workspace TypeScript package's `gitHead`; 0.18 also added native-package
+  alias support.
 - The 0.16.x line fixed checker crashes involving `import.defer` and bindingless imports, corrected
   layer ordering, and hardened release/version synchronization.
 - Effect moved from beta.92 to beta.97. The authoritative
@@ -27,8 +28,9 @@ vscode-extension `c49b1c29` (unchanged), and zed `0c4f302c`.
   stale `setInterval` / `setTimeout` entries (the current rule names are `globalTimers` and
   `globalTimersInEffect`).
 - The new-diagnostics fixture proves the `flatMapToMap` diagnostic and `Effect.map` code action.
-- Real-binary fixtures install `typescript@latest` and the explicit `effect@4.0.0-beta.97` version;
-  they no longer install a separate `@effect/language-service` package.
+- Real-binary fixtures install the validated `typescript@7.0.2` package (`gitHead`
+  `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) and the explicit `effect@4.0.0-beta.97` version; they
+  no longer install a separate `@effect/language-service` package.
 - Managed binary resolution extracts complete platform packages and chooses a metadata-compatible
   current executable while retaining legacy package support.
 

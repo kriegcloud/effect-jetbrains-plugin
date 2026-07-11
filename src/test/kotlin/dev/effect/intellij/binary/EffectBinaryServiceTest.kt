@@ -407,6 +407,73 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         }
     }
 
+    fun testConcurrentManagedResolutionDownloadsDistinctVersionsInParallel() {
+        val versions = listOf("4.5.7", "4.5.8")
+        val cacheRoot = tempDir.resolve("parallel-managed-cache")
+        val tarballRequests = AtomicInteger(0)
+        val firstDownloadStarted = CountDownLatch(1)
+        val bothDownloadsStarted = CountDownLatch(versions.size)
+        val releaseDownloads = CountDownLatch(1)
+
+        versions.forEach { version ->
+            val tarballName = "${platformPackage.substringAfter('/')}-${version}.tgz"
+            val tarballPath = tempDir.resolve(tarballName)
+            writeLegacyTarball(tarballPath)
+            server.createContext("/$platformPackage/$version") { exchange ->
+                respondJson(exchange, metadataJson(version, tarballName, tarballPath))
+            }
+            server.createContext("/tarballs/$tarballName") { exchange ->
+                tarballRequests.incrementAndGet()
+                bothDownloadsStarted.countDown()
+                if (version == versions.first()) {
+                    firstDownloadStarted.countDown()
+                }
+                releaseDownloads.await(15, TimeUnit.SECONDS)
+                val bytes = Files.readAllBytes(tarballPath)
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            }
+        }
+
+        val binaryService = EffectBinaryService.getInstance()
+        binaryService.registryBaseUrl = "http://127.0.0.1:${server.address.port}"
+        val applicationStateService = EffectApplicationStateService.getInstance()
+        val originalApplicationState = applicationStateService.currentState()
+        applicationStateService.loadState(originalApplicationState.copy(binaryCacheDirOverride = cacheRoot.toString()))
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(binaryMode = EffectBinaryMode.PINNED, pinnedVersion = versions.first()),
+        )
+
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val first = executor.submit<BinaryResolution> {
+                binaryService.ensureAvailable(project)
+            }
+            assertTrue("First pinned version did not start downloading", firstDownloadStarted.await(5, TimeUnit.SECONDS))
+
+            project.getService(EffectProjectSettingsService::class.java).updateSettings(
+                EffectProjectSettings(binaryMode = EffectBinaryMode.PINNED, pinnedVersion = versions.last()),
+            )
+            val second = executor.submit<BinaryResolution> {
+                binaryService.ensureAvailable(project)
+            }
+
+            assertTrue(
+                "Downloads for distinct pinned versions should overlap",
+                bothDownloadsStarted.await(5, TimeUnit.SECONDS),
+            )
+            releaseDownloads.countDown()
+
+            val completed = listOf(first, second).map { it.get(10, TimeUnit.SECONDS) }
+            assertEquals(versions.toSet(), completed.mapNotNull(BinaryResolution::version).toSet())
+            assertEquals(versions.size, tarballRequests.get())
+        } finally {
+            releaseDownloads.countDown()
+            executor.shutdownNow()
+            applicationStateService.loadState(originalApplicationState)
+        }
+    }
+
     private fun registerLatestEndpoints(version: String) {
         server.createContext("/@effect/tsgo") { exchange ->
             respondJson(exchange, """{"dist-tags":{"latest":"$version"}}""")
