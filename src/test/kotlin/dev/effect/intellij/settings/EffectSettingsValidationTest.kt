@@ -14,7 +14,6 @@ import javax.swing.JButton
 import javax.swing.JLabel
 import javax.swing.JScrollPane
 import javax.swing.text.JTextComponent
-import org.junit.Assume.assumeFalse
 
 class EffectSettingsValidationTest : BasePlatformTestCase() {
     fun testConfigurableIsNotModifiedBeforeComponentCreation() {
@@ -234,7 +233,7 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
     }
 
     fun testManualModeRejectsNonExecutableFile() {
-        assumeFalse("Windows does not expose POSIX executable-bit semantics", SystemInfo.isWindows)
+        if (SystemInfo.isWindows) return
         val service = project.getService(EffectProjectSettingsService::class.java)
         val manual = Files.createTempFile("effect-manual-non-exec", ".tmp")
         Files.writeString(manual, "manual")

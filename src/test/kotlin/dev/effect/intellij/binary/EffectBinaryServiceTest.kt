@@ -12,7 +12,6 @@ import dev.effect.intellij.settings.EffectProjectSettingsService
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
-import org.junit.Assume.assumeFalse
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
@@ -291,7 +290,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
     }
 
     fun testManualModeRejectsNonExecutableBinaryWithoutMutatingIt() {
-        assumeFalse("Windows does not expose POSIX executable permission semantics", SystemInfo.isWindows)
+        if (SystemInfo.isWindows) return
         val manual = Files.createTempFile(tempDir, "manual-non-exec", ".tmp")
         Files.writeString(manual, "manual")
         makeNonExecutable(manual)
