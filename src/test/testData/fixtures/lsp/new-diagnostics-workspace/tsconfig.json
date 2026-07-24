@@ -13,7 +13,9 @@
           "flatMapToMap": "warning",
           "redundantOrDie": "warning",
           "schemaNumber": "warning",
-          "newSchemaClass": "warning"
+          "newSchemaClass": "warning",
+          "syncToSucceed": "warning",
+          "schemaOpaqueInstanceMember": "warning"
         }
       }
     ]

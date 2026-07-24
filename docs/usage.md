@@ -48,13 +48,16 @@ for diagnostics that the source has explicitly disabled.
 
 ### Current TSGO Smoke Targets
 
-The current recorded real-binary smoke target is `@effect/tsgo@0.19.0` with
+The current recorded real-binary smoke target is `@effect/tsgo@0.24.3` with
 `typescript@7.0.2` (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) and
-`effect@4.0.0-beta.97`. In addition to the existing
-`catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, and `newSchemaClass` coverage,
-`catchToIgnore` is published as of 0.16.0 and 0.19.0 adds the fixable `flatMapToMap` diagnostic.
-`newSchemaClass` remains off by default. Effect v4 samples must install the explicit beta (or
-`effect@beta`) because the npm `effect` `latest` tag is still v3.
+`effect@4.0.0-beta.101`. In addition to the existing
+`catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, `newSchemaClass`, `catchToIgnore`
+(published as of 0.16.0), and fixable `flatMapToMap` (as of 0.19.0) coverage, the 0.20–0.24 line
+adds four diagnostics: `missingPipeableSignature` (0.21.0, off by default),
+`schemaOpaqueInstanceMember` (0.22.0, **error by default**, Effect v4 only), the fixable
+`syncToSucceed` (0.23.0, suggestion by default), and the fixable `preferSchemaTypeProperty`
+(0.24.0, off by default). `newSchemaClass` remains off by default. Effect v4 samples must install
+the explicit beta (or `effect@beta`) because the npm `effect` `latest` tag is still v3.
 
 For common language-service options, prefer the typed settings controls. They emit `effect.*`
 workspace configuration only when explicitly set, and they override duplicate raw JSON keys. Keep
@@ -82,7 +85,11 @@ Equivalent raw JSON example:
       "flatMapToMap": "warning",
       "redundantOrDie": "warning",
       "schemaNumber": "warning",
-      "newSchemaClass": "warning"
+      "newSchemaClass": "warning",
+      "syncToSucceed": "warning",
+      "schemaOpaqueInstanceMember": "error",
+      "missingPipeableSignature": "off",
+      "preferSchemaTypeProperty": "off"
     }
   }
 }
@@ -90,10 +97,10 @@ Equivalent raw JSON example:
 
 ### Recorded Real-Binary Smoke
 
-On July 10, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
-for `@effect/tsgo@0.19.0`; fixture workspaces install the validated `typescript@7.0.2` package
-(`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) and the explicit
-`effect@4.0.0-beta.97` release.
+On July 24, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
+for `@effect/tsgo@0.24.3`; fixture workspaces install the validated `typescript@7.0.2` package
+(`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`, confirmed identical to the tarball's
+`lib/tsc` metadata) and the explicit `effect@4.0.0-beta.101` release.
 
 Command:
 
@@ -106,15 +113,16 @@ Observed through LSP:
 - Healthy fixture: Layer hover includes Mermaid links, completion returned `44` items, document symbols
   included `Database`, `Cache`, and `appLayer`, workspace symbol search found `Database`, and inlay hints
   completed with no current hints.
-- Failing fixture: `missingStarInYieldEffectGen` diagnostic `377008` appeared with quick fixes including
+- Failing fixture: `missingStarInYieldEffectGen` diagnostic appeared with quick fixes including
   `Replace yield with yield*`.
 - New diagnostics fixture: `catchToOrElseSucceed`, `flatMapToMap`, `redundantOrDie`, `schemaNumber`,
-  and explicitly enabled `newSchemaClass` diagnostics appeared. Code actions included
-  `Replace with Effect.orElseSucceed`, `Replace with Effect.map`, `Replace with Schema.Finite`, and
-  `Replace with Schema.FiniteFromString`.
+  explicitly enabled `newSchemaClass`, `syncToSucceed`, and `schemaOpaqueInstanceMember` diagnostics
+  appeared. Code actions included `Replace with Effect.orElseSucceed`, `Replace with Effect.map`,
+  `Replace with Schema.Finite`, `Replace with Schema.FiniteFromString`, and
+  `Replace with Effect.succeed`.
 - Diagnostic-directive fixture: next-line and section directives suppressed the intended
   `strictEffectProvide` and `floatingEffect` findings, then surfaced them again when re-enabled.
-- The published `0.19.0` server did not advertise `executeCommandProvider.commands`, so the local
+- The published `0.24.3` server still did not advertise `executeCommandProvider.commands`, so the local
   Mermaid graph action remains experimental; hover Mermaid links are the supported path.
 
 ## LSP Widget

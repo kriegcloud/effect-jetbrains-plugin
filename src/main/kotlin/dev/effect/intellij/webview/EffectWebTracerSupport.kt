@@ -10,7 +10,14 @@ import dev.effect.intellij.devtools.RuntimeSpanSnapshot
 import javax.swing.JComponent
 
 object EffectWebTracerSupport {
-    fun isSupported(): Boolean = JBCefApp.isSupported()
+    // JBCefApp resolution can fail with NoClassDefFoundError when the optional
+    // com.intellij.modules.jcef plugin is absent or disabled (2026.2 stable line and newer).
+    fun isSupported(): Boolean =
+        try {
+            JBCefApp.isSupported()
+        } catch (_: LinkageError) {
+            false
+        }
 
     fun createPanelOrNull(): EffectWebTracerPanel? =
         if (isSupported()) EffectWebTracerPanel() else null
