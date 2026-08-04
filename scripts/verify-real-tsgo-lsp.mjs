@@ -556,7 +556,9 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
           messages.some((message) => message.includes("effect(schemaNumber)")) &&
           messages.some((message) => message.includes("effect(newSchemaClass)")) &&
           messages.some((message) => message.includes("effect(syncToSucceed)")) &&
-          messages.some((message) => message.includes("effect(schemaOpaqueInstanceMember)"))
+          messages.some((message) => message.includes("effect(schemaOpaqueInstanceMember)")) &&
+          messages.some((message) => message.includes("effect(preferUnsafeConstructor)")) &&
+          messages.some((message) => message.includes("effect(promiseInEffectSuccess)"))
       },
     )
     const messages = diagnosticMessages(diagnostics)
@@ -575,6 +577,14 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
     assert(
       messages.some((message) => message.includes("effect(schemaOpaqueInstanceMember)")),
       "Expected schemaOpaqueInstanceMember diagnostic (v4-only, published since @effect/tsgo 0.22.0)",
+    )
+    assert(
+      messages.some((message) => message.includes("effect(preferUnsafeConstructor)")),
+      "Expected preferUnsafeConstructor diagnostic (published since @effect/tsgo 0.26.0)",
+    )
+    assert(
+      messages.some((message) => message.includes("effect(promiseInEffectSuccess)")),
+      "Expected promiseInEffectSuccess diagnostic (published since @effect/tsgo 0.26.0)",
     )
 
     const codeActions = await client.request("textDocument/codeAction", {
@@ -607,6 +617,10 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
     assert(
       codeActionTitles.some((title) => title.includes("Effect.succeed") && !title.includes("orElseSucceed")),
       "Expected syncToSucceed code action to mention Effect.succeed",
+    )
+    assert(
+      codeActionTitles.some((title) => title.includes("Scope.makeUnsafe")),
+      "Expected preferUnsafeConstructor code action to mention Scope.makeUnsafe",
     )
 
     return {
@@ -776,8 +790,8 @@ async function main() {
   }
 
   // typescript@7.0.2 has gitHead 2bd066d87f5bafd315be9f40889d0a60b9e58e0b,
-  // matching the native backend used for the recorded @effect/tsgo@0.24.3 smoke.
-  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-beta.101"]
+  // matching the native backend used for the recorded @effect/tsgo@0.27.1 smoke.
+  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-beta.103"]
   const result = {}
 
   if (only === "all" || only === "healthy") {

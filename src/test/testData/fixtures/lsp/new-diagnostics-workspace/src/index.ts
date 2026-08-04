@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Schema, Scope } from "effect"
 
 declare const first: Effect.Effect<number, unknown>
 declare const second: Effect.Effect<string, unknown>
@@ -39,3 +39,7 @@ export class Label extends Schema.Opaque<Label>()(Schema.Struct({
     return "label"
   }
 }
+
+export const scope = Effect.runSync(Scope.make())
+
+export const eventualNumber = Effect.succeed(Promise.resolve(1))

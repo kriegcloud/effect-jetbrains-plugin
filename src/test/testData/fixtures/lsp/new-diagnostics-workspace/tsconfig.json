@@ -15,7 +15,9 @@
           "schemaNumber": "warning",
           "newSchemaClass": "warning",
           "syncToSucceed": "warning",
-          "schemaOpaqueInstanceMember": "warning"
+          "schemaOpaqueInstanceMember": "warning",
+          "preferUnsafeConstructor": "warning",
+          "promiseInEffectSuccess": "warning"
         }
       }
     ]

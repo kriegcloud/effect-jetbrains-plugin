@@ -24,7 +24,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-private const val CURRENT_TSGO_VERSION = "0.24.3"
+private const val CURRENT_TSGO_VERSION = "0.27.1"
 private const val STABLE_TYPESCRIPT_HEAD = "stable-typescript-head"
 private const val NEXT_TYPESCRIPT_HEAD = "next-typescript-head"
 
@@ -176,6 +176,71 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         assertTrue(Files.exists(repaired.binaryPath.resolveSibling("$stableBinaryName.json")))
         assertEquals(2, metadataRequests.get())
         assertEquals(2, tarballRequests.get())
+    }
+
+    fun testLatestModeSelectsStableBinaryFromUpstreamManifest() {
+        writeWorkspacePackage("typescript", "7.0.0", STABLE_TYPESCRIPT_HEAD)
+        registerManifestLatestEndpoints(CURRENT_TSGO_VERSION)
+
+        val resolution = resolveLatest()
+
+        assertEquals(stableBinaryName, resolution.binaryPath.fileName.toString())
+        assertTrue(Files.exists(resolution.binaryPath.resolveSibling("upstream.json")))
+        assertFalse(Files.exists(resolution.binaryPath.resolveSibling("$stableBinaryName.json")))
+    }
+
+    fun testLatestModeSelectsNextBinaryFromUpstreamManifest() {
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260710.1", NEXT_TYPESCRIPT_HEAD)
+        registerManifestLatestEndpoints(CURRENT_TSGO_VERSION)
+
+        val resolution = resolveLatest()
+
+        assertEquals(nextBinaryName, resolution.binaryPath.fileName.toString())
+    }
+
+    fun testLatestModeReusesHealthyManifestInstallation() {
+        val metadataRequests = AtomicInteger(0)
+        val tarballRequests = AtomicInteger(0)
+        writeWorkspacePackage("typescript", "7.0.0", STABLE_TYPESCRIPT_HEAD)
+        registerManifestLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests, tarballRequests)
+
+        resolveLatest()
+        val again = resolveLatest()
+
+        assertEquals(stableBinaryName, again.binaryPath.fileName.toString())
+        assertEquals(1, metadataRequests.get())
+        assertEquals(1, tarballRequests.get())
+    }
+
+    fun testLatestModeRepairsManifestInstallationWhenManifestDeleted() {
+        val metadataRequests = AtomicInteger(0)
+        val tarballRequests = AtomicInteger(0)
+        writeWorkspacePackage("typescript", "7.0.0", STABLE_TYPESCRIPT_HEAD)
+        registerManifestLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests, tarballRequests)
+
+        val initial = resolveLatest()
+        Files.delete(initial.binaryPath.resolveSibling("upstream.json"))
+
+        val repaired = resolveLatest()
+
+        assertEquals(stableBinaryName, repaired.binaryPath.fileName.toString())
+        assertTrue(Files.exists(repaired.binaryPath.resolveSibling("upstream.json")))
+        assertEquals(2, metadataRequests.get())
+        assertEquals(2, tarballRequests.get())
+    }
+
+    fun testLatestModeRejectsManifestPackageWhenWorkspaceTypeScriptDoesNotMatch() {
+        writeWorkspacePackage("typescript", "7.0.0", "unmatched-head")
+        registerManifestLatestEndpoints(CURRENT_TSGO_VERSION)
+
+        try {
+            resolveLatest()
+            fail("Expected a manifest package with no matching TypeScript gitHead to be rejected")
+        } catch (error: EffectBinaryException) {
+            assertTrue(error.message?.contains("unmatched-head") == true)
+            assertTrue(error.message?.contains(STABLE_TYPESCRIPT_HEAD) == true)
+            assertTrue(error.message?.contains(NEXT_TYPESCRIPT_HEAD) == true)
+        }
     }
 
     fun testLatestModeRejectsModernBinaryWhenWorkspaceTypeScriptDoesNotMatch() {
@@ -492,6 +557,17 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         registerModernPinnedEndpoint(version, metadataRequests, tarballRequests)
     }
 
+    private fun registerManifestLatestEndpoints(
+        version: String,
+        metadataRequests: AtomicInteger? = null,
+        tarballRequests: AtomicInteger? = null,
+    ) {
+        server.createContext("/@effect/tsgo") { exchange ->
+            respondJson(exchange, """{"dist-tags":{"latest":"$version"}}""")
+        }
+        registerPackageEndpoint(version, ::writeManifestTarball, metadataRequests, tarballRequests)
+    }
+
     private fun registerPinnedEndpoint(version: String) {
         registerPackageEndpoint(version, ::writeLegacyTarball)
     }
@@ -540,6 +616,25 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
                 "package/lib/$nextBinaryName" to "next-binary",
                 "package/lib/$nextBinaryName.json" to
                     """{"tsVersion":"7.1.0-dev.20260710.1","tsGitHead":"$NEXT_TYPESCRIPT_HEAD"}""",
+            ),
+        )
+    }
+
+    private fun writeManifestTarball(path: Path) {
+        writeTarball(
+            path,
+            mapOf(
+                "package/lib/$stableBinaryName" to "stable-binary",
+                "package/lib/$nextBinaryName" to "next-binary",
+                "package/lib/upstream.json" to
+                    """
+                    {"schemaVersion":2,"profiles":[
+                      {"kind":"ts","name":"next","ts":{"npmVersion":"7.1.0-dev.20260710.1","gitHead":"$NEXT_TYPESCRIPT_HEAD"},"binName":"tsc-next"},
+                      {"kind":"ts","name":"latest","ts":{"npmVersion":"7.0.0","gitHead":"$STABLE_TYPESCRIPT_HEAD"},"binName":"tsc"},
+                      {"kind":"oxlint","name":"oxlint","ts":{"npmVersion":"7.0.0","gitHead":"$STABLE_TYPESCRIPT_HEAD"},"tsgolint":{"npmVersion":"7.0.2001","gitHead":"tsgolint-head"},"oxlint":{"npmVersion":"1.77.0","gitHead":"oxlint-head"}}
+                    ]}
+                    """.trimIndent(),
+                "package/lib/tsgolint" to "tsgolint-binary",
             ),
         )
     }

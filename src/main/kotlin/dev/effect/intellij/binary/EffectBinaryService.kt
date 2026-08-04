@@ -269,11 +269,14 @@ class EffectBinaryService {
             return@runCatching false
         }
 
-        val modernBinaries = MODERN_BINARY_NAMES.map(platform::executableName)
-        val installedModernBinaries = modernBinaries.filter(installedFileNames::contains)
+        val installedModernBinaries = MODERN_BINARY_NAMES.filter { platform.executableName(it) in installedFileNames }
         if (installedModernBinaries.isNotEmpty()) {
+            val manifest = if (UPSTREAM_MANIFEST_FILE_NAME in installedFileNames) readUpstreamManifest(libRoot) else null
             return@runCatching installedModernBinaries.all { binaryName ->
-                "$binaryName.json" in installedFileNames && readBinaryMetadata(libRoot.resolve(binaryName)) != null
+                val executableName = platform.executableName(binaryName)
+                val adjacentMetadata = "$executableName.json" in installedFileNames &&
+                    readBinaryMetadata(libRoot.resolve(executableName)) != null
+                adjacentMetadata || manifest?.containsKey(binaryName) == true
             }
         }
 
@@ -282,15 +285,18 @@ class EffectBinaryService {
 
     /**
      * Modern platform packages carry binaries for stable and nightly TypeScript together with
-     * adjacent metadata. Select the binary built from the workspace's exact TypeScript git head;
-     * older packages without metadata retain their dedicated `tsgo` executable.
+     * compatibility metadata: per-binary `<binary>.json` files up to `@effect/tsgo` 0.25.x, and a
+     * single `upstream.json` profile manifest since 0.26.0. Select the binary built from the
+     * workspace's exact TypeScript git head; older packages without metadata retain their
+     * dedicated `tsgo` executable.
      */
     private fun selectManagedBinary(project: Project, libRoot: Path, platform: PlatformPackage): Path {
+        val manifest = readUpstreamManifest(libRoot)
         val modernCandidates = MODERN_BINARY_NAMES
             .mapNotNull { binaryName ->
                 val path = libRoot.resolve(platform.executableName(binaryName))
                 if (Files.isRegularFile(path)) {
-                    PackagedBinaryCandidate(path, readBinaryMetadata(path))
+                    PackagedBinaryCandidate(path, readBinaryMetadata(path) ?: manifest?.get(binaryName))
                 } else {
                     null
                 }
@@ -325,7 +331,7 @@ class EffectBinaryService {
         if (modernCandidates.isNotEmpty()) {
             throw DamagedManagedPackageException(
                 "The downloaded @effect/tsgo package contains ${modernCandidates.joinToString { it.path.fileName.toString() }}, " +
-                    "but their TypeScript compatibility metadata is missing or invalid.",
+                    "but their TypeScript compatibility metadata (adjacent .json or upstream.json) is missing or invalid.",
             )
         }
 
@@ -340,6 +346,35 @@ class EffectBinaryService {
             val tsGitHead = json.path("tsGitHead").asText().trim()
             require(tsVersion.isNotBlank() && tsGitHead.isNotBlank())
             PackagedBinaryMetadata(tsVersion, tsGitHead)
+        }.getOrNull()
+    }
+
+    /**
+     * Since 0.26.0, platform packages replace the per-binary metadata files with a single
+     * `lib/upstream.json` profile manifest. Returns base binary name (`tsc`, `tsc-next`) to
+     * metadata, or null when the manifest is absent or unusable.
+     */
+    private fun readUpstreamManifest(libRoot: Path): Map<String, PackagedBinaryMetadata>? {
+        val manifestPath = libRoot.resolve(UPSTREAM_MANIFEST_FILE_NAME)
+        return runCatching {
+            val json = EffectJson.mapper.readTree(Files.readString(manifestPath))
+            require(json.path("schemaVersion").asInt() == 2)
+            val profiles = json.path("profiles")
+            require(profiles.isArray)
+            val entries = mutableMapOf<String, PackagedBinaryMetadata>()
+            profiles.forEach { profile ->
+                if (profile.path("kind").asText() != "ts") {
+                    return@forEach
+                }
+                val binName = profile.path("binName").asText().trim()
+                val tsVersion = profile.path("ts").path("npmVersion").asText().trim()
+                val tsGitHead = profile.path("ts").path("gitHead").asText().trim()
+                if (binName.isNotBlank() && tsVersion.isNotBlank() && tsGitHead.isNotBlank()) {
+                    entries[binName] = PackagedBinaryMetadata(tsVersion, tsGitHead)
+                }
+            }
+            require(entries.isNotEmpty())
+            entries.toMap()
         }.getOrNull()
     }
 
@@ -610,7 +645,8 @@ private data class PlatformPackage(
         get() = SUPPORTED_BINARY_NAMES.map(::executableName)
 
     val packagedFileNames: Set<String>
-        get() = packagedBinaryNames.flatMap { binaryName -> listOf(binaryName, "$binaryName.json") }.toSet()
+        get() = (packagedBinaryNames.flatMap { binaryName -> listOf(binaryName, "$binaryName.json") } + UPSTREAM_MANIFEST_FILE_NAME)
+            .toSet()
 }
 
 private data class PackagedBinaryMetadata(
@@ -633,3 +669,4 @@ private class DamagedManagedPackageException(message: String) : RuntimeException
 
 private val MODERN_BINARY_NAMES = listOf("tsc", "tsc-next")
 private val SUPPORTED_BINARY_NAMES = MODERN_BINARY_NAMES + "tsgo"
+private const val UPSTREAM_MANIFEST_FILE_NAME = "upstream.json"
