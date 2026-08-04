@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3]
+
+- Updated managed binary support and compatibility coverage to `@effect/tsgo` 0.27.1 with `effect` 4.0.0-beta.103. Since `@effect/tsgo` 0.26.0 the platform packages replace the per-binary `tsc.json`/`tsc-next.json` metadata with a single `lib/upstream.json` profile manifest (`schemaVersion` 2) and additionally ship Oxlint/tsgolint artifacts; managed resolution now reads the manifest, keeps the per-binary metadata path for 0.19–0.25 packages plus the legacy `lib/tsgo` fallback, and tolerates the extra files. The stable pairing is unchanged: the `latest` profile still builds `lib/tsc` from `typescript@7.0.2`.
+- npm tarballs preserve Unix executable bits since `@effect/tsgo` 0.26.6 (verified live for linux-x64 at 0.27.1), so the plugin's permission restoration on extraction now only matters for older versions; it is retained for them.
+- Added `abortControllerInEffect`, `catchChainToFirstSuccessOf`, `catchTagToCatchReason`, `floatingEffectInVitest`, `preferUnsafeConstructor`, `promiseInEffectSuccess`, and `schemaLiteralNonFinite` to Effect diagnostic directive completion, with real-binary coverage for `preferUnsafeConstructor` (including its `Replace with Scope.makeUnsafe` quick fix) and `promiseInEffectSuccess`.
+- Note: `floatingEffectInVitest` and `schemaLiteralNonFinite` report at `error` severity by default and `promiseInEffectSuccess` at `warning`; the remaining new diagnostics default to `suggestion`.
+- Updated the upstream reference pins and canary notes for tsgo 0.27.1 and Effect 4.0.0-beta.103; the Dev Tools wire schema only tightened value constraints between beta.101 and beta.103 (JSON wire format unchanged, verified by scoped diff).
+
 ## [0.1.2]
 
 - Updated managed binary support and compatibility coverage to `@effect/tsgo` 0.24.3 with `effect` 4.0.0-beta.101; the platform-package layout, TypeScript backend matching, and `typescript@7.0.2` stable pairing are unchanged (npm tarballs still ship binaries without executable bits, so the plugin's permission restoration on extraction remains required).

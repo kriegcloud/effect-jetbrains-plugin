@@ -60,6 +60,13 @@ class EffectDiagnosticDirectiveCompletionTest {
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("preferSchemaTypeProperty"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("schemaOpaqueInstanceMember"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("syncToSucceed"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("abortControllerInEffect"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("catchChainToFirstSuccessOf"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("catchTagToCatchReason"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("floatingEffectInVitest"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("preferUnsafeConstructor"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("promiseInEffectSuccess"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("schemaLiteralNonFinite"))
         assertFalse(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("setInterval"))
         assertFalse(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("setTimeout"))
         assertEquals(
