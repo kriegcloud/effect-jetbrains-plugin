@@ -114,5 +114,6 @@ only now appears in the shipped `schema.json`. Between Effect beta.101 and beta.
 (`Schema.Number` → `Schema.Natural` for metric counts and frequency occurrences, Summary quantiles
 bounded to [0, 1]); the JSON wire format is unchanged, so this refresh again requires protocol
 regression smoke rather than a decoder rewrite. The remaining scoped churn is OTLP-exporter-only
-(`unstable/observability/`), which the plugin does not consume, and the `effect@4.0.0-beta.103` tag
-matches the pinned `main` tip for both directories (empty scoped diff).
+(`unstable/observability/`), which the plugin does not consume. The pinned `main` tip sits 3
+CI-only commits past the `effect@4.0.0-beta.103` tag, with an empty scoped diff between tag and
+tip for both directories.
