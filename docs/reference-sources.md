@@ -61,9 +61,11 @@ refresh, inspect and validate the new upstream commits first, then replace the s
 arguments above and the matching table entries (including the checked date) together. Do not use
 `git pull` as a refresh step for these pinned checkouts.
 
-The pre-existing `.repos/effect-tsgo` directory (a locally-built tsgo working tree, including the
-native binary that `MANUAL` binary mode may point at) is left untouched by a refresh; the fresh
-source clone lives in `.repos/effect-tsgo-upstream`.
+The pre-existing `.repos/effect-tsgo` directory is left untouched by a refresh; the fresh source
+clone lives in `.repos/effect-tsgo-upstream`. Historically `.repos/effect-tsgo` held a locally-built
+tsgo working tree (whose native binary `MANUAL` binary mode may point at), but as of 2026-07-24 it
+actually contains a clone of this plugin's own repository — rebuild it from
+`.repos/effect-tsgo-upstream` if a local canary binary is needed again, or delete it.
 
 ## Canary Notes
 
@@ -88,9 +90,11 @@ candidate whose metadata matches the workspace's native TypeScript package; blin
 executable can mix incompatible TypeScript-Go revisions. A native backend can come from
 `typescript >= 7`, `@typescript/native`, an npm alias, or the older `@typescript/native-preview`
 package. At `0.24.3`, `lib/tsc` is still built from `typescript@7.0.2` (gitHead `2bd066d8`), matching
-the real-binary verifier's pin. Since `0.24.3` the release pipeline preserves executable permissions
-(0755) on Unix binaries inside the npm tarballs; the plugin's own permission restoration remains as a
-defensive measure for older releases. The base `@effect/tsgo` package now also ships a
+the real-binary verifier's pin (confirmed against the published linux-x64 tarball metadata on
+2026-07-24). Note that although tsgo's release pipeline chmods Unix binaries since `0.24.3` (#391),
+the published npm tarballs still carry `lib/tsc`/`lib/tsc-next` at mode 0644 (verified live for
+linux-x64 at 0.19.0 and 0.24.3 — npm pack normalizes modes), so the plugin's permission restoration
+on extraction remains required. The base `@effect/tsgo` package now also ships a
 `schema.json` describing the language-service options. `@effect/language-service` is not a separate
 install requirement — it is the tsconfig `plugins[].name` identifier that the bundled `@effect/tsgo`
 build honors.

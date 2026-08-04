@@ -56,6 +56,10 @@ class EffectDiagnosticDirectiveCompletionTest {
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("flatMapToMap"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("schemaNumber"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("newSchemaClass"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("missingPipeableSignature"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("preferSchemaTypeProperty"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("schemaOpaqueInstanceMember"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("syncToSucceed"))
         assertFalse(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("setInterval"))
         assertFalse(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("setTimeout"))
         assertEquals(

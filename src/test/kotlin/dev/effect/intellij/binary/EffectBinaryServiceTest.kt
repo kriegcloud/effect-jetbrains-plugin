@@ -24,7 +24,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-private const val CURRENT_TSGO_VERSION = "0.19.0"
+private const val CURRENT_TSGO_VERSION = "0.24.3"
 private const val STABLE_TYPESCRIPT_HEAD = "stable-typescript-head"
 private const val NEXT_TYPESCRIPT_HEAD = "next-typescript-head"
 

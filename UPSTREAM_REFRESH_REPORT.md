@@ -68,9 +68,11 @@ Releases in range: 0.20.0, 0.21.0, 0.22.0, 0.23.0, 0.24.0, 0.24.1, 0.24.2, 0.24.
   darwin-x64/arm64); files unchanged (`lib/tsc`, `lib/tsc-next`, adjacent `*.json` metadata with
   the same `tsVersion`/`tsGitHead` field names; `.exe`/`.exe.json` on win32). No legacy `lib/tsgo`
   binary ships at either pin.
-- 0.24.3 (#391): the release pipeline now `chmod 0755`s Unix binaries before packing, so tarball
-  entries carry the executable bit (before 0.24.3 they could be 0644). The plugin already restores
-  POSIX permissions defensively — no code change needed.
+- 0.24.3 (#391): the release pipeline now `chmod 0755`s Unix binaries before packing.
+  **Correction from live evidence (2026-07-24):** the published npm tarballs still carry
+  `lib/tsc`/`lib/tsc-next` at mode 0644 for linux-x64 at both 0.19.0 and 0.24.3 (npm pack
+  normalizes entry modes), so nothing changes for npm consumers — the plugin's POSIX permission
+  restoration on extraction remains required, and it already does this.
 - `lib/tsc` at 0.24.3 is still built from `typescript@7.0.2` (gitHead `2bd066d8…`), which exactly
   matches the plugin's real-binary verifier pin. `lib/tsc-next` tracks `typescript@next` 7.1.0-dev.
 - The base `@effect/tsgo` package now ships `schema.json` (language-service options schema) — a

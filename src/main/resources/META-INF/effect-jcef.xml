@@ -1,0 +1,6 @@
+<!-- Optional descriptor for com.intellij.modules.jcef. It declares no extensions: the dependency
+     exists so the plugin classloader can resolve com.intellij.ui.jcef.* when the JCEF plugin is
+     present (2026.2 stable line and newer). All JCEF usage is capability-gated in
+     dev.effect.intellij.webview.EffectWebTracerSupport. -->
+<idea-plugin>
+</idea-plugin>

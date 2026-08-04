@@ -42,6 +42,7 @@ cached `effect-jetbrains-plugin.zip`, install from disk again, apply the plugin 
 | Manual mode will not apply | The path is blank, invalid, missing, not a file, or not executable | Provide a valid executable Effect-patched native `tsc` or legacy `tsgo` path |
 | Widget reaches `Restart Required` | LSP-relevant settings changed | Use the widget restart action after applying settings |
 | No LSP startup when a file opens | The file is not a supported TypeScript extension or the server failed before startup completed | Use a supported file and inspect the widget state plus logs |
+| New `schemaOpaqueInstanceMember` errors after updating the managed binary | `@effect/tsgo` 0.22.0+ enables this Effect v4 rule at `error` severity by default; instance members on `Schema.Opaque` classes are now rejected | Move members off the opaque class, or downgrade/disable the rule via `diagnosticSeverity` in the tsconfig `@effect/language-service` plugin entry or a `// @effect-diagnostics schemaOpaqueInstanceMember:off` directive |
 
 ## Binary Mode Checks
 

@@ -8,6 +8,10 @@
     <depends>com.intellij.modules.lsp</depends>
     <depends>JavaScript</depends>
     <depends>NodeJS</depends>
+    <!-- Since the 2026.2 stable line, JCEF ships as the separate bundled plugin
+         com.intellij.modules.jcef instead of platform classes. The dependency stays optional:
+         the web tracer tab is capability-gated and falls back to the Swing tracer. -->
+    <depends optional="true" config-file="effect-jcef.xml">com.intellij.modules.jcef</depends>
 
     <resource-bundle>messages.EffectBundle</resource-bundle>
 

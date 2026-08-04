@@ -29,3 +29,13 @@ export class Point extends Schema.Class<Point>("Point")({
 }) {}
 
 export const origin = new Point({ x: 0, y: 0 })
+
+export const answer = Effect.sync(() => 42)
+
+export class Label extends Schema.Opaque<Label>()(Schema.Struct({
+  text: Schema.String
+})) {
+  render(): string {
+    return "label"
+  }
+}

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.2]
+
+- Updated managed binary support and compatibility coverage to `@effect/tsgo` 0.24.3 with `effect` 4.0.0-beta.101; the platform-package layout, TypeScript backend matching, and `typescript@7.0.2` stable pairing are unchanged (npm tarballs still ship binaries without executable bits, so the plugin's permission restoration on extraction remains required).
+- Added `missingPipeableSignature`, `preferSchemaTypeProperty`, `schemaOpaqueInstanceMember`, and `syncToSucceed` to Effect diagnostic directive completion, with real-binary coverage for the on-by-default `syncToSucceed` (quick fix) and `schemaOpaqueInstanceMember` diagnostics.
+- Note for Effect v4 projects: `@effect/tsgo` 0.22.0+ reports `schemaOpaqueInstanceMember` at `error` severity by default; see the troubleshooting guide for downgrade options.
+- Retargeted the build to the WebStorm 2026.2.0.1 stable platform build (262.8665.341), re-enabled Settings search indexing (`buildSearchableOptions`) now that the compile target no longer carries an EAP time-bomb, and moved plugin verification to WebStorm 2026.2.0.1 plus IntelliJ IDEA Ultimate 2026.2.1 EAP (262.9437.22).
+- Adapted the JCEF tracer tab to the 2026.2 stable platform, where JCEF moved from platform classes into the separate bundled `com.intellij.modules.jcef` plugin: the dependency is declared optional, and the capability gate now also treats a missing or disabled JCEF plugin as unsupported (falling back to the Swing tracer).
+- Updated the upstream reference pins, canary notes, and Dev Tools protocol documentation for the Effect v4 move to the `Effect-TS/effect` repository (devtools wire schema verified unchanged between beta.97 and beta.101).
+
 ## [0.1.1]
 
 - Updated managed binary support and compatibility coverage to `@effect/tsgo` 0.19.0 with `effect` 4.0.0-beta.97, including complete platform-package extraction, TypeScript stable/nightly backend matching, native TypeScript package discovery, legacy `lib/tsgo` fallback, and actionable mismatch errors.
