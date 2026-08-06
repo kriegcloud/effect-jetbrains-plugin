@@ -176,7 +176,7 @@ stable build `262.8665.341` pinned on 2026-08-03.
 
 - `src/main/kotlin/dev/effect/intellij/binary/EffectBinaryService.kt` — schemaVersion-4 manifest
   support (sealed manifest model, component candidates, artifacts-aware selection, health check,
-  install marker, staged-package check, unknown-schema degrade).
+  install marker, staged-package check, unsupported-schema rejection).
 - `src/test/kotlin/dev/effect/intellij/binary/EffectBinaryServiceTest.kt` — ten component-layout
   tests, components/future-schema/unsupported-schema tarball fixtures, version constant bump.
 - `src/main/kotlin/dev/effect/intellij/lsp/EffectDiagnosticDirectiveCompletionContributor.kt` —
