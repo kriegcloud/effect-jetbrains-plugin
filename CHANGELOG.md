@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4]
+
+- Restored managed binary support for `@effect/tsgo` 0.32.0+ (npm `latest` is 0.33.0), whose platform packages replace the `schemaVersion` 2 profile manifest with a `schemaVersion` 4 component manifest and move the TypeScript executables to per-version `artifacts/typescript/<version>/tsc` directories (keeping `lib/tsc` as a compatibility copy of the `latest` build and dropping `lib/tsc-next` entirely). Managed resolution now parses both manifest generations, selects the artifact whose TypeScript `gitHead` matches the workspace (with `lib/tsc` standing in only for the `latest`-tagged component), and records the new layout in the install marker, fixing a reinstall loop the old health check caused on 0.32+ packages. Future manifest revisions that keep the component shape are parsed by shape and retain full TypeScript matching; a manifest the plugin cannot interpret fails closed with an actionable error — without re-downloading the intact package on every resolve.
+- Added `preferTypedSchemaDecoder` (0.33.0, suggestion by default, Effect v4 only, with a `Replace with decodeSync`-style quick fix) to Effect diagnostic directive completion, with real-binary coverage for the diagnostic, its quick fix, and the `Add yield* statement` floating-Effect quick fix introduced in 0.31.0.
+- Updated the real-binary smoke target to `@effect/tsgo@0.33.0` with `typescript@7.0.2` and `effect@4.0.0-beta.104` (all four verifier fixtures re-run live against the published linux-x64 binary; the server still advertises no `executeCommandProvider`, so hover Mermaid links remain the layer-graph path).
+- Updated the upstream reference pins and canary notes for tsgo 0.33.0 (pinned at the unpublished 0.34.0 tip) and Effect 4.0.0-beta.104; the Dev Tools wire schema is unchanged between beta.103 and beta.104 (the only scoped change makes the client send span snapshots instead of live mutated span objects).
+
 ## [0.1.3]
 
 - Updated managed binary support and compatibility coverage to `@effect/tsgo` 0.27.1 with `effect` 4.0.0-beta.103. Since `@effect/tsgo` 0.26.0 the platform packages replace the per-binary `tsc.json`/`tsc-next.json` metadata with a single `lib/upstream.json` profile manifest (`schemaVersion` 2) and additionally ship Oxlint/tsgolint artifacts; managed resolution now reads the manifest, keeps the per-binary metadata path for 0.19–0.25 packages plus the legacy `lib/tsgo` fallback, and tolerates the extra files. The stable pairing is unchanged: the `latest` profile still builds `lib/tsc` from `typescript@7.0.2`.

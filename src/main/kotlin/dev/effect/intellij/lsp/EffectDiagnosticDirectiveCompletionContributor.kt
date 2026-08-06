@@ -99,7 +99,7 @@ class EffectDiagnosticDirectiveCompletionContributor : CompletionContributor() {
             "missingStarInYieldEffectGen", "multipleCatchTag", "multipleEffectProvide", "nestedEffectGenYield",
             "newPromise", "newSchemaClass", "nodeBuiltinImport", "nonObjectEffectServiceType", "outdatedApi",
             "overriddenSchemaConstructor", "preferSchemaOverJson", "preferSchemaTypeProperty",
-            "preferUnsafeConstructor", "processEnv",
+            "preferTypedSchemaDecoder", "preferUnsafeConstructor", "processEnv",
             "processEnvInEffect", "promiseInEffectSuccess",
             "redundantMapError", "redundantOrDie", "redundantSchemaTagIdentifier", "returnEffectInGen",
             "runEffectInsideEffect", "schemaLiteralNonFinite", "schemaNumber", "schemaOpaqueInstanceMember",

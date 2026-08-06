@@ -557,8 +557,10 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
           messages.some((message) => message.includes("effect(newSchemaClass)")) &&
           messages.some((message) => message.includes("effect(syncToSucceed)")) &&
           messages.some((message) => message.includes("effect(schemaOpaqueInstanceMember)")) &&
+          messages.some((message) => message.includes("effect(preferTypedSchemaDecoder)")) &&
           messages.some((message) => message.includes("effect(preferUnsafeConstructor)")) &&
-          messages.some((message) => message.includes("effect(promiseInEffectSuccess)"))
+          messages.some((message) => message.includes("effect(promiseInEffectSuccess)")) &&
+          messages.some((message) => message.includes("effect(floatingEffect)"))
       },
     )
     const messages = diagnosticMessages(diagnostics)
@@ -585,6 +587,14 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
     assert(
       messages.some((message) => message.includes("effect(promiseInEffectSuccess)")),
       "Expected promiseInEffectSuccess diagnostic (published since @effect/tsgo 0.26.0)",
+    )
+    assert(
+      messages.some((message) => message.includes("effect(preferTypedSchemaDecoder)")),
+      "Expected preferTypedSchemaDecoder diagnostic (published since @effect/tsgo 0.33.0)",
+    )
+    assert(
+      messages.some((message) => message.includes("effect(floatingEffect)")),
+      "Expected floatingEffect diagnostic inside the yieldable Effect.gen context",
     )
 
     const codeActions = await client.request("textDocument/codeAction", {
@@ -621,6 +631,14 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
     assert(
       codeActionTitles.some((title) => title.includes("Scope.makeUnsafe")),
       "Expected preferUnsafeConstructor code action to mention Scope.makeUnsafe",
+    )
+    assert(
+      codeActionTitles.some((title) => title.includes("Replace with decodeSync")),
+      "Expected preferTypedSchemaDecoder code action to offer the typed decodeSync replacement (published since @effect/tsgo 0.33.0)",
+    )
+    assert(
+      codeActionTitles.some((title) => title.includes("Add yield* statement")),
+      "Expected floatingEffect code action to offer the yield* quick fix in yieldable contexts (published since @effect/tsgo 0.31.0)",
     )
 
     return {
@@ -790,8 +808,8 @@ async function main() {
   }
 
   // typescript@7.0.2 has gitHead 2bd066d87f5bafd315be9f40889d0a60b9e58e0b,
-  // matching the native backend used for the recorded @effect/tsgo@0.27.1 smoke.
-  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-beta.103"]
+  // matching the native backend used for the recorded @effect/tsgo@0.33.0 smoke.
+  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-beta.104"]
   const result = {}
 
   if (only === "all" || only === "healthy") {

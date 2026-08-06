@@ -35,7 +35,7 @@ node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only diagno
 
 The verifier copies its fixtures to temporary directories and installs the validated
 `typescript@7.0.2` package (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) plus
-`effect@4.0.0-beta.103`. It does not install `@effect/language-service`: that string is the
+`effect@4.0.0-beta.104`. It does not install `@effect/language-service`: that string is the
 `compilerOptions.plugins[].name` consumed by the language service already compiled into
 `@effect/tsgo`.
 
@@ -77,8 +77,11 @@ git clone https://github.com/Effect-TS/tsgo ../effect-tsgo-canary
 (cd ../effect-tsgo-canary && bash _tools/setup-repo.sh --ci && pnpm run build)
 ```
 
-Use the resulting Effect-patched native binary path in `MANUAL` mode. Current published packages call
-their binaries `tsc` and `tsc-next`; older source builds may still produce `tsgo`. This is the route
+Use the resulting Effect-patched native binary path in `MANUAL` mode. Current published packages
+(0.32.0+) ship per-version `tsc` executables under `artifacts/typescript/<version>/` with a `lib/tsc`
+compatibility copy of the `latest` build; 0.19.0–0.31.x called their binaries `lib/tsc` and
+`lib/tsc-next` (0.26.0 replaced their per-binary JSON metadata with `lib/upstream.json`), and older
+source builds may still produce `tsgo`. This is the route
 for validating the `_effectGetLayerMermaid` execute-command bridge before it exists in a published
 package.
 

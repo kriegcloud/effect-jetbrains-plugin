@@ -43,3 +43,11 @@ export class Label extends Schema.Opaque<Label>()(Schema.Struct({
 export const scope = Effect.runSync(Scope.make())
 
 export const eventualNumber = Effect.succeed(Promise.resolve(1))
+
+export const decodedUser = Schema.decodeUnknownSync(User)({ age: 1, score: "10" })
+
+export const floatingInGen = Effect.gen(function*() {
+  first
+
+  return yield* second
+})

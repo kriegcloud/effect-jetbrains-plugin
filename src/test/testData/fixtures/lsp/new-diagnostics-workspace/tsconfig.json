@@ -16,6 +16,7 @@
           "newSchemaClass": "warning",
           "syncToSucceed": "warning",
           "schemaOpaqueInstanceMember": "warning",
+          "preferTypedSchemaDecoder": "warning",
           "preferUnsafeConstructor": "warning",
           "promiseInEffectSuccess": "warning"
         }

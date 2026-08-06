@@ -64,6 +64,7 @@ class EffectDiagnosticDirectiveCompletionTest {
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("catchChainToFirstSuccessOf"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("catchTagToCatchReason"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("floatingEffectInVitest"))
+        assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("preferTypedSchemaDecoder"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("preferUnsafeConstructor"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("promiseInEffectSuccess"))
         assertTrue(EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES.contains("schemaLiteralNonFinite"))
