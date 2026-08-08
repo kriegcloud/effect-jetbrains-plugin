@@ -1,5 +1,7 @@
 package dev.effect.intellij.binary
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.sun.net.httpserver.HttpExchange
@@ -24,7 +26,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-private const val CURRENT_TSGO_VERSION = "0.27.1"
+private const val CURRENT_TSGO_VERSION = "0.33.0"
 private const val STABLE_TYPESCRIPT_HEAD = "stable-typescript-head"
 private const val NEXT_TYPESCRIPT_HEAD = "next-typescript-head"
 
@@ -225,6 +227,159 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
 
         assertEquals(stableBinaryName, repaired.binaryPath.fileName.toString())
         assertTrue(Files.exists(repaired.binaryPath.resolveSibling("upstream.json")))
+        assertEquals(2, metadataRequests.get())
+        assertEquals(2, tarballRequests.get())
+    }
+
+    fun testLatestModeSelectsLatestArtifactBinaryFromComponentsManifest() {
+        writeWorkspacePackage("typescript", "7.0.0", STABLE_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION)
+
+        val resolution = resolveLatest()
+
+        assertEquals(
+            listOf("artifacts", "typescript", "7.0.0", stableBinaryName),
+            packageRelativeSegments(resolution),
+        )
+    }
+
+    fun testLatestModeSelectsNextArtifactBinaryFromComponentsManifest() {
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260710.1", NEXT_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION)
+
+        val resolution = resolveLatest()
+
+        assertEquals(
+            listOf("artifacts", "typescript", "7.1.0-dev.20260710.1", stableBinaryName),
+            packageRelativeSegments(resolution),
+        )
+    }
+
+    fun testLatestModeReusesHealthyComponentsInstallation() {
+        val metadataRequests = AtomicInteger(0)
+        val tarballRequests = AtomicInteger(0)
+        writeWorkspacePackage("typescript", "7.0.0", STABLE_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests = metadataRequests, tarballRequests = tarballRequests)
+
+        resolveLatest()
+        val again = resolveLatest()
+
+        assertEquals(
+            listOf("artifacts", "typescript", "7.0.0", stableBinaryName),
+            packageRelativeSegments(again),
+        )
+        assertEquals(1, metadataRequests.get())
+        assertEquals(1, tarballRequests.get())
+    }
+
+    fun testLatestModeFallsBackToCompatBinaryWhenLatestArtifactMissing() {
+        writeWorkspacePackage("typescript", "7.0.0", STABLE_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, includeLatestArtifact = false)
+
+        val resolution = resolveLatest()
+
+        assertEquals(listOf("lib", stableBinaryName), packageRelativeSegments(resolution))
+    }
+
+    fun testLatestModeRepairsComponentsInstallationWhenArtifactDeleted() {
+        val metadataRequests = AtomicInteger(0)
+        val tarballRequests = AtomicInteger(0)
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260710.1", NEXT_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests = metadataRequests, tarballRequests = tarballRequests)
+
+        val initial = resolveLatest()
+        deleteRecursively(initial.binaryPath.parent)
+
+        val repaired = resolveLatest()
+
+        assertTrue(Files.exists(repaired.binaryPath))
+        assertEquals(2, metadataRequests.get())
+        assertEquals(2, tarballRequests.get())
+    }
+
+    fun testLatestModeRejectsComponentsPackageWhenWorkspaceTypeScriptDoesNotMatch() {
+        writeWorkspacePackage("typescript", "7.0.0", "unmatched-head")
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION)
+
+        try {
+            resolveLatest()
+            fail("Expected a components package with no matching TypeScript gitHead to be rejected")
+        } catch (error: EffectBinaryException) {
+            assertTrue(error.message?.contains("unmatched-head") == true)
+            assertTrue(error.message?.contains(STABLE_TYPESCRIPT_HEAD) == true)
+            assertTrue(error.message?.contains(NEXT_TYPESCRIPT_HEAD) == true)
+        }
+    }
+
+    fun testLatestModeParsesFutureSchemaVersionWithComponentShape() {
+        val metadataRequests = AtomicInteger(0)
+        val tarballRequests = AtomicInteger(0)
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260710.1", NEXT_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(
+            CURRENT_TSGO_VERSION,
+            schemaVersion = 5,
+            metadataRequests = metadataRequests,
+            tarballRequests = tarballRequests,
+        )
+
+        val resolution = resolveLatest()
+        val again = resolveLatest()
+
+        assertEquals(
+            listOf("artifacts", "typescript", "7.1.0-dev.20260710.1", stableBinaryName),
+            packageRelativeSegments(resolution),
+        )
+        assertEquals(resolution.binaryPath, again.binaryPath)
+        assertEquals(1, metadataRequests.get())
+        assertEquals(1, tarballRequests.get())
+    }
+
+    fun testLatestModeRejectsUnsupportedManifestWithoutRedownloading() {
+        val metadataRequests = AtomicInteger(0)
+        val tarballRequests = AtomicInteger(0)
+        registerUnsupportedSchemaLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests, tarballRequests)
+
+        repeat(2) {
+            try {
+                resolveLatest()
+                fail("Expected a package with an uninterpretable manifest to be rejected")
+            } catch (error: EffectBinaryException) {
+                assertTrue(error.message?.contains("cannot") == true)
+                assertTrue(error.message?.contains("schemaVersion 9") == true)
+            }
+        }
+        assertEquals(1, metadataRequests.get())
+        assertEquals(1, tarballRequests.get())
+    }
+
+    fun testLatestModeDoesNotUseCompatBinaryForNextComponent() {
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260710.1", NEXT_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, includeNextArtifact = false)
+
+        try {
+            resolveLatest()
+            fail("Expected the lib/tsc compatibility copy not to stand in for the missing next artifact")
+        } catch (error: EffectBinaryException) {
+            assertTrue(error.message?.contains(NEXT_TYPESCRIPT_HEAD) == true)
+            assertTrue(error.message?.contains(STABLE_TYPESCRIPT_HEAD) == true)
+        }
+    }
+
+    fun testLatestModeReinstallsWhenMarkerPredatesArtifactTracking() {
+        val metadataRequests = AtomicInteger(0)
+        val tarballRequests = AtomicInteger(0)
+        writeWorkspacePackage("typescript", "7.0.0", STABLE_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests = metadataRequests, tarballRequests = tarballRequests)
+
+        val initial = resolveLatest()
+        stripArtifactKeysFromMarker(requireNotNull(initial.cacheDirectory).resolve(".install-complete"))
+
+        val repaired = resolveLatest()
+
+        assertEquals(
+            listOf("artifacts", "typescript", "7.0.0", stableBinaryName),
+            packageRelativeSegments(repaired),
+        )
         assertEquals(2, metadataRequests.get())
         assertEquals(2, tarballRequests.get())
     }
@@ -568,6 +723,36 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         registerPackageEndpoint(version, ::writeManifestTarball, metadataRequests, tarballRequests)
     }
 
+    private fun registerComponentsLatestEndpoints(
+        version: String,
+        includeLatestArtifact: Boolean = true,
+        includeNextArtifact: Boolean = true,
+        schemaVersion: Int = 4,
+        metadataRequests: AtomicInteger? = null,
+        tarballRequests: AtomicInteger? = null,
+    ) {
+        server.createContext("/@effect/tsgo") { exchange ->
+            respondJson(exchange, """{"dist-tags":{"latest":"$version"}}""")
+        }
+        registerPackageEndpoint(
+            version,
+            { path -> writeComponentsTarball(path, includeLatestArtifact, includeNextArtifact, schemaVersion) },
+            metadataRequests,
+            tarballRequests,
+        )
+    }
+
+    private fun registerUnsupportedSchemaLatestEndpoints(
+        version: String,
+        metadataRequests: AtomicInteger? = null,
+        tarballRequests: AtomicInteger? = null,
+    ) {
+        server.createContext("/@effect/tsgo") { exchange ->
+            respondJson(exchange, """{"dist-tags":{"latest":"$version"}}""")
+        }
+        registerPackageEndpoint(version, ::writeUnsupportedSchemaTarball, metadataRequests, tarballRequests)
+    }
+
     private fun registerPinnedEndpoint(version: String) {
         registerPackageEndpoint(version, ::writeLegacyTarball)
     }
@@ -637,6 +822,61 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
                 "package/lib/tsgolint" to "tsgolint-binary",
             ),
         )
+    }
+
+    private fun writeComponentsTarball(
+        path: Path,
+        includeLatestArtifact: Boolean,
+        includeNextArtifact: Boolean = true,
+        schemaVersion: Int = 4,
+    ) {
+        val entries = mutableMapOf(
+            "package/lib/upstream.json" to
+                """
+                {"schemaVersion":$schemaVersion,
+                 "tags":{"typescript":{"latest":"7.0.0","next":"7.1.0-dev.20260710.1"},"oxlint":{"latest":"1.77.0"}},
+                 "components":{
+                   "typescript":{
+                     "7.0.0":{"gitHead":"$STABLE_TYPESCRIPT_HEAD"},
+                     "7.1.0-dev.20260710.1":{"gitHead":"$NEXT_TYPESCRIPT_HEAD"}
+                   },
+                   "oxlint":{"1.77.0":{"gitHead":"oxlint-head"}}
+                 },
+                 "profiles":[{"name":"vite-plus","description":"Vite+ compatibility runtime","dependencies":{"oxlint":"1.77.0"}}]}
+                """.trimIndent(),
+            "package/lib/$stableBinaryName" to "compat-binary",
+            "package/artifacts/oxlint-tsgolint/7.0.2001/tsgolint" to "tsgolint-binary",
+        )
+        if (includeLatestArtifact) {
+            entries["package/artifacts/typescript/7.0.0/$stableBinaryName"] = "latest-binary"
+        }
+        if (includeNextArtifact) {
+            entries["package/artifacts/typescript/7.1.0-dev.20260710.1/$stableBinaryName"] = "next-binary"
+        }
+        writeTarball(path, entries)
+    }
+
+    private fun writeUnsupportedSchemaTarball(path: Path) {
+        writeTarball(
+            path,
+            mapOf(
+                "package/lib/upstream.json" to
+                    """{"schemaVersion":9,"binaries":[{"name":"$stableBinaryName","gitHead":"future-head"}]}""",
+                "package/lib/$stableBinaryName" to "compat-binary",
+            ),
+        )
+    }
+
+    private fun stripArtifactKeysFromMarker(markerPath: Path) {
+        val marker = ObjectMapper().readTree(Files.readString(markerPath))
+        val files = marker.path("files") as ObjectNode
+        files.properties().map { it.key }.filter { '/' in it }.forEach(files::remove)
+        Files.writeString(markerPath, marker.toString())
+    }
+
+    private fun packageRelativeSegments(resolution: BinaryResolution): List<String> {
+        val packageRoot = requireNotNull(resolution.cacheDirectory).resolve("package")
+        return packageRoot.relativize(resolution.binaryPath).map(Path::toString)
     }
 
     private fun writeTarball(path: Path, entries: Map<String, String>) {

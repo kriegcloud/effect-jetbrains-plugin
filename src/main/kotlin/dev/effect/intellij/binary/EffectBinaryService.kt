@@ -1,5 +1,6 @@
 package dev.effect.intellij.binary
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
@@ -103,14 +104,14 @@ class EffectBinaryService {
                     }
 
                     try {
-                        selectManagedBinary(project, versionRoot.resolve("package").resolve("lib"), platform)
+                        selectManagedBinary(project, versionRoot.resolve("package"), platform)
                     } catch (error: DamagedManagedPackageException) {
                         if (installed) {
                             throw EffectBinaryException(error.message.orEmpty(), error)
                         }
                         reinstall()
                         try {
-                            selectManagedBinary(project, versionRoot.resolve("package").resolve("lib"), platform)
+                            selectManagedBinary(project, versionRoot.resolve("package"), platform)
                         } catch (retryError: DamagedManagedPackageException) {
                             throw EffectBinaryException(retryError.message.orEmpty(), retryError)
                         }
@@ -203,11 +204,15 @@ class EffectBinaryService {
 
         try {
             extractArchive(archivePath, stagingRoot)
-            val stagedLib = stagingRoot.resolve("package").resolve("lib")
+            val stagedPackageRoot = stagingRoot.resolve("package")
+            val stagedLib = stagedPackageRoot.resolve("lib")
             val packagedBinaries = platform.packagedBinaryNames.map(stagedLib::resolve)
-            if (packagedBinaries.none(Files::isRegularFile)) {
+            if (packagedBinaries.none(Files::isRegularFile) &&
+                findArtifactTypeScriptBinaries(stagedPackageRoot, platform).isEmpty()
+            ) {
                 throw EffectBinaryException(
-                    "Downloaded $packageName@$version successfully, but no supported native binary was found in $stagedLib. " +
+                    "Downloaded $packageName@$version successfully, but no supported native binary was found in $stagedLib " +
+                        "or under ${stagedPackageRoot.resolve("artifacts").resolve("typescript")}. " +
                         "Tried: ${packagedBinaries.joinToString()}.",
                 )
             }
@@ -226,7 +231,8 @@ class EffectBinaryService {
     }
 
     private fun writeInstallMarker(versionRoot: Path, version: String, platform: PlatformPackage) {
-        val libRoot = versionRoot.resolve("package").resolve("lib")
+        val packageRoot = versionRoot.resolve("package")
+        val libRoot = packageRoot.resolve("lib")
         val marker = EffectJson.mapper.createObjectNode()
         marker.put("version", version)
         val files = marker.putObject("files")
@@ -236,7 +242,25 @@ class EffectBinaryService {
                 files.put(fileName, Files.size(file))
             }
         }
+        findArtifactTypeScriptBinaries(packageRoot, platform).forEach { file ->
+            val key = packageRoot.relativize(file).joinToString("/")
+            files.put(key, Files.size(file))
+        }
         Files.writeString(versionRoot.resolve(INSTALL_COMPLETE_MARKER), EffectJson.mapper.writeValueAsString(marker))
+    }
+
+    private fun findArtifactTypeScriptBinaries(packageRoot: Path, platform: PlatformPackage): List<Path> {
+        val typescriptArtifacts = packageRoot.resolve("artifacts").resolve("typescript")
+        if (!Files.isDirectory(typescriptArtifacts)) {
+            return emptyList()
+        }
+        return Files.newDirectoryStream(typescriptArtifacts).use { versions ->
+            versions
+                .filter { Files.isDirectory(it) }
+                .map { it.resolve(platform.executableName("tsc")) }
+                .filter { Files.isRegularFile(it) }
+                .sortedBy(Path::toString)
+        }
     }
 
     private fun isManagedInstallationHealthy(
@@ -256,27 +280,47 @@ class EffectBinaryService {
         }
 
         val installedFileNames = files.properties().asSequence().map { it.key }.toSet()
-        if (installedFileNames.isEmpty() || installedFileNames.any { it !in platform.packagedFileNames }) {
+        if (installedFileNames.isEmpty() ||
+            installedFileNames.any { it !in platform.packagedFileNames && !platform.isArtifactTypeScriptKey(it) }
+        ) {
             return@runCatching false
         }
 
-        val libRoot = versionRoot.resolve("package").resolve("lib")
+        val packageRoot = versionRoot.resolve("package")
+        val libRoot = packageRoot.resolve("lib")
         if (installedFileNames.any { fileName ->
-                val file = libRoot.resolve(fileName)
+                val file = if ('/' in fileName) packageRoot.resolve(fileName) else libRoot.resolve(fileName)
                 !Files.isRegularFile(file) || Files.size(file) != files.path(fileName).asLong(-1)
             }
         ) {
             return@runCatching false
         }
 
+        val manifest = if (UPSTREAM_MANIFEST_FILE_NAME in installedFileNames) readUpstreamManifest(libRoot) else null
+        when (manifest) {
+            is UpstreamManifest.Components -> {
+                // A marker that never recorded the on-disk artifacts executables predates this
+                // plugin's component-layout support; reinstall once so they become tracked.
+                val artifactsTracked = findArtifactTypeScriptBinaries(packageRoot, platform).isEmpty() ||
+                    installedFileNames.any { platform.isArtifactTypeScriptKey(it) }
+                return@runCatching artifactsTracked && componentCandidates(packageRoot, manifest, platform).isNotEmpty()
+            }
+
+            // Re-downloading an immutable npm tarball cannot fix an uninterpretable manifest;
+            // keep the intact install and let selection raise the actionable error instead.
+            is UpstreamManifest.Unsupported ->
+                return@runCatching hasAnyPackagedExecutable(packageRoot, platform)
+
+            else -> Unit
+        }
+
         val installedModernBinaries = MODERN_BINARY_NAMES.filter { platform.executableName(it) in installedFileNames }
         if (installedModernBinaries.isNotEmpty()) {
-            val manifest = if (UPSTREAM_MANIFEST_FILE_NAME in installedFileNames) readUpstreamManifest(libRoot) else null
             return@runCatching installedModernBinaries.all { binaryName ->
                 val executableName = platform.executableName(binaryName)
                 val adjacentMetadata = "$executableName.json" in installedFileNames &&
                     readBinaryMetadata(libRoot.resolve(executableName)) != null
-                adjacentMetadata || manifest?.containsKey(binaryName) == true
+                adjacentMetadata || (manifest as? UpstreamManifest.Profiles)?.byBinName?.containsKey(binaryName) == true
             }
         }
 
@@ -285,22 +329,40 @@ class EffectBinaryService {
 
     /**
      * Modern platform packages carry binaries for stable and nightly TypeScript together with
-     * compatibility metadata: per-binary `<binary>.json` files up to `@effect/tsgo` 0.25.x, and a
-     * single `upstream.json` profile manifest since 0.26.0. Select the binary built from the
-     * workspace's exact TypeScript git head; older packages without metadata retain their
-     * dedicated `tsgo` executable.
+     * compatibility metadata: per-binary `<binary>.json` files up to `@effect/tsgo` 0.25.x, a
+     * single `lib/upstream.json` profile manifest (`schemaVersion` 2) for 0.26.0–0.31.x, and a
+     * component manifest (`schemaVersion` 4) since 0.32.0 whose executables live under
+     * `artifacts/typescript/<version>/` (with `lib/tsc` kept as a compatibility copy of the
+     * `latest` build). Select the binary built from the workspace's exact TypeScript git head;
+     * older packages without metadata retain their dedicated `tsgo` executable.
      */
-    private fun selectManagedBinary(project: Project, libRoot: Path, platform: PlatformPackage): Path {
+    private fun selectManagedBinary(project: Project, packageRoot: Path, platform: PlatformPackage): Path {
+        val libRoot = packageRoot.resolve("lib")
         val manifest = readUpstreamManifest(libRoot)
-        val modernCandidates = MODERN_BINARY_NAMES
-            .mapNotNull { binaryName ->
+
+        if (manifest is UpstreamManifest.Unsupported) {
+            throw EffectBinaryException(
+                "The downloaded @effect/tsgo package ships a lib/upstream.json this plugin version cannot " +
+                    "interpret (schemaVersion ${manifest.schemaVersion}). Update the Effect plugin, pin a " +
+                    "supported @effect/tsgo version in PINNED mode, or select a compatible executable in " +
+                    "MANUAL mode.",
+            )
+        }
+
+        val modernCandidates = when (manifest) {
+            is UpstreamManifest.Components -> componentCandidates(packageRoot, manifest, platform)
+            else -> MODERN_BINARY_NAMES.mapNotNull { binaryName ->
                 val path = libRoot.resolve(platform.executableName(binaryName))
                 if (Files.isRegularFile(path)) {
-                    PackagedBinaryCandidate(path, readBinaryMetadata(path) ?: manifest?.get(binaryName))
+                    PackagedBinaryCandidate(
+                        path,
+                        readBinaryMetadata(path) ?: (manifest as? UpstreamManifest.Profiles)?.byBinName?.get(binaryName),
+                    )
                 } else {
                     null
                 }
             }
+        }
 
         if (modernCandidates.any { candidate -> candidate.metadata != null }) {
             val workspaceTypeScript = resolveWorkspaceTypeScript(project)
@@ -310,10 +372,11 @@ class EffectBinaryService {
 
             val tried = modernCandidates.joinToString(separator = "\n") { candidate ->
                 val metadata = candidate.metadata
+                val displayPath = packageRoot.relativize(candidate.path)
                 if (metadata == null) {
-                    "  ${candidate.path.fileName}: metadata missing or invalid"
+                    "  $displayPath: metadata missing or invalid"
                 } else {
-                    "  ${candidate.path.fileName}: TypeScript ${metadata.tsVersion}, gitHead ${metadata.tsGitHead}"
+                    "  $displayPath: TypeScript ${metadata.tsVersion}, gitHead ${metadata.tsGitHead}"
                 }
             }
             throw EffectBinaryException(
@@ -335,7 +398,37 @@ class EffectBinaryService {
             )
         }
 
-        throw DamagedManagedPackageException("No supported @effect/tsgo executable was found in $libRoot.")
+        throw DamagedManagedPackageException("No supported @effect/tsgo executable was found in $packageRoot.")
+    }
+
+    /**
+     * Candidate executables for a `schemaVersion` 4 component manifest: one per TypeScript
+     * component version at `artifacts/typescript/<version>/tsc`, falling back to the `lib/tsc`
+     * compatibility copy for the `latest`-tagged version when its artifact is absent.
+     */
+    private fun componentCandidates(
+        packageRoot: Path,
+        manifest: UpstreamManifest.Components,
+        platform: PlatformPackage,
+    ): List<PackagedBinaryCandidate> = manifest.typescript.mapNotNull { component ->
+        val artifact = packageRoot.resolve("artifacts").resolve("typescript")
+            .resolve(component.version).resolve(platform.executableName("tsc"))
+        val path = when {
+            Files.isRegularFile(artifact) -> artifact
+            component.version == manifest.latestVersion ->
+                libRootCompatBinary(packageRoot, platform)
+            else -> null
+        }
+        path?.let { PackagedBinaryCandidate(it, PackagedBinaryMetadata(component.version, component.gitHead)) }
+    }
+
+    private fun libRootCompatBinary(packageRoot: Path, platform: PlatformPackage): Path? =
+        packageRoot.resolve("lib").resolve(platform.executableName("tsc")).takeIf { Files.isRegularFile(it) }
+
+    private fun hasAnyPackagedExecutable(packageRoot: Path, platform: PlatformPackage): Boolean {
+        val libRoot = packageRoot.resolve("lib")
+        return findArtifactTypeScriptBinaries(packageRoot, platform).isNotEmpty() ||
+            SUPPORTED_BINARY_NAMES.any { Files.isRegularFile(libRoot.resolve(platform.executableName(it))) }
     }
 
     private fun readBinaryMetadata(binaryPath: Path): PackagedBinaryMetadata? {
@@ -351,32 +444,73 @@ class EffectBinaryService {
 
     /**
      * Since 0.26.0, platform packages replace the per-binary metadata files with a single
-     * `lib/upstream.json` profile manifest. Returns base binary name (`tsc`, `tsc-next`) to
-     * metadata, or null when the manifest is absent or unusable.
+     * `lib/upstream.json` manifest. `schemaVersion` 2 (0.26.0–0.31.x) maps `binName` (`tsc`,
+     * `tsc-next`) to TypeScript profile metadata; `schemaVersion` 4 (0.32.0+) lists per-version
+     * TypeScript components whose executables live under `artifacts/typescript/<version>/`. Any
+     * other `schemaVersion` is parsed by the component shape, so a compatible future revision
+     * keeps full TypeScript matching; a manifest whose shape is unusable is reported as
+     * [UpstreamManifest.Unsupported] instead of being silently ignored. Returns null only when
+     * the manifest file is absent.
      */
-    private fun readUpstreamManifest(libRoot: Path): Map<String, PackagedBinaryMetadata>? {
+    private fun readUpstreamManifest(libRoot: Path): UpstreamManifest? {
         val manifestPath = libRoot.resolve(UPSTREAM_MANIFEST_FILE_NAME)
-        return runCatching {
-            val json = EffectJson.mapper.readTree(Files.readString(manifestPath))
-            require(json.path("schemaVersion").asInt() == 2)
-            val profiles = json.path("profiles")
-            require(profiles.isArray)
-            val entries = mutableMapOf<String, PackagedBinaryMetadata>()
-            profiles.forEach { profile ->
-                if (profile.path("kind").asText() != "ts") {
-                    return@forEach
-                }
-                val binName = profile.path("binName").asText().trim()
-                val tsVersion = profile.path("ts").path("npmVersion").asText().trim()
-                val tsGitHead = profile.path("ts").path("gitHead").asText().trim()
-                if (binName.isNotBlank() && tsVersion.isNotBlank() && tsGitHead.isNotBlank()) {
-                    entries[binName] = PackagedBinaryMetadata(tsVersion, tsGitHead)
-                }
-            }
-            require(entries.isNotEmpty())
-            entries.toMap()
+        if (!Files.isRegularFile(manifestPath)) {
+            return null
+        }
+        val json = runCatching { EffectJson.mapper.readTree(Files.readString(manifestPath)) }.getOrNull()
+            ?: return UpstreamManifest.Unsupported(0)
+        val schemaVersion = json.path("schemaVersion").asInt()
+        val parsed = runCatching {
+            if (schemaVersion == 2) parseProfilesManifest(json) else parseComponentsManifest(json)
         }.getOrNull()
+        return parsed ?: UpstreamManifest.Unsupported(schemaVersion)
     }
+
+    private fun parseProfilesManifest(json: JsonNode): UpstreamManifest.Profiles {
+        val profiles = json.path("profiles")
+        require(profiles.isArray)
+        val entries = mutableMapOf<String, PackagedBinaryMetadata>()
+        profiles.forEach { profile ->
+            if (profile.path("kind").asText() != "ts") {
+                return@forEach
+            }
+            val binName = profile.path("binName").asText().trim()
+            val tsVersion = profile.path("ts").path("npmVersion").asText().trim()
+            val tsGitHead = profile.path("ts").path("gitHead").asText().trim()
+            if (binName.isNotBlank() && tsVersion.isNotBlank() && tsGitHead.isNotBlank()) {
+                entries[binName] = PackagedBinaryMetadata(tsVersion, tsGitHead)
+            }
+        }
+        require(entries.isNotEmpty())
+        return UpstreamManifest.Profiles(entries.toMap())
+    }
+
+    private fun parseComponentsManifest(json: JsonNode): UpstreamManifest.Components {
+        val componentsNode = json.path("components").path("typescript")
+        require(componentsNode.isObject)
+        val components = linkedMapOf<String, TypeScriptComponent>()
+        componentsNode.properties().forEach { (version, component) ->
+            val safeVersion = version.trim()
+            val gitHead = component.path("gitHead").asText().trim()
+            if (safeVersion.isNotBlank() && gitHead.isNotBlank() && isSafeVersionKey(safeVersion)) {
+                components[safeVersion] = TypeScriptComponent(safeVersion, gitHead)
+            }
+        }
+        require(components.isNotEmpty())
+        val latest = json.path("tags").path("typescript").path("latest").asText().trim().ifBlank { null }
+        val next = json.path("tags").path("typescript").path("next").asText().trim().ifBlank { null }
+        val tagged = listOfNotNull(latest, next).distinct().mapNotNull(components::get)
+        val remaining = components.values.filter { it.version != latest && it.version != next }
+        return UpstreamManifest.Components(tagged + remaining, latest)
+    }
+
+    /**
+     * The version becomes a path segment under `artifacts/typescript/`, so restrict it to
+     * characters that are legal in file names on every supported platform and cannot traverse
+     * out of the package root.
+     */
+    private fun isSafeVersionKey(version: String): Boolean =
+        version != "." && version != ".." && version.all { it.isLetterOrDigit() || it in "._+-" }
 
     private fun resolveWorkspaceTypeScript(project: Project): WorkspaceTypeScript {
         val workspaceRoot = project.basePath?.takeIf(String::isNotBlank)?.let { parsePath(it, "Project workspace") }
@@ -647,7 +781,41 @@ private data class PlatformPackage(
     val packagedFileNames: Set<String>
         get() = (packagedBinaryNames.flatMap { binaryName -> listOf(binaryName, "$binaryName.json") } + UPSTREAM_MANIFEST_FILE_NAME)
             .toSet()
+
+    /** Install-marker key for a `schemaVersion` 4 executable: `artifacts/typescript/<version>/tsc`. */
+    fun isArtifactTypeScriptKey(key: String): Boolean {
+        val segments = key.split('/')
+        return segments.size == 4 &&
+            segments[0] == "artifacts" &&
+            segments[1] == "typescript" &&
+            segments[2].isNotBlank() &&
+            segments[3] == executableName("tsc")
+    }
 }
+
+/** Parsed `lib/upstream.json` shapes across the `@effect/tsgo` package generations. */
+private sealed interface UpstreamManifest {
+    /** `schemaVersion` 2 (0.26.0–0.31.x): TypeScript profiles keyed by `binName` (`tsc`, `tsc-next`). */
+    data class Profiles(val byBinName: Map<String, PackagedBinaryMetadata>) : UpstreamManifest
+
+    /**
+     * `schemaVersion` 4 (0.32.0+, plus any future revision that keeps the component shape):
+     * per-version TypeScript components with executables under `artifacts/typescript/<version>/`,
+     * ordered `latest` tag first, then `next`, then the rest.
+     */
+    data class Components(
+        val typescript: List<TypeScriptComponent>,
+        val latestVersion: String?,
+    ) : UpstreamManifest
+
+    /** A manifest that is present but has no shape this plugin can interpret. */
+    data class Unsupported(val schemaVersion: Int) : UpstreamManifest
+}
+
+private data class TypeScriptComponent(
+    val version: String,
+    val gitHead: String,
+)
 
 private data class PackagedBinaryMetadata(
     val tsVersion: String,
