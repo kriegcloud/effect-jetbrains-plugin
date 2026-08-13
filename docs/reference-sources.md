@@ -72,8 +72,10 @@ actually contains a clone of this plugin's own repository — rebuild it from
 The publication-ready plugin works with published npm `@effect/tsgo` packages for core LSP features.
 
 As of `@effect/tsgo@0.36.4` (npm `latest`, published 2026-08-10) and tsgo HEAD `ca311a5c` (one
-commit past the `0.36.4` tag at `ca859c50`; the tip only advances the `typescript.next`/Oxlint
-upstream metadata and execution-flow baselines), the server still does **not** register any
+commit past the `0.36.4` tag at `ca859c50`; the tip advances the `typescript.next`/Oxlint
+upstream metadata and includes a type-only-heritage execution-flow fix —
+`internal/typeparser/execution_flow.go` plus 7 refreshed Mermaid test baselines and a rebased
+typescript-go patch), the server still does **not** register any
 `workspace/executeCommand` for the layer graph (a full-tree grep at the pin finds `ExecuteCommand`
 only in the `shim/lsp/lsproto` protocol shim; `_effectGetLayerMermaid` appears nowhere; the
 2026-08-13 verifier run against the published 0.36.4 binary again returned `executeCommands: []`).
@@ -120,7 +122,8 @@ TypeScript-Go revisions. At `0.36.4` the `typescript.latest` tag is still `7.0.2
 verified against the published linux-x64 tarball on 2026-08-13; the pinned repo tip already
 advances `next` metadata to `7.1.0-dev.20260811.1`). The manifest schema, component set, and
 executable layout are unchanged across 0.34.0 → 0.36.4 — the only structural addition in the range
-is an LSP-irrelevant `oxlint-presets/` directory of Oxlint config presets shipped since 0.36.0.
+is an LSP-irrelevant `oxlint-presets/` directory of Oxlint config presets shipped in the base
+`@effect/tsgo` package since 0.36.0 (the platform packages are unaffected).
 Executable bits remain preserved
 at mode **0755** (Changesets v3 + `publishConfig.executableFiles` since 0.26.6, now covering the
 `artifacts/` binaries too), so the plugin's permission restoration on extraction stays redundant for

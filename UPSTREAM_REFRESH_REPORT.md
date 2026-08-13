@@ -12,7 +12,7 @@ detached checkout; no `git pull`).
 
 | Upstream | Local path | Old pin (2026-08-06) | New pin (2026-08-13) | Version movement |
 | --- | --- | --- | --- | --- |
-| Effect-TS/tsgo | `.repos/effect-tsgo-upstream` | `b415a1e9` | `ca311a5c` | `@effect/tsgo` **0.33.0 → 0.36.4** (22 commits; releases 0.34.0–0.36.4, all published by 2026-08-10; the pinned tip is 1 commit past the 0.36.4 tag at `ca859c50` and only advances `typescript.next`/Oxlint upstream metadata) |
+| Effect-TS/tsgo | `.repos/effect-tsgo-upstream` | `b415a1e9` | `ca311a5c` | `@effect/tsgo` **0.33.0 → 0.36.4** (22 commits; releases 0.34.0–0.36.4, all published by 2026-08-10; the pinned tip is 1 commit past the 0.36.4 tag at `ca859c50` and advances `typescript.next`/Oxlint upstream metadata plus a type-only-heritage execution-flow fix — `internal/typeparser/execution_flow.go`, 7 refreshed Mermaid test baselines, and a rebased typescript-go patch) |
 | Effect-TS/effect | `.repos/effect-v4` | `4c28b0fb5` | `7018f9668` | `effect` **4.0.0-beta.104 → 4.0.0-rc.108** (98 commits through beta.105/106/107 and the beta→rc transition; the rc.108 tag `bef7bf38` is 16 commits behind the pinned tip with an empty scoped diff) |
 | effect-ts/vscode-extension | `.repos/effect-vscode-extension` | `c49b1c29` (documented) | `64631d41` | **0.9.0 → 0.10.0, "sketch v4 support"** (2 commits, 2026-08-07 — the first movement since 2025-11-28; the clone was found already checked out at the new tip while the docs table still recorded the old pin, now reconciled) |
 | RATIU5/zed-effect-tsgo | `.repos/effect-zed-tsgo-extension` | `0c4f302c` | `0c4f302c` (re-verified) | unchanged |
@@ -32,9 +32,10 @@ landed entirely in tests, the verifier, and docs (see "Actions taken").
   (`_tools/repoctl/src/packages.ts`) diff empty across the range. Verified live against the
   published linux-x64 0.36.4 tarball: `artifacts/typescript/<version>/tsc` for both builds,
   `lib/tsc` byte-identical (size and SHA-256) to the `latest` artifact, no `lib/tsc-next`, all
-  executables 0755, top-level layout identical to 0.33.0. The plugin's schemaVersion-4 managed
-  resolution needs no adaptation; the only structural addition is an LSP-irrelevant
-  `oxlint-presets/` directory (0.36.0).
+  executables 0755, platform-package top-level layout identical to 0.33.0. The plugin's
+  schemaVersion-4 managed resolution needs no adaptation; the only structural addition in the
+  range is an LSP-irrelevant `oxlint-presets/` directory of Oxlint config presets shipped in the
+  **base** `@effect/tsgo` package since 0.36.0 (the platform packages are unaffected).
 - **Diagnostics: none added, removed, or renamed** (`internal/rules/rules.go` and the fixable
   implementations diff empty across the range). The 0.1.4 follow-up about `schema.json`
   regeneration drift is **resolved upstream**: 0.36.0 (`8423f68`) regenerated the severity schema
@@ -158,7 +159,9 @@ stable build `262.8665.341` pinned on 2026-08-03.
   recorded smoke need coordinated bumps. `typescript.next` metadata is churning every 1–3 days;
   it only matters if `next`-workspace users appear.
 - **Pinned-tip risk:** the tsgo pin is 1 commit past the 0.36.4 tag and changes only upstream
-  version metadata and execution-flow test baselines; the `typescript-go` gitlink is unmoved, so
+  version metadata, a type-only-heritage execution-flow fix (`internal/typeparser/execution_flow.go`
+  plus 7 refreshed Mermaid test baselines), and a rebased typescript-go patch; the
+  `typescript-go` gitlink is unmoved, so
   no layout surprises are expected from it.
 - **Effect v4 remains prerelease:** rc signals phase, not freeze — the repo makes no
   no-more-breakage promise. Continue grepping fixtures for removed/renamed Schema APIs

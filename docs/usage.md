@@ -64,9 +64,9 @@ default) coverage, the 0.25–0.27 line adds seven diagnostics: `schemaLiteralNo
 `Replace with decodeSync`-style typed decoder rewrite; 0.31.0 also added an `Add yield* statement`
 quick fix for `floatingEffect` findings inside yieldable `Effect.gen` contexts. The 0.34–0.36.4
 line adds no new diagnostics or quick fixes (0.36.0 regenerated the shipped severity schema, so
-`preferTypedSchemaDecoder` now appears in it too). Effect v4 samples must install the explicit
-release candidate (`effect@rc`, currently `4.0.0-rc.108`) because the npm `effect` `latest` tag is
-still v3.
+`preferTypedSchemaDecoder` now appears in it too). Effect v4 samples must install the recorded
+smoke target `effect@4.0.0-rc.108` explicitly (the `rc` dist-tag currently resolves to it, but is
+a moving convenience alias) because the npm `effect` `latest` tag is still v3.
 
 For common language-service options, prefer the typed settings controls. They emit `effect.*`
 workspace configuration only when explicitly set, and they override duplicate raw JSON keys. Keep
@@ -115,7 +115,7 @@ for `@effect/tsgo@0.36.4`; fixture workspaces install the validated `typescript@
 (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`, confirmed identical to the tarball's
 `lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.0.0-rc.108` release
 (the `rc` dist-tag; note `@effect/tsgo@0.36.4`'s own upstream fixtures align to `4.0.0-beta.107`,
-so all four lanes passing against rc.108 also rules out rc-only drift).
+all four lanes passing against rc.108 did not expose any rc-only drift in the covered fixtures).
 
 Command (since 0.32.0 the packaged executables live under `artifacts/typescript/<version>/`; the
 `lib/tsc` compatibility copy of the `latest` build also works):
