@@ -808,8 +808,10 @@ async function main() {
   }
 
   // typescript@7.0.2 has gitHead 2bd066d87f5bafd315be9f40889d0a60b9e58e0b,
-  // matching the native backend used for the recorded @effect/tsgo@0.33.0 smoke.
-  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-beta.104"]
+  // matching the native backend used for the recorded @effect/tsgo@0.36.4 smoke.
+  // effect is pinned to the rc dist-tag release; note @effect/tsgo 0.36.4's own
+  // fixtures align to 4.0.0-beta.107, so rc-only regressions would be upstream drift.
+  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-rc.108"]
   const result = {}
 
   if (only === "all" || only === "healthy") {

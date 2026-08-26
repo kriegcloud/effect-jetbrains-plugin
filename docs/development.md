@@ -35,7 +35,7 @@ node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only diagno
 
 The verifier copies its fixtures to temporary directories and installs the validated
 `typescript@7.0.2` package (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) plus
-`effect@4.0.0-beta.104`. It does not install `@effect/language-service`: that string is the
+`effect@4.0.0-rc.108`. It does not install `@effect/language-service`: that string is the
 `compilerOptions.plugins[].name` consumed by the language service already compiled into
 `@effect/tsgo`.
 
