@@ -331,7 +331,7 @@ class EffectBinaryService {
      * Modern platform packages carry binaries for stable and nightly TypeScript together with
      * compatibility metadata: per-binary `<binary>.json` files up to `@effect/tsgo` 0.25.x, a
      * single `lib/upstream.json` profile manifest (`schemaVersion` 2) for 0.26.0–0.31.x, and a
-     * component manifest (`schemaVersion` 4) since 0.32.0 whose executables live under
+     * component manifests (`schemaVersion` 4 since 0.32.0; 5 since 0.37.0) whose executables live under
      * `artifacts/typescript/<version>/` (with `lib/tsc` kept as a compatibility copy of the
      * `latest` build). Select the binary built from the workspace's exact TypeScript git head;
      * older packages without metadata retain their dedicated `tsgo` executable.
@@ -402,7 +402,7 @@ class EffectBinaryService {
     }
 
     /**
-     * Candidate executables for a `schemaVersion` 4 component manifest: one per TypeScript
+     * Candidate executables for a component manifest (`schemaVersion` 4 or 5): one per TypeScript
      * component version at `artifacts/typescript/<version>/tsc`, falling back to the `lib/tsc`
      * compatibility copy for the `latest`-tagged version when its artifact is absent.
      */
@@ -445,9 +445,10 @@ class EffectBinaryService {
     /**
      * Since 0.26.0, platform packages replace the per-binary metadata files with a single
      * `lib/upstream.json` manifest. `schemaVersion` 2 (0.26.0–0.31.x) maps `binName` (`tsc`,
-     * `tsc-next`) to TypeScript profile metadata; `schemaVersion` 4 (0.32.0+) lists per-version
-     * TypeScript components whose executables live under `artifacts/typescript/<version>/`. Any
-     * other `schemaVersion` is parsed by the component shape, so a compatible future revision
+     * `tsc-next`) to TypeScript profile metadata; `schemaVersion` 4 (0.32.0–0.36.x) and 5 (0.37.0+)
+     * list per-version TypeScript components whose executables live under
+     * `artifacts/typescript/<version>/`. Any other `schemaVersion` is parsed by the component shape,
+     * so a compatible future revision
      * keeps full TypeScript matching; a manifest whose shape is unusable is reported as
      * [UpstreamManifest.Unsupported] instead of being silently ignored. Returns null only when
      * the manifest file is absent.
@@ -782,7 +783,7 @@ private data class PlatformPackage(
         get() = (packagedBinaryNames.flatMap { binaryName -> listOf(binaryName, "$binaryName.json") } + UPSTREAM_MANIFEST_FILE_NAME)
             .toSet()
 
-    /** Install-marker key for a `schemaVersion` 4 executable: `artifacts/typescript/<version>/tsc`. */
+    /** Install-marker key for a component-manifest executable: `artifacts/typescript/<version>/tsc`. */
     fun isArtifactTypeScriptKey(key: String): Boolean {
         val segments = key.split('/')
         return segments.size == 4 &&
@@ -799,7 +800,7 @@ private sealed interface UpstreamManifest {
     data class Profiles(val byBinName: Map<String, PackagedBinaryMetadata>) : UpstreamManifest
 
     /**
-     * `schemaVersion` 4 (0.32.0+, plus any future revision that keeps the component shape):
+     * `schemaVersion` 4 (0.32.0–0.36.x), 5 (0.37.0+), or a future compatible component shape:
      * per-version TypeScript components with executables under `artifacts/typescript/<version>/`,
      * ordered `latest` tag first, then `next`, then the rest.
      */

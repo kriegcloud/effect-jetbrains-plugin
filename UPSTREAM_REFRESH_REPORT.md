@@ -1,193 +1,150 @@
-# Upstream Refresh Report — 2026-08-13
+# Upstream Refresh Report — 2026-08-27
 
-Reference-clone refresh and plugin-impact analysis for the `effect-jetbrains-plugin` upstreams.
-Previous refresh: 2026-08-06 (shipped as the 0.1.4 release, PR #33).
-All clones live under git-ignored `.repos/` as plain clones with detached HEAD, per
-`docs/reference-sources.md`; none of their contents are committed.
+Branch: `refresh/tsgo-0.37.0-effect-rc112`
 
-## Summary of refresh (old → new SHAs, date)
+Plugin release build: `0.1.5`
 
-Refreshed on **2026-08-13** using the documented `checkout_reference` pattern (full fetch +
-detached checkout; no `git pull`).
+The run started from current `origin/main` at merge commit
+`a88a9ab03941b080b7761ba286c9e6de94f1261d`. A pre-existing uncommitted threading fix in
+`EffectTsconfigSyncService.kt` was preserved, reviewed, and carried as a distinct implementation
+change. The six ignored reference clones were clean before refresh and remain clean, detached, and
+exactly pinned after fetch/prune/tag synchronization.
 
-| Upstream | Local path | Old pin (2026-08-06) | New pin (2026-08-13) | Version movement |
-| --- | --- | --- | --- | --- |
-| Effect-TS/tsgo | `.repos/effect-tsgo-upstream` | `b415a1e9` | `ca311a5c` | `@effect/tsgo` **0.33.0 → 0.36.4** (22 commits; releases 0.34.0–0.36.4, all published by 2026-08-10; the pinned tip is 1 commit past the 0.36.4 tag at `ca859c50` and advances `typescript.next`/Oxlint upstream metadata plus a type-only-heritage execution-flow fix — `internal/typeparser/execution_flow.go`, 7 refreshed Mermaid test baselines, and a rebased typescript-go patch) |
-| Effect-TS/effect | `.repos/effect-v4` | `4c28b0fb5` | `7018f9668` | `effect` **4.0.0-beta.104 → 4.0.0-rc.108** (98 commits through beta.105/106/107 and the beta→rc transition; the rc.108 tag `bef7bf38` is 16 commits behind the pinned tip with an empty scoped diff) |
-| effect-ts/vscode-extension | `.repos/effect-vscode-extension` | `c49b1c29` (documented) | `64631d41` | **0.9.0 → 0.10.0, "sketch v4 support"** (2 commits, 2026-08-07 — the first movement since 2025-11-28; the clone was found already checked out at the new tip while the docs table still recorded the old pin, now reconciled) |
-| RATIU5/zed-effect-tsgo | `.repos/effect-zed-tsgo-extension` | `0c4f302c` | `0c4f302c` (re-verified) | unchanged |
-| Effect-TS/language-service | `.repos/effect-language-service` | `f26d5835` | `5e4d380b` | 0.87.1 → 0.87.2 (3 commits: dependency bumps to Effect beta.104 then beta.107 plus Version Packages; historical-comparison clone only, no plugin coupling) |
-| JetBrains/intellij-platform-plugin-template | `.repos/intellij-platform-plugin-template` | `7002f574` | `7002f574` (re-verified) | unchanged |
+## Reference inventory
 
-Unlike the two previous refreshes, this one required **zero production-code changes** — the delta
-landed entirely in tests, the verifier, and docs (see "Actions taken").
+| Reference | Previous pin | Current pin | Commits | Classification |
+| --- | --- | --- | ---: | --- |
+| Effect tsgo | `ca311a5c071e6a1c9f91f259c5373adc43dc6031` | `1ab43807aa20595e83df4a8c5a73b7e8ae7e2e3d` | 20 | Validation, regression test, and documentation |
+| Effect v4 | `7018f966847e7b8133e3243bd1bd42525bdc89f1` | `e72b12fc305710550bc6dcb978e92de8abff88cd` | 169 | Validation and documentation |
+| Effect VS Code extension | `64631d41a75770149361703581e923cf6971d5f4` | unchanged | 0 | Not applicable |
+| Zed Effect tsgo extension | `0c4f302c861359b4f9d23f58ac146101030c6229` | unchanged | 0 | Not applicable |
+| Effect language service | `5e4d380b6fcd20f048dd8d41515bcd9ea47ffda4` | unchanged | 0 | Not applicable |
+| IntelliJ Platform Plugin Template | `7002f57406739f166d0fcf97d23e699a2c4e17dc` | unchanged | 0 | Not applicable |
 
-## Per-upstream delta
+Refresh method: each clone fetched `origin` with prune and tags, then checked out the recorded
+`origin/main` commit detached. No clone used `git pull`; no dirty clone was reset.
 
-### Effect-TS/tsgo (`b415a1e9` → `ca311a5c`, 22 commits, npm 0.33.0 → 0.36.4)
+## Delta analysis and decisions
 
-- **Package layout and manifest: unchanged.** `schemaVersion` stays 4 with the same
-  `tags`/`components`/runtime-compat-`profiles` shape and the same three components
-  (`typescript`, `oxlint-tsgolint`, `oxlint`); `lib/getExePath.js` and the package assembler
-  (`_tools/repoctl/src/packages.ts`) diff empty across the range. Verified live against the
-  published linux-x64 0.36.4 tarball: `artifacts/typescript/<version>/tsc` for both builds,
-  `lib/tsc` byte-identical (size and SHA-256) to the `latest` artifact, no `lib/tsc-next`, all
-  executables 0755, platform-package top-level layout identical to 0.33.0. The plugin's
-  schemaVersion-4 managed resolution needs no adaptation; the only structural addition in the
-  range is an LSP-irrelevant `oxlint-presets/` directory of Oxlint config presets shipped in the
-  **base** `@effect/tsgo` package since 0.36.0 (the platform packages are unaffected).
-- **Diagnostics: none added, removed, or renamed** (`internal/rules/rules.go` and the fixable
-  implementations diff empty across the range). The 0.1.4 follow-up about `schema.json`
-  regeneration drift is **resolved upstream**: 0.36.0 (`8423f68`) regenerated the severity schema
-  to 95 entries, adding the missing `preferTypedSchemaDecoder`. The plugin's `RULE_NAMES` already
-  matches the regenerated schema exactly (95/95), so directive completion needs no change.
-- **Behavioral movement in range:** 0.35.0 fixes a `preferTypedSchemaDecoder` panic on
-  transformed inputs and a tagged-template TS2731 false positive, and persists Effect options in
-  build info for correct incremental invalidation; 0.36.2 is diagnostic-performance-only
-  (changelog states emitted diagnostics are unchanged); 0.36.3 hashes patched binaries so package
-  upgrades refresh stale ones and aligns upstream fixtures to `effect@4.0.0-beta.107`; 0.36.4
-  stops ignored Effect diagnostics from blocking declaration emit under `noEmitOnError`.
-- **TypeScript pairing:** at 0.36.4 `typescript.latest` is still `7.0.2`, gitHead
-  `2bd066d87f5bafd315be9f40889d0a60b9e58e0b` — exactly the real-binary verifier's pin.
-  `typescript.next` is `7.1.0-dev.20260808.1` (gitHead `24fabe95`); the pinned tip commit
-  (`ca311a5`, "chore: update upstreams") already advances `next` metadata to
-  `7.1.0-dev.20260811.1` and Oxlint to 1.78.0 without moving the `typescript-go` gitlink.
-- **Still no `workspace/executeCommand`** at the new pin: `ExecuteCommand` appears only in the
-  `shim/lsp` protocol shims, `_effectGetLayerMermaid` appears nowhere, and `internal/layergraph/`
-  plus the hover patch are untouched across the range. Confirmed live (`executeCommands: []` in
-  the 2026-08-13 verifier run). Hover Mermaid links remain the only layer-graph delivery.
-- **Effect alignment:** only `9190801` (0.36.3) adapts to a newer Effect (beta.107 dependencies
-  and fixtures); no completion, rename, or blocked-module logic changed, and no rc.108 reference
-  exists at the tip.
+### Effect tsgo
 
-### Effect-TS/effect — v4 runtime (`4c28b0fb5` → `7018f9668`, 98 commits, beta.104 → rc.108)
+The published kickoff target is `@effect/tsgo@0.37.0`, tag commit
+`2317cf4087dacdd3ea0c022856c19c70bf69858f`, with the recorded source pin seven commits ahead.
 
-- **Dev Tools wire format: untouched outright.** Zero commits in the range touch
-  `packages/effect/src/unstable/devtools/` or `packages/effect/src/unstable/observability/`
-  (scoped `rev-list --count` is 0 for both; scoped `diff --stat` empty). No decoder change;
-  protocol regression smoke suffices.
-- **The beta → rc transition is procedural, not a freeze:** the rc.108 release flips the
-  Changesets prerelease tag from `"beta"` to `"rc"` and the README now recommends
-  `npm install effect@rc`. npm dist-tags after the release: `latest` = 3.22.1 (v3),
-  `beta` = 4.0.0-beta.107, `rc` = 4.0.0-rc.108, no `next` tag, nothing published after rc.108.
-  No API-freeze promise appears anywhere in the range — v4 remains prerelease.
-- **Fixture-relevant breakage in range:** beta.105 restructures Schema parser error exposure
-  (structured issues as `cause`, generic "Schema validation failed" messages); beta.106
-  consolidates arbitrary derivation into `Schema.toArbitrary` (removing `toArbitraryLazy`);
-  rc.108 removes the standalone `SchemaError` module (now `Schema.SchemaError` /
-  `Schema.isSchemaError`). A repo-wide grep confirmed **none of the plugin's fixtures, test data,
-  or scripts reference any of these** — no fixture changes were needed.
-- **Tracer-adjacent semantics (outside the scoped dirs):** since beta.106, spans created with
-  tracer timing disabled keep zero end times; log annotations can no longer overwrite active
-  `spanId`/`traceId` correlation attributes. Duration rendering should tolerate zero end times;
-  no wire-shape impact.
-- The 16 commits between the rc.108 tag and the pinned tip are docs/tests/cluster/HTTP work with
-  an empty scoped diff for both protected directories.
+- **Validate and test:** the platform manifest advances from schema 4 to schema 5. TypeScript
+  components add `provider` (`typescript-go` for stable and `typescript` for next). The plugin's
+  shape-based component parser correctly ignores that extra metadata while retaining exact
+  TypeScript `gitHead` selection, so no production resolver branch is required. The synthetic
+  schema-5 regression now models both real provider values.
+- **Validate package layout:** the linux-x64 tarball still ships stable TypeScript `7.0.2` at
+  `artifacts/typescript/7.0.2/tsc`, plus a byte-identical `lib/tsc`. Both are executable mode 0755,
+  size 30,265,506, and SHA-256
+  `881b1b0c1e5d5dbd2cb20c3760373053dbba3d7ffc70fbbebd53ef18ef000382`.
+- **Document:** 0.37.0 supports the migrated TypeScript compiler provider, hardens Nix setup, and
+  suppresses unsafe pipe-chain rewrites when overload arity differs.
+- **Defer until published:** `allOfMapToForEach`, `mapSomeToAsSome`, `catchDieToOrDie`, and
+  `catchConditionalRefailToCatchIf` exist only in the seven post-tag commits. They are not asserted
+  against the 0.37.0 binary.
+- **No change:** the pin still has no `_effectGetLayerMermaid` command or layer-graph
+  `workspace/executeCommand`; hover Mermaid decoding remains the supported path.
+- **Out of scope:** Oxlint and tsgolint remain package artifacts only. The IDE does not assume
+  ownership of their configuration or process lifecycle.
 
-### effect-ts/vscode-extension (`c49b1c29` → `64631d41`, 2 commits, 0.9.0 → 0.10.0)
+### Effect v4
 
-- **"sketch v4 support" (`19e2b1a`) is a parity signal, not a wire-schema migration.** It adds
-  v4 runtime coverage to the **debugger-injected instrumentation only**: runtime shape detection
-  plus hard-coded private v4 keys (`~effect/Fiber/currentFiber`, `~effect/Context`,
-  `~effect/Exit`, `~effect/observability/Metric/MetricRegistryKey`), with v3 support retained via
-  renamed shims. No Effect v4 dependency is pinned; the extension still builds against v3.17.3.
-- The network Dev Tools server, WebSocket transport (port 34437), message shapes, and views are
-  all untouched — v4 data is translated into the existing v3-era domain shapes (Summary metrics
-  even fabricate `error: 0` to fit). **No JetBrains decoder change or new capability port is
-  indicated.** The parts to watch are the private `~effect/*` keys and v4 metric-registry layout,
-  which are the fragile edges of the sketch.
+The verifier target advances from `effect@4.0.0-rc.108` to exact release `4.0.0-rc.112`; the source
+pin is 31 commits past that tag.
 
-### Unchanged upstreams
+- No rc.108-to-rc.112 file under `packages/effect/src/unstable/devtools/` changed.
+- The only release-scoped observability change is shared OTLP tracer hexadecimal ID generation.
+- Across the old-to-new main pins, one additional observability change standardizes OTLP Config
+  constructor naming.
+- Neither change alters the DevTools JSON wire shapes decoded by the plugin. Debugger, metrics, and
+  tracer source changes are therefore not justified; the real-binary smoke is the required proof.
 
-`RATIU5/zed-effect-tsgo` and `JetBrains/intellij-platform-plugin-template` had zero new commits;
-pins re-verified in place after a fresh fetch. `Effect-TS/language-service` moved by three
-dependency-bump commits (recorded for provenance; historical-comparison clone only).
+### Unchanged references
 
-### Platform
+The four unchanged repositories provide no new implementation signal. There is no new VS Code
+debugger hardening to port, no Zed launcher delta, no legacy language-service diagnostic delta, and
+no IntelliJ template build or publication delta.
 
-No platform movement checked into this refresh; `platformVersion` stays at the WebStorm 2026.2.0.1
-stable build `262.8665.341` pinned on 2026-08-03.
+## Implemented change set
 
-## Actions taken (this branch)
+1. Updated component-manifest documentation and tests for the real schema-5 provider shape; kept
+   production parsing fail-closed and exact-head based.
+2. Updated verifier dependencies and provenance to `@effect/tsgo@0.37.0`, TypeScript `7.0.2`, and
+   Effect `4.0.0-rc.112`.
+3. Preserved the existing tsconfig synchronization fix: PSI/VFS/document reads execute inside a read
+   action, while document commit and mutation execute inside the write command.
+4. Bumped the test build to plugin version `0.1.5` and added matching changelog notes.
+5. Added project skill `.agents/skills/effect-upstream-refresh/SKILL.md`, exposed through project
+   `.claude/skills/` and `.codex/skills/` symlinks. New sessions can invoke
+   `/effect-upstream-refresh` in Claude Code or `$effect-upstream-refresh` in Codex.
+6. Updated `docs/reference-sources.md`, `docs/usage.md`, and `docs/development.md`. The parity matrix
+   remains intentionally unchanged until the user completes manual IDE smoke.
 
-1. **Tests:** `CURRENT_TSGO_VERSION` bumped 0.33.0 → 0.36.4 in `EffectBinaryServiceTest.kt` (the
-   constant is test-only; production managed resolution reads npm dist-tags dynamically and was
-   verified compatible with the 0.36.4 tarballs without change). The synthetic component-manifest
-   fixtures model the manifest shape with placeholder versions and remain representative — the
-   real 0.36.4 manifest differs from 0.33.0 only in `typescript.next` version/gitHead values.
-   Full Gradle test suite green on 2026-08-13 (`./gradlew test`, BUILD SUCCESSFUL).
-2. **Real-binary verifier:** workspace dependency moved `effect@4.0.0-beta.104` →
-   `effect@4.0.0-rc.108` (with a comment noting tsgo 0.36.4's own fixtures align to beta.107, so
-   rc-only regressions would be upstream drift). Run live on 2026-08-13 against the published
-   linux-x64 0.36.4 `artifacts/typescript/7.0.2/tsc`: **all four fixture lanes pass** — healthy
-   (hover Mermaid link, 44 completion items, document/workspace symbols, `executeCommands: []`),
-   failing, new-diagnostics (including `Replace with decodeSync` and `Add yield* statement`), and
-   diagnostic-directives (suppress + re-enable). No assertion changes were needed: no new
-   diagnostics or quick-fix titles exist in the range.
-3. **No production Kotlin changes:** manifest parsing, artifact selection, health checks,
-   `RULE_NAMES`, the Mermaid decoder, and the Dev Tools protocol decoder are all verified no-ops
-   for this range.
-4. **Docs:** `docs/reference-sources.md` (four pin updates including the reconciled
-   vscode-extension row, new checked date, canary notes rewritten for 0.34.0–0.36.4 and
-   beta.104→rc.108), `docs/usage.md` (smoke targets, `effect@rc` guidance, recorded 2026-08-13
-   smoke), `docs/development.md` (verifier dependency line). `docs/getting-started.md` and
-   `docs/troubleshooting.md` were revalidated and left unchanged — their layout wording is
-   version-agnostic and still accurate at 0.36.4.
+## Verification evidence
 
-## Remaining follow-ups
+### Focused tests
 
-- **IDE smoke session** (user-driven, per repo policy): managed LATEST end-to-end now serves
-  0.36.4 (fresh cache and upgrade-over-0.33 cache), Dev Tools tracer smoke against
-  `effect@4.0.0-rc.108` (zero-end-time spans with timing disabled should render sanely),
-  layer-graph hover decode. `docs/parity-matrix.md` is intentionally untouched until that
-  evidence exists — it is now two refreshes stale (baseline still 0.19.0/beta.97) and should be
-  rewritten during that pass.
-- **Release decision:** this branch leaves `pluginVersion` at 0.1.4 and adds no CHANGELOG entry —
-  the first refresh with a zero production-code delta. Cut 0.1.5 (version bump + CHANGELOG + CI
-  release draft, no Marketplace publish per issues #24/#25) if the evidence alignment should
-  ship, or fold into the next code-bearing release.
-- Dropped from the 0.1.4 follow-ups: filing the `schema.json` regeneration drift upstream —
-  0.36.0 regenerated the schema and resolved it.
+```bash
+./gradlew test \
+  --tests 'dev.effect.intellij.binary.EffectBinaryServiceTest' \
+  --tests 'dev.effect.intellij.settings.EffectSettingsValidationTest.testSettingsSyncValidatesAndUsesUnappliedFormSnapshot' \
+  --no-daemon --stacktrace
+```
 
-## Risks / testing notes
+Result: **passed**.
 
-- **Watch item (new): tsgo↔effect-rc alignment.** tsgo 0.36.4 predates rc.108 (its fixtures stop
-  at beta.107). The 2026-08-13 verifier proved all four lanes pass against rc.108 anyway; when
-  tsgo cuts an rc-aligned release, re-verify Schema-related diagnostics/completions in particular.
-- **Watch item (unchanged):** if npm `typescript@latest` moves past 7.0.2 before the next
-  `@effect/tsgo` release, the workspace-gitHead match still handles it, but the verifier pin and
-  recorded smoke need coordinated bumps. `typescript.next` metadata is churning every 1–3 days;
-  it only matters if `next`-workspace users appear.
-- **Pinned-tip risk:** the tsgo pin is 1 commit past the 0.36.4 tag and changes only upstream
-  version metadata, a type-only-heritage execution-flow fix (`internal/typeparser/execution_flow.go`
-  plus 7 refreshed Mermaid test baselines), and a rebased typescript-go patch; the
-  `typescript-go` gitlink is unmoved, so
-  no layout surprises are expected from it.
-- **Effect v4 remains prerelease:** rc signals phase, not freeze — the repo makes no
-  no-more-breakage promise. Continue grepping fixtures for removed/renamed Schema APIs
-  (`SchemaError`, `toArbitraryLazy`, formatted-error-message assertions) before each dependency
-  advance.
-- **vscode-extension v4 sketch:** tracks v4 through private `~effect/*` runtime keys with no v4
-  dependency pin — treat as a direction signal for debugger-side parity, not a port target, and
-  expect those keys to churn.
-- **Repo-move hygiene for future refreshes** still applies: never run unscoped log/diff across
-  the effect-v4 transplant range; always path-scope.
+### Published native binary
 
-## Explicit list of files that were updated
+```bash
+node scripts/verify-real-tsgo-lsp.mjs \
+  --binary /tmp/.../package/artifacts/typescript/7.0.2/tsc
+```
 
-- `src/test/kotlin/dev/effect/intellij/binary/EffectBinaryServiceTest.kt` —
-  `CURRENT_TSGO_VERSION` 0.33.0 → 0.36.4.
-- `scripts/verify-real-tsgo-lsp.mjs` — workspace dependency `effect@4.0.0-rc.108`, smoke-target
-  comment.
-- `docs/reference-sources.md` — pins (tsgo, effect, vscode-extension, language-service), checked
-  date, canary notes.
-- `docs/usage.md` — smoke targets, `effect@rc` install guidance, recorded 2026-08-13 real-binary
-  smoke.
-- `docs/development.md` — verifier dependency line.
-- `UPSTREAM_REFRESH_REPORT.md` — replaced with this report.
+Result: **all four lanes passed** against `@effect/tsgo@0.37.0`, `typescript@7.0.2`, and
+`effect@4.0.0-rc.112`.
 
-No production source changed. `docs/getting-started.md`, `docs/troubleshooting.md`,
-`gradle.properties`, and `CHANGELOG.md` are intentionally untouched (the latter two pending the
-release decision). `.repos/` contents changed on disk (four clones advanced, two re-verified) but
-remain git-ignored and uncommitted. `docs/parity-matrix.md` intentionally untouched pending IDE
-smoke evidence.
+- Healthy workspace: Mermaid hover link present, 44 completion items, expected document/workspace
+  symbols, and no advertised execute commands.
+- Failing workspace: `missingStarInYieldEffectGen` plus `Replace yield with yield*`.
+- Diagnostic workspace: all recorded diagnostics and quick fixes, including typed Schema decode and
+  floating-Effect `yield*` coverage.
+- Directive workspace: next-line and region suppression/re-enable behavior passed.
+
+### Release command
+
+```bash
+./gradlew clean check buildPlugin verifyPlugin qodanaScan --no-daemon --stacktrace
+```
+
+Result: **passed** in 3m24s.
+
+- Qodana: **0 problems detected**.
+- Plugin Verifier: **Compatible** with WebStorm `WS-262.8665.341` and IntelliJ IDEA Ultimate
+  `IU-262.9437.22`.
+- Informational verifier output: 35 known deprecated JetBrains LSP API usages on each target; zero
+  compatibility errors.
+- `timeout --signal=INT --kill-after=10s 90s ./gradlew runIde --no-daemon --stacktrace`: sandbox IDE
+  launched and exited successfully in 18 seconds.
+
+### Distribution and local install
+
+- ZIP: `build/distributions/effect-jetbrains-plugin-0.1.5.zip`
+- Size: 5,213,153 bytes
+- SHA-256: `fb6af01e97a3c2b2e8136f43a5f47af948afad6c2cfb8d9d2affc8c24373110b`
+- ZIP integrity: no compressed-data errors
+- Install: completed while WebStorm was closed at
+  `~/.local/share/JetBrains/WebStorm2026.2/effect-jetbrains-plugin`
+- Installed descriptor: `dev.effect.jetbrains`, `Effect TSGO`, version `0.1.5`, build range
+  `262`–`262.*`
+
+## Manual evidence still owed
+
+After starting WebStorm, confirm the plugin is enabled and exercise managed `LATEST` resolution,
+LSP startup, diagnostics/quick fixes, the Effect DevTools tracer against rc.112, and hover Layer
+Mermaid preview. Do not update `docs/parity-matrix.md` until that user-run evidence exists.
+
+No Marketplace publish, GitHub release, PR merge, or user IDE termination is authorized by this
+refresh.

@@ -26,7 +26,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-private const val CURRENT_TSGO_VERSION = "0.36.4"
+private const val CURRENT_TSGO_VERSION = "0.37.0"
 private const val STABLE_TYPESCRIPT_HEAD = "stable-typescript-head"
 private const val NEXT_TYPESCRIPT_HEAD = "next-typescript-head"
 
@@ -311,13 +311,14 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         }
     }
 
-    fun testLatestModeParsesFutureSchemaVersionWithComponentShape() {
+    fun testLatestModeParsesSchemaFiveComponentProviderShape() {
         val metadataRequests = AtomicInteger(0)
         val tarballRequests = AtomicInteger(0)
         writeWorkspacePackage("typescript", "7.1.0-dev.20260710.1", NEXT_TYPESCRIPT_HEAD)
         registerComponentsLatestEndpoints(
             CURRENT_TSGO_VERSION,
             schemaVersion = 5,
+            includeProviders = true,
             metadataRequests = metadataRequests,
             tarballRequests = tarballRequests,
         )
@@ -728,6 +729,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         includeLatestArtifact: Boolean = true,
         includeNextArtifact: Boolean = true,
         schemaVersion: Int = 4,
+        includeProviders: Boolean = false,
         metadataRequests: AtomicInteger? = null,
         tarballRequests: AtomicInteger? = null,
     ) {
@@ -736,7 +738,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         }
         registerPackageEndpoint(
             version,
-            { path -> writeComponentsTarball(path, includeLatestArtifact, includeNextArtifact, schemaVersion) },
+            { path -> writeComponentsTarball(path, includeLatestArtifact, includeNextArtifact, schemaVersion, includeProviders) },
             metadataRequests,
             tarballRequests,
         )
@@ -829,7 +831,10 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         includeLatestArtifact: Boolean,
         includeNextArtifact: Boolean = true,
         schemaVersion: Int = 4,
+        includeProviders: Boolean = false,
     ) {
+        val latestProvider = if (includeProviders) ",\"provider\":\"typescript-go\"" else ""
+        val nextProvider = if (includeProviders) ",\"provider\":\"typescript\"" else ""
         val entries = mutableMapOf(
             "package/lib/upstream.json" to
                 """
@@ -837,8 +842,8 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
                  "tags":{"typescript":{"latest":"7.0.0","next":"7.1.0-dev.20260710.1"},"oxlint":{"latest":"1.77.0"}},
                  "components":{
                    "typescript":{
-                     "7.0.0":{"gitHead":"$STABLE_TYPESCRIPT_HEAD"},
-                     "7.1.0-dev.20260710.1":{"gitHead":"$NEXT_TYPESCRIPT_HEAD"}
+                     "7.0.0":{"gitHead":"$STABLE_TYPESCRIPT_HEAD"$latestProvider},
+                     "7.1.0-dev.20260710.1":{"gitHead":"$NEXT_TYPESCRIPT_HEAD"$nextProvider}
                    },
                    "oxlint":{"1.77.0":{"gitHead":"oxlint-head"}}
                  },
