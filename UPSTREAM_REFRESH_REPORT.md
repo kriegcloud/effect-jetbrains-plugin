@@ -119,7 +119,7 @@ Result: **all four lanes passed** against `@effect/tsgo@0.37.0`, `typescript@7.0
 ./gradlew clean check buildPlugin verifyPlugin qodanaScan --no-daemon --stacktrace
 ```
 
-Result: **passed** in 3m24s.
+Result: **passed** on the post-review code head in 2m45s.
 
 - Qodana: **0 problems detected**.
 - Plugin Verifier: **Compatible** with WebStorm `WS-262.8665.341` and IntelliJ IDEA Ultimate
@@ -132,13 +132,15 @@ Result: **passed** in 3m24s.
 ### Distribution and local install
 
 - ZIP: `build/distributions/effect-jetbrains-plugin-0.1.5.zip`
-- Size: 5,213,153 bytes
-- SHA-256: `fb6af01e97a3c2b2e8136f43a5f47af948afad6c2cfb8d9d2affc8c24373110b`
+- Size: 5,214,962 bytes
+- SHA-256: `84b317e4c8ba3b73cbb3e9c0f7d18d0b51d4420a662ee69490b3f1ac7b3e6151`
 - ZIP integrity: no compressed-data errors
-- Install: completed while WebStorm was closed at
-  `~/.local/share/JetBrains/WebStorm2026.2/effect-jetbrains-plugin`
-- Installed descriptor: `dev.effect.jetbrains`, `Effect TSGO`, version `0.1.5`, build range
-  `262`–`262.*`
+- Install: the pre-review 0.1.5 build was installed while WebStorm was closed at
+  `~/.local/share/JetBrains/WebStorm2026.2/effect-jetbrains-plugin`. The post-review ZIP above was
+  **not** installed because WebStorm had since been started; the installer failed closed and no IDE
+  process was terminated.
+- Installed pre-review descriptor: `dev.effect.jetbrains`, `Effect TSGO`, version `0.1.5`, build
+  range `262`–`262.*`
 
 ## Manual evidence still owed
 
