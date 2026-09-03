@@ -2,7 +2,7 @@
 
 <!-- Plugin description -->
 JetBrains plugin for `@effect/tsgo` language-server support and Effect runtime Dev Tools.
-It targets the WebStorm `2026.2` EAP platform line, launches `@effect/tsgo` directly with `--lsp --stdio`,
+It targets the WebStorm `2026.2` stable and `2026.3` EAP platform lines, launches `@effect/tsgo` directly with `--lsp --stdio`,
 and ships core LSP integration plus local runtime Dev Tools. First-run binary setup is manual by default;
 managed npm downloads are available when explicitly configured. Debugger surfaces include attach/setup
 guidance, best-effort snapshot trees for paused instrumented sessions, and opt-in Node.js instrumentation
@@ -39,8 +39,9 @@ The current plugin baseline is:
 
 | IDE | Status | Notes |
 | --- | --- | --- |
-| WebStorm `2026.2` EAP | Primary target | `runIde` and verifier coverage target the pinned `262.6653.15` EAP build. |
-| IntelliJ IDEA Ultimate `2026.2` EAP | Secondary target | Verifier coverage uses the latest available `262.*` IDEA EAP build. |
+| WebStorm `2026.2` (stable) | Primary target | The compile target is the pinned `262.10315.144` stable build; `runIde` and verifier coverage run against it. |
+| WebStorm `2026.3` EAP | Primary target | Verifier coverage and the `runIdeVerifierWebStorm` sandbox use the pinned `263.3889.67` EAP build. |
+| IntelliJ IDEA Ultimate `2026.3` EAP | Secondary target | Verifier coverage uses the latest available `263.*` IDEA EAP build. |
 | Unified PyCharm `2025.1+` | Later target | Not a current compatibility promise. |
 | IntelliJ IDEA Community Edition | Unsupported | JetBrains public LSP support is out of scope here. |
 | Android Studio | Unsupported | Not a supported target for this plugin. |
@@ -53,17 +54,19 @@ The current plugin baseline is:
    ./gradlew build
    ```
 
-   The Gradle build uses a Java 25 toolchain for the 2026.2 EAP classfile level.
+   The Gradle build uses a Java 25 toolchain for the 2026.2 platform classfile level.
 
 2. Install the plugin from disk in a supported JetBrains IDE using the artifact in
    `build/distributions/`. For local WebStorm smoke testing, close WebStorm and run:
 
    ```bash
-   scripts/install-local-webstorm-plugin.sh --product WebStorm2026.2
+   scripts/install-local-webstorm-plugin.sh --product WebStorm2026.3
    ```
 
    The helper installs the latest built ZIP into the local JetBrains plugin directory, removes stale
-   cached ZIPs, and clears a local Settings Sync disabled marker for `dev.effect.jetbrains`.
+   cached ZIPs, and clears a local Settings Sync disabled marker for `dev.effect.jetbrains`. Without
+   `--product` it targets the config directory named by the JetBrains Toolbox WebStorm install
+   (`product-info.json` → `dataDirectoryName`), falling back to `WebStorm2026.2`.
 3. Restart the IDE when prompted so the LSP and tool-window extension points are registered at
    startup.
 4. Open `Settings | Tools | Effect` and provide an executable native `tsgo` path in `MANUAL` mode.
@@ -96,10 +99,12 @@ The repository currently uses these primary validation commands:
 ./gradlew build
 ./gradlew check
 timeout 90s ./gradlew runIde
+timeout 90s ./gradlew runIdeVerifierWebStorm
 ./gradlew verifyPlugin
 ```
 
-The shipped artifact is intended for the WebStorm/IntelliJ Platform `262.*` build line. Recorded
+The shipped artifact is intended for the WebStorm/IntelliJ Platform `262.*` and `263.*` build lines
+(`sinceBuild` `262`, `untilBuild` `263.*`). Recorded
 real-binary LSP smoke exists for the checked-in fixtures; full manual IDE/editor smoke and broader
 semantic coverage remain follow-up validation items.
 

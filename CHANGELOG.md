@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.6]
+
+- Extended plugin compatibility to the WebStorm/IntelliJ Platform `263.*` line (`pluginUntilBuild` `263.*`, `pluginSinceBuild` still `262`), so the plugin loads on WebStorm 2026.3 EAP (`WS-263.3889.67`) instead of being rejected as requiring build `262.*` or older.
+- Moved the compile target to the WebStorm 2026.2.2 stable build (`262.10315.144`) and the verification matrix to WebStorm 2026.2.2, WebStorm 2026.3 EAP (`263.3889.67`), and IntelliJ IDEA Ultimate 2026.3 EAP (`263.3889.65`). Added a `runIdeVerifierWebStorm` sandbox task that boots the plugin on the 263 EAP build without changing the stable compile target.
+- `scripts/install-local-webstorm-plugin.sh` now defaults its product config directory to the JetBrains Toolbox WebStorm install's `dataDirectoryName` (for example `WebStorm2026.3`), falling back to `WebStorm2026.2`, so a Toolbox IDE upgrade no longer installs into a stale directory.
+
+## [0.1.5]
+
+- Validated managed binary resolution against the published `@effect/tsgo@0.37.0` schema-5 component manifest. TypeScript `provider` metadata is accepted without weakening exact `gitHead` matching, and regression coverage now models the real stable and migrated-next provider values.
+- Updated the real-binary LSP smoke target to `@effect/tsgo@0.37.0`, `typescript@7.0.2`, and `effect@4.0.0-rc.112`, with all four fixture lanes covering diagnostics, code actions, directives, completions, symbols, hovers, and layer-graph capability behavior.
+- Kept tsconfig synchronization's PSI, VFS, and document reads inside a read action and moved document commit into the write command, preventing Settings-page synchronization from performing read-sensitive JetBrains operations on an unsafe thread.
+- Refreshed all six upstream reference pins and added a project-scoped `effect-upstream-refresh` skill for repeating the evidence, build, local-install, and mergeable-PR workflow from Claude Code or Codex.
+
 ## [0.1.4]
 
 - Restored managed binary support for `@effect/tsgo` 0.32.0+ (npm `latest` is 0.33.0), whose platform packages replace the `schemaVersion` 2 profile manifest with a `schemaVersion` 4 component manifest and move the TypeScript executables to per-version `artifacts/typescript/<version>/tsc` directories (keeping `lib/tsc` as a compatibility copy of the `latest` build and dropping `lib/tsc-next` entirely). Managed resolution now parses both manifest generations, selects the artifact whose TypeScript `gitHead` matches the workspace (with `lib/tsc` standing in only for the `latest`-tagged component), and records the new layout in the install marker, fixing a reinstall loop the old health check caused on 0.32+ packages. Future manifest revisions that keep the component shape are parsed by shape and retain full TypeScript matching; a manifest the plugin cannot interpret fails closed with an actionable error — without re-downloading the intact package on every resolve.

@@ -4,9 +4,11 @@ import com.intellij.json.psi.JsonFile
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
+import com.intellij.openapi.util.Computable
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiManager
@@ -24,9 +26,22 @@ class EffectTsconfigSyncService(private val project: Project) {
 
     /** Settings-page entry point: sync an explicit, possibly not-yet-applied form snapshot. */
     fun sync(settings: EffectProjectSettings) {
-        val notifications = ApplicationManager.getApplication().getService(EffectNotificationService::class.java)
-        val tsconfig = locateTsconfig()
-        if (tsconfig == null || !tsconfig.isValid) {
+        val application = ApplicationManager.getApplication()
+        val notifications = application.getService(EffectNotificationService::class.java)
+        val documentManager = FileDocumentManager.getInstance()
+        val tsconfigRead = application.runReadAction(Computable {
+            val tsconfig = locateTsconfig()
+            if (tsconfig == null || !tsconfig.isValid) {
+                return@Computable TsconfigReadResult()
+            }
+            TsconfigReadResult(
+                path = tsconfig.path,
+                document = documentManager.getDocument(tsconfig),
+                psiFile = PsiManager.getInstance(project).findFile(tsconfig) as? JsonFile,
+            )
+        })
+        val tsconfigPath = tsconfigRead.path
+        if (tsconfigPath == null) {
             notifications.warning(
                 project,
                 "Effect: tsconfig.json not found",
@@ -35,17 +50,16 @@ class EffectTsconfigSyncService(private val project: Project) {
             return
         }
 
-        val documentManager = FileDocumentManager.getInstance()
-        val document = documentManager.getDocument(tsconfig)
-        val psiFile = PsiManager.getInstance(project).findFile(tsconfig) as? JsonFile
+        val document = tsconfigRead.document
+        val psiFile = tsconfigRead.psiFile
         if (document == null || psiFile == null) {
-            notifications.warning(project, "Effect: could not read tsconfig.json", "Failed to open ${tsconfig.path} as JSON.")
+            notifications.warning(project, "Effect: could not read tsconfig.json", "Failed to open $tsconfigPath as JSON.")
             return
         }
 
-        PsiDocumentManager.getInstance(project).commitDocument(document)
         var result: EffectTsconfigSync.SyncResult? = null
         WriteCommandAction.runWriteCommandAction(project, "Sync Effect Options To tsconfig.json", null, Runnable {
+            PsiDocumentManager.getInstance(project).commitDocument(document)
             result = EffectTsconfigSync.apply(psiFile, settings)
             if (result?.changed == true) {
                 PsiDocumentManager.getInstance(project).doPostponedOperationsAndUnblockDocument(document)
@@ -88,3 +102,9 @@ class EffectTsconfigSyncService(private val project: Project) {
             project.getService(EffectTsconfigSyncService::class.java)
     }
 }
+
+private data class TsconfigReadResult(
+    val path: String? = null,
+    val document: Document? = null,
+    val psiFile: JsonFile? = null,
+)

@@ -32,8 +32,8 @@ TypeScript and JavaScript files.
 | Code actions | Implemented | Uses standard LSP code-action flows |
 | Completion | Implemented | Uses standard LSP completion |
 | Hover | Implemented | Uses standard LSP hover / quick documentation |
-| Inlay hints | Implemented | Available on the locked `2026.2` EAP baseline |
-| Document and workspace symbols | Implemented | Expected on the `2026.2` EAP baseline |
+| Inlay hints | Implemented | Available on the `262.*`/`263.*` platform baseline |
+| Document and workspace symbols | Implemented | Expected on the `262.*`/`263.*` platform baseline |
 | Hover-based layer graph links | Implemented | This is the supported layer-graph path today |
 | Local Mermaid graph action | Experimental | Editor/Tools action opens Mermaid source when the LSP advertises the Effect execute-command bridge |
 
@@ -48,9 +48,9 @@ for diagnostics that the source has explicitly disabled.
 
 ### Current TSGO Smoke Targets
 
-The current recorded real-binary smoke target is `@effect/tsgo@0.36.4` with
+The current recorded real-binary smoke target is `@effect/tsgo@0.37.0` with
 `typescript@7.0.2` (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) and
-`effect@4.0.0-rc.108`. In addition to the existing
+`effect@4.0.0-rc.112`. In addition to the existing
 `catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, `newSchemaClass`, `catchToIgnore`
 (published as of 0.16.0), fixable `flatMapToMap` (as of 0.19.0), `missingPipeableSignature`
 (0.21.0, off by default), `schemaOpaqueInstanceMember` (0.22.0, **error by default**, Effect v4
@@ -62,11 +62,12 @@ default) coverage, the 0.25–0.27 line adds seven diagnostics: `schemaLiteralNo
 `newSchemaClass` remains off by default. The 0.28–0.33 line adds one more: the fixable
 `preferTypedSchemaDecoder` (0.33.0, suggestion by default, Effect v4 only), which offers a
 `Replace with decodeSync`-style typed decoder rewrite; 0.31.0 also added an `Add yield* statement`
-quick fix for `floatingEffect` findings inside yieldable `Effect.gen` contexts. The 0.34–0.36.4
+quick fix for `floatingEffect` findings inside yieldable `Effect.gen` contexts. The published 0.34–0.37.0
 line adds no new diagnostics or quick fixes (0.36.0 regenerated the shipped severity schema, so
-`preferTypedSchemaDecoder` now appears in it too). Effect v4 samples must install the recorded
-smoke target `effect@4.0.0-rc.108` explicitly (the `rc` dist-tag currently resolves to it, but is
-a moving convenience alias) because the npm `effect` `latest` tag is still v3.
+`preferTypedSchemaDecoder` now appears in it too). Four diagnostics at the recorded tsgo source pin
+are newer than the 0.37.0 tag and are intentionally excluded from published-binary claims. Effect v4
+samples must install the exact `effect@4.0.0-rc.112` smoke target because the `rc` dist-tag is a
+moving convenience alias and npm `effect` `latest` remains v3.
 
 For common language-service options, prefer the typed settings controls. They emit `effect.*`
 workspace configuration only when explicitly set, and they override duplicate raw JSON keys. Keep
@@ -110,12 +111,11 @@ Equivalent raw JSON example:
 
 ### Recorded Real-Binary Smoke
 
-On August 13, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
-for `@effect/tsgo@0.36.4`; fixture workspaces install the validated `typescript@7.0.2` package
+On August 27, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
+for `@effect/tsgo@0.37.0`; fixture workspaces install the validated `typescript@7.0.2` package
 (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`, confirmed identical to the tarball's
-`lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.0.0-rc.108` release
-(the `rc` dist-tag; note `@effect/tsgo@0.36.4`'s own upstream fixtures align to `4.0.0-beta.107`,
-all four lanes passing against rc.108 did not expose any rc-only drift in the covered fixtures).
+`lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.0.0-rc.112` release.
+All four lanes passed against that fixed pair.
 
 Command (since 0.32.0 the packaged executables live under `artifacts/typescript/<version>/`; the
 `lib/tsc` compatibility copy of the `latest` build also works):
@@ -141,7 +141,7 @@ Observed through LSP:
   (0.33.0), and `Add yield* statement` (the 0.31.0 floating-Effect quick fix).
 - Diagnostic-directive fixture: next-line and section directives suppressed the intended
   `strictEffectProvide` and `floatingEffect` findings, then surfaced them again when re-enabled.
-- The published `0.36.4` server still did not advertise `executeCommandProvider.commands`, so the local
+- The published `0.37.0` server still did not advertise `executeCommandProvider.commands`, so the local
   Mermaid graph action remains experimental; hover Mermaid links are the supported path.
 
 ## LSP Widget
