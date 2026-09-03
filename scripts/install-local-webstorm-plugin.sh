@@ -8,18 +8,66 @@ zip_path=""
 
 # Default the product config directory to whatever WebStorm build JetBrains Toolbox currently
 # installs (its product-info.json names the config/plugin directory, e.g. WebStorm2026.3), so an
-# IDE line bump does not silently install into a stale directory. Fall back to the last stable line.
+# IDE line bump does not silently install into a stale directory. Toolbox 2.x installs tools flat
+# (<apps>/webstorm); Toolbox 1.x used channel directories (<apps>/WebStorm/ch-N/<build>). <apps>
+# is ~/.local/share/JetBrains/Toolbox/apps unless Toolbox's .settings.json records a custom tools
+# install location or EFFECT_JETBRAINS_TOOLBOX_APPS_DIR overrides it. When several WebStorm builds
+# are present, the newest build number wins. Falls back to the last stable line when nothing is
+# found.
 detect_product_dir() {
   local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
-  local product_info="${data_home}/JetBrains/Toolbox/apps/webstorm/product-info.json"
-  if [[ -f "$product_info" ]] && command -v node >/dev/null 2>&1; then
-    node -e '
-      const info = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
-      if (typeof info.dataDirectoryName === "string" && /^WebStorm[0-9.]+$/.test(info.dataDirectoryName)) {
-        process.stdout.write(info.dataDirectoryName)
+  local toolbox_home="${data_home}/JetBrains/Toolbox"
+  local apps_dir="${EFFECT_JETBRAINS_TOOLBOX_APPS_DIR:-}"
+
+  command -v node >/dev/null 2>&1 || return 0
+
+  if [[ -z "$apps_dir" && -f "${toolbox_home}/.settings.json" ]]; then
+    apps_dir="$(node -e '
+      const settings = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
+      const location = settings.install_location ?? settings.installLocation
+      if (typeof location === "string" && location.length > 0) {
+        process.stdout.write(location)
       }
-    ' "$product_info" 2>/dev/null || true
+    ' "${toolbox_home}/.settings.json" 2>/dev/null || true)"
   fi
+  apps_dir="${apps_dir:-${toolbox_home}/apps}"
+  [[ -d "$apps_dir" ]] || return 0
+
+  local candidates=()
+  if [[ -f "${apps_dir}/webstorm/product-info.json" ]]; then
+    candidates+=("${apps_dir}/webstorm/product-info.json")
+  fi
+  while IFS= read -r candidate; do
+    candidates+=("$candidate")
+  done < <(find "${apps_dir}/WebStorm" -mindepth 3 -maxdepth 3 -type f -name product-info.json 2>/dev/null || true)
+  [[ ${#candidates[@]} -gt 0 ]] || return 0
+
+  node -e '
+    const fs = require("node:fs")
+    const parseBuild = (value) => String(value ?? "").split(".").map((part) => Number.parseInt(part, 10) || 0)
+    const compareBuilds = (a, b) => {
+      for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+        const delta = (a[index] ?? 0) - (b[index] ?? 0)
+        if (delta !== 0) return delta
+      }
+      return 0
+    }
+    let best = null
+    for (const path of process.argv.slice(1)) {
+      try {
+        const info = JSON.parse(fs.readFileSync(path, "utf8"))
+        if (info.productCode !== "WS") continue
+        if (typeof info.dataDirectoryName !== "string" || !/^WebStorm[0-9.]+$/.test(info.dataDirectoryName)) continue
+        const build = parseBuild(info.buildNumber)
+        if (best === null || compareBuilds(build, best.build) > 0) {
+          best = { build, dataDirectoryName: info.dataDirectoryName }
+        }
+      } catch {
+        // Unreadable or malformed product-info.json: skip this candidate.
+      }
+    }
+    if (best !== null) process.stdout.write(best.dataDirectoryName)
+  ' "${candidates[@]}" 2>/dev/null || true
 }
 
 usage() {
@@ -32,6 +80,10 @@ Close WebStorm before running this script.
 Environment:
   EFFECT_JETBRAINS_PRODUCT_DIR  JetBrains product config directory, default: the Toolbox WebStorm
                                 install's dataDirectoryName (e.g. WebStorm2026.3), else WebStorm2026.2
+  EFFECT_JETBRAINS_TOOLBOX_APPS_DIR
+                                Toolbox tools directory to scan for WebStorm, default: the custom
+                                install location in Toolbox's .settings.json, else
+                                ~/.local/share/JetBrains/Toolbox/apps
   XDG_DATA_HOME                 JetBrains plugin install root base, default: ~/.local/share
   XDG_CACHE_HOME                JetBrains cache root base, default: ~/.cache
   XDG_CONFIG_HOME               JetBrains config root base, default: ~/.config

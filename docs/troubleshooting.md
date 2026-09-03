@@ -26,7 +26,12 @@ scripts/install-local-webstorm-plugin.sh --product WebStorm2026.3
 ```
 
 Without `--product`, the helper uses the config directory named by the JetBrains Toolbox WebStorm
-install (`product-info.json` → `dataDirectoryName`) and falls back to `WebStorm2026.2`.
+install (`product-info.json` → `dataDirectoryName`) and falls back to `WebStorm2026.2`. It scans
+the Toolbox 2.x flat layout (`apps/webstorm`) and the legacy channel layout
+(`apps/WebStorm/ch-N/<build>`), honours a custom tools location recorded in Toolbox's
+`.settings.json`, and takes the newest WebStorm build when several are present. Set
+`EFFECT_JETBRAINS_TOOLBOX_APPS_DIR` to point at a different tools directory, or
+`EFFECT_JETBRAINS_PRODUCT_DIR` to bypass detection entirely.
 
 The helper unpacks the plugin into the local JetBrains plugin directory, removes stale
 `effect-jetbrains-plugin*.zip` cache entries, removes the plugin from `disabled_plugins.txt` if
