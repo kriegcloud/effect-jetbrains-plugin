@@ -22,8 +22,14 @@ Use these top-level docs as the main entry points:
 ./gradlew test
 ./gradlew check
 timeout 90s ./gradlew runIde
+timeout 90s ./gradlew runIdeVerifierWebStorm
 ./gradlew verifyPlugin
 ```
+
+`runIde` boots the sandbox on the stable compile target (`platformVersion`), while
+`runIdeVerifierWebStorm` boots it on the newest verified WebStorm line (`pluginVerifierWebStormVersion`,
+currently the 2026.3 EAP). Plugin Verifier checks both WebStorm builds plus the IntelliJ IDEA Ultimate
+EAP named by `pluginVerifierIntelliJIdeaVersion`.
 
 The repository also carries a real-binary probe script for `@effect/tsgo`:
 
@@ -51,8 +57,8 @@ The verifier copies its fixtures to temporary directories and installs the valid
 - Keep debugger wording as best-effort unless there is recorded paused-session smoke evidence.
 - Keep Mermaid execute-command wording experimental until that bridge is published in `@effect/tsgo`.
 - Keep support statements aligned with the current target baseline:
-  - WebStorm `2026.2` EAP / `262.*`
-  - IntelliJ IDEA Ultimate `2026.2` EAP / `262.*`
+  - WebStorm `2026.2` stable and `2026.3` EAP / `262.*`–`263.*`
+  - IntelliJ IDEA Ultimate `2026.2`–`2026.3` EAP / `262.*`–`263.*`
   - no Community Edition or Android Studio support claims
 
 ## Specs And Source Of Truth

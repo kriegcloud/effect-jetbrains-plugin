@@ -32,8 +32,8 @@ TypeScript and JavaScript files.
 | Code actions | Implemented | Uses standard LSP code-action flows |
 | Completion | Implemented | Uses standard LSP completion |
 | Hover | Implemented | Uses standard LSP hover / quick documentation |
-| Inlay hints | Implemented | Available on the locked `2026.2` EAP baseline |
-| Document and workspace symbols | Implemented | Expected on the `2026.2` EAP baseline |
+| Inlay hints | Implemented | Available on the `262.*`/`263.*` platform baseline |
+| Document and workspace symbols | Implemented | Expected on the `262.*`/`263.*` platform baseline |
 | Hover-based layer graph links | Implemented | This is the supported layer-graph path today |
 | Local Mermaid graph action | Experimental | Editor/Tools action opens Mermaid source when the LSP advertises the Effect execute-command bridge |
 

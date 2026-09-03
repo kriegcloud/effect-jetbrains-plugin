@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.6]
+
+- Extended plugin compatibility to the WebStorm/IntelliJ Platform `263.*` line (`pluginUntilBuild` `263.*`, `pluginSinceBuild` still `262`), so the plugin loads on WebStorm 2026.3 EAP (`WS-263.3889.67`) instead of being rejected as requiring build `262.*` or older.
+- Moved the compile target to the WebStorm 2026.2.2 stable build (`262.10315.144`) and the verification matrix to WebStorm 2026.2.2, WebStorm 2026.3 EAP (`263.3889.67`), and IntelliJ IDEA Ultimate 2026.3 EAP (`263.3889.65`). Added a `runIdeVerifierWebStorm` sandbox task that boots the plugin on the 263 EAP build without changing the stable compile target.
+- `scripts/install-local-webstorm-plugin.sh` now defaults its product config directory to the JetBrains Toolbox WebStorm install's `dataDirectoryName` (for example `WebStorm2026.3`), falling back to `WebStorm2026.2`, so a Toolbox IDE upgrade no longer installs into a stale directory.
+
 ## [0.1.5]
 
 - Validated managed binary resolution against the published `@effect/tsgo@0.37.0` schema-5 component manifest. TypeScript `provider` metadata is accepted without weakening exact `gitHead` matching, and regression coverage now models the real stable and migrated-next provider values.

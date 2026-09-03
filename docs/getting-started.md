@@ -3,9 +3,10 @@
 ## What You Need
 
 - A supported JetBrains IDE:
-  - WebStorm `2026.2` EAP
-  - IntelliJ IDEA Ultimate `2026.2` EAP
-- A Java 25 toolchain for local builds against the `262.*` EAP platform line.
+  - WebStorm `2026.2` (stable) or `2026.3` EAP
+  - IntelliJ IDEA Ultimate `2026.2` or `2026.3` EAP
+- A Java 25 toolchain for local builds against the `262.*` platform line (the compatibility range
+  spans `262`–`263.*`).
 - A project with supported TypeScript or JavaScript files:
   - `.ts`
   - `.tsx`

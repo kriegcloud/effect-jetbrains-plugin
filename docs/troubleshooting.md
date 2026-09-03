@@ -22,8 +22,11 @@ installing from disk:
 For local WebStorm smoke testing, close WebStorm and install the latest built ZIP directly:
 
 ```bash
-scripts/install-local-webstorm-plugin.sh --product WebStorm2026.2
+scripts/install-local-webstorm-plugin.sh --product WebStorm2026.3
 ```
+
+Without `--product`, the helper uses the config directory named by the JetBrains Toolbox WebStorm
+install (`product-info.json` → `dataDirectoryName`) and falls back to `WebStorm2026.2`.
 
 The helper unpacks the plugin into the local JetBrains plugin directory, removes stale
 `effect-jetbrains-plugin*.zip` cache entries, removes the plugin from `disabled_plugins.txt` if
@@ -31,6 +34,10 @@ needed, and clears a local Settings Sync `enabled: false` marker for `dev.effect
 
 The IDE log should list `Effect TSGO` under loaded custom plugins on startup. If it only shows a
 cached `effect-jetbrains-plugin.zip`, install from disk again, apply the plugin change, and restart.
+
+If the IDE reports that `Effect TSGO` "requires build 262.* or older" after a WebStorm upgrade, the
+installed ZIP predates the current compatibility range: rebuild from a checkout whose
+`pluginUntilBuild` covers the new IDE line (`263.*` for WebStorm 2026.3) and reinstall.
 
 ## Common LSP Issues
 

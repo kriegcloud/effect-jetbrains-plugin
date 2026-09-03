@@ -101,7 +101,20 @@ intellijPlatform {
     pluginVerification {
         ides {
             create(IntelliJPlatformType.WebStorm, providers.gradleProperty("platformVersion"))
+            create(IntelliJPlatformType.WebStorm, providers.gradleProperty("pluginVerifierWebStormVersion"))
             create(IntelliJPlatformType.IntellijIdeaUltimate, providers.gradleProperty("pluginVerifierIntelliJIdeaVersion"))
+        }
+    }
+}
+
+intellijPlatformTesting {
+    runIde {
+        // Sandbox launch against the newest verified WebStorm line (currently the 2026.3 EAP), so the
+        // plugin can be smoked on the upper edge of the compatibility range without replacing the
+        // stable compile target.
+        register("runIdeVerifierWebStorm") {
+            type = IntelliJPlatformType.WebStorm
+            version = providers.gradleProperty("pluginVerifierWebStormVersion")
         }
     }
 }

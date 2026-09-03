@@ -5,8 +5,9 @@ This guide tracks the release path for the official JetBrains Marketplace listin
 ## Release Posture
 
 - First upload: hidden default-channel release.
-- Compatibility: WebStorm/IntelliJ Platform `262.*`.
-- Verifier targets: WebStorm `262.6653.15` and IntelliJ IDEA Ultimate from `pluginVerifierIntelliJIdeaVersion`.
+- Compatibility: WebStorm/IntelliJ Platform `262`–`263.*` (`pluginSinceBuild`/`pluginUntilBuild`).
+- Verifier targets: WebStorm from `platformVersion` (stable `262.*`) and `pluginVerifierWebStormVersion`
+  (`263.*` EAP), plus IntelliJ IDEA Ultimate from `pluginVerifierIntelliJIdeaVersion`.
 - License: MIT.
 - Binary default: `MANUAL`; managed npm downloads are available only after user configuration.
 - Branding: use the Effect name and mark only after Effect maintainer approval.
@@ -67,7 +68,7 @@ release. Later releases can use the GitHub release workflow, which calls `./grad
 ```text
 Hey Effect team! I have been building a JetBrains/WebStorm plugin for @effect/tsgo and Effect Dev Tools parity, inspired by the existing VS Code and Zed extensions.
 
-The goal is to publish it on the JetBrains Plugin Marketplace as a free MIT-licensed plugin. It currently targets WebStorm 2026.2 EAP, starts with manual @effect/tsgo binary configuration by default, and keeps managed npm downloads opt-in.
+The goal is to publish it on the JetBrains Plugin Marketplace as a free MIT-licensed plugin. It currently targets WebStorm 2026.2 stable and 2026.3 EAP (platform builds 262.*–263.*), starts with manual @effect/tsgo binary configuration by default, and keeps managed npm downloads opt-in.
 
 Before I use the Effect name/logo or publish anything public, I wanted to ask if this is okay with the team. I am also happy to transfer the GitHub repo, Marketplace ownership, or both to the Effect org whenever you feel ready. I can keep the first Marketplace upload hidden while review and ownership details get sorted.
 ```

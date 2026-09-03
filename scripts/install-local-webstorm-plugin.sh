@@ -3,18 +3,35 @@ set -euo pipefail
 
 plugin_id="dev.effect.jetbrains"
 install_dir_name="effect-jetbrains-plugin"
-product_dir="${EFFECT_JETBRAINS_PRODUCT_DIR:-WebStorm2026.2}"
+product_dir="${EFFECT_JETBRAINS_PRODUCT_DIR:-}"
 zip_path=""
+
+# Default the product config directory to whatever WebStorm build JetBrains Toolbox currently
+# installs (its product-info.json names the config/plugin directory, e.g. WebStorm2026.3), so an
+# IDE line bump does not silently install into a stale directory. Fall back to the last stable line.
+detect_product_dir() {
+  local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  local product_info="${data_home}/JetBrains/Toolbox/apps/webstorm/product-info.json"
+  if [[ -f "$product_info" ]] && command -v node >/dev/null 2>&1; then
+    node -e '
+      const info = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
+      if (typeof info.dataDirectoryName === "string" && /^WebStorm[0-9.]+$/.test(info.dataDirectoryName)) {
+        process.stdout.write(info.dataDirectoryName)
+      }
+    ' "$product_info" 2>/dev/null || true
+  fi
+}
 
 usage() {
   cat <<USAGE
-Usage: scripts/install-local-webstorm-plugin.sh [--product WebStorm2026.2] [--zip build/distributions/effect-jetbrains-plugin-0.1.1.zip]
+Usage: scripts/install-local-webstorm-plugin.sh [--product WebStorm2026.3] [--zip build/distributions/effect-jetbrains-plugin-0.1.6.zip]
 
 Installs the locally built Effect TSGO plugin into a JetBrains WebStorm config.
 Close WebStorm before running this script.
 
 Environment:
-  EFFECT_JETBRAINS_PRODUCT_DIR  JetBrains product config directory, default: WebStorm2026.2
+  EFFECT_JETBRAINS_PRODUCT_DIR  JetBrains product config directory, default: the Toolbox WebStorm
+                                install's dataDirectoryName (e.g. WebStorm2026.3), else WebStorm2026.2
   XDG_DATA_HOME                 JetBrains plugin install root base, default: ~/.local/share
   XDG_CACHE_HOME                JetBrains cache root base, default: ~/.cache
   XDG_CONFIG_HOME               JetBrains config root base, default: ~/.config
@@ -47,6 +64,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "$product_dir" ]]; then
+  product_dir="$(detect_product_dir)"
+  product_dir="${product_dir:-WebStorm2026.2}"
+fi
 
 if [[ -z "$zip_path" ]]; then
   zip_path="$(ls -t build/distributions/effect-jetbrains-plugin-*.zip 2>/dev/null | head -n 1 || true)"
@@ -147,5 +169,5 @@ console.log(`Enabled ${pluginId} in Settings Sync metadata (backup: ${backup}).`
 NODE
 fi
 
-echo "Installed $(basename "$zip_path") into ${install_dir}."
+echo "Installed $(basename "$zip_path") into ${install_dir} (product config: ${product_dir})."
 echo "Start WebStorm and confirm Settings | Plugins | Installed shows Effect TSGO enabled."
