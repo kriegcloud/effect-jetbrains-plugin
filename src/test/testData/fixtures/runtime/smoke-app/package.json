@@ -1,0 +1,15 @@
+{
+  "name": "effect-jetbrains-runtime-smoke",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs",
+    "debug": "node --inspect-brk index.mjs"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.115"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

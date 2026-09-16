@@ -1,7 +1,10 @@
 package dev.effect.intellij.lsp
 
+import dev.effect.intellij.core.EffectJson
 import dev.effect.intellij.lsp.EffectDiagnosticDirectiveCompletionContributor.Companion.completionFor
 import dev.effect.intellij.lsp.EffectDiagnosticDirectiveCompletionContributor.DirectiveCompletionKind
+import java.nio.file.Files
+import java.nio.file.Path
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -9,6 +12,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EffectDiagnosticDirectiveCompletionTest {
+    @Test
+    fun ruleNamesMatchPublishedTsgo045Snapshot() {
+        // Generated from @effect/tsgo@0.45.0:_packages/tsgo/src/metadata.json (54bbc1e7).
+        // No legacy exceptions: every previously offered name is still shipped in this release.
+        val snapshot = EffectJson.mapper.readTree(
+            Files.readString(Path.of("src", "test", "testData", "tsgo", "rule-names-0.45.0.json")),
+        ).map { it.asText() }
+        val actual = EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES
+        assertEquals(113, snapshot.size)
+        assertEquals(snapshot.sorted().distinct(), snapshot)
+        assertEquals("Duplicate directive rule names", actual.distinct(), actual)
+        val missing = snapshot.toSet() - actual.toSet()
+        val extra = actual.toSet() - snapshot.toSet()
+        assertTrue("Missing published rules: $missing; rules absent from release snapshot: $extra", missing.isEmpty() && extra.isEmpty())
+    }
+
     @Test
     fun returnsNullOutsideDirective() {
         assertNull(completionFor("const x = value"))

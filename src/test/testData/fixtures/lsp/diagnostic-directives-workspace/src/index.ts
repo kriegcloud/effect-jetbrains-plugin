@@ -1,4 +1,9 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
+
+export const schemaDefaultOff = Schema.decodeSync(Schema.String)("default-off")
+// @effect-diagnostics-next-line schemaSync:warning
+export const schemaOptIn = Schema.decodeSync(Schema.String)("opt-in")
+export const schemaAfterOptIn = Schema.decodeSync(Schema.String)("default-off-again")
 
 class Config extends Context.Service<Config>()("Config", {
   make: Effect.succeed({})

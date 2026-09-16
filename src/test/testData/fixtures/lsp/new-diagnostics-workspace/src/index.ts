@@ -1,4 +1,12 @@
-import { Effect, Schema, Scope } from "effect"
+import { Effect, Option, Schema, Scope } from "effect"
+
+// @ts-expect-error obsolete package intentionally absent, as in the upstream v4 fixture
+import * as OldSchema from "@effect/schema/Schema"
+export { OldSchema }
+
+export const some = Effect.succeed(Option.some(42))
+export const none = Effect.succeed(Option.none())
+export const mapped = Effect.all([1, 2, 3].map((n) => Effect.succeed(n + 1)))
 
 declare const first: Effect.Effect<number, unknown>
 declare const second: Effect.Effect<string, unknown>
