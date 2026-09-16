@@ -56,6 +56,26 @@ installed ZIP predates the current compatibility range: rebuild from a checkout 
 | No LSP startup when a file opens | The file is not a supported TypeScript extension or the server failed before startup completed | Use a supported file and inspect the widget state plus logs |
 | New `schemaOpaqueInstanceMember` errors after updating the managed binary | `@effect/tsgo` 0.22.0+ enables this Effect v4 rule at `error` severity by default; instance members on `Schema.Opaque` classes are now rejected | Move members off the opaque class, or downgrade/disable the rule via `diagnosticSeverity` in the tsconfig `@effect/language-service` plugin entry or a `// @effect-diagnostics schemaOpaqueInstanceMember:off` directive |
 
+### Diagnostic Highlighting Stops On WebStorm 2026.3 EAP
+
+Plugin 0.1.6 on WebStorm `263.4732.34` can stop highlighting diagnostics with this IDE-log error:
+
+```text
+java.lang.NoSuchMethodError: 'java.lang.String org.eclipse.lsp4j.Diagnostic.getMessage()'
+```
+
+The stack passes through `EffectDiagnosticDirectives.kt` and
+`EffectLspDiagnosticsSupport.createAnnotation`. This EAP bundles lsp4j
+`1.0.0.v20260209-1721` in `intellij.libraries.eclipse.lsp4j.jar`, where the getter returns
+`Either<String, MarkupContent>`. The stable 262 compile target uses lsp4j `0.24.0`, whose getter
+returns `String`; 0.1.6's compiled call therefore fails on the new bundle.
+
+This is fixed in **0.1.7** by reading and copying diagnostic messages through a reflection-based
+accessor that accepts both return types, including Either values containing strings or markup.
+Install the 0.1.7 build and restart WebStorm. Changing the tsgo binary or clearing its cache does
+not repair this IDE-library mismatch. EAP verifier pins must track the newest build because bundled
+libraries can change within the same platform line.
+
 ## Binary Mode Checks
 
 ### `LATEST`

@@ -40,11 +40,17 @@ The current plugin baseline is:
 | IDE | Status | Notes |
 | --- | --- | --- |
 | WebStorm `2026.2` (stable) | Primary target | The compile target is the pinned `262.10315.144` stable build; `runIde` and verifier coverage run against it. |
-| WebStorm `2026.3` EAP | Primary target | Verifier coverage and the `runIdeVerifierWebStorm` sandbox use the pinned `263.3889.67` EAP build. |
-| IntelliJ IDEA Ultimate `2026.3` EAP | Secondary target | Verifier coverage uses the latest available `263.*` IDEA EAP build. |
+| WebStorm `2026.3` EAP | Primary target | Plugin Verifier and the `runIdeVerifierWebStorm` sandbox target the pinned `263.4732.34` EAP build. |
+| IntelliJ IDEA Ultimate `2026.3` EAP | Secondary target | Plugin Verifier targets the pinned `263.4732.28` IDEA EAP build. |
 | Unified PyCharm `2025.1+` | Later target | Not a current compatibility promise. |
 | IntelliJ IDEA Community Edition | Unsupported | JetBrains public LSP support is out of scope here. |
 | Android Studio | Unsupported | Not a supported target for this plugin. |
+
+EAP verifier pins must track the newest build because bundled libraries can change within a platform
+line. WebStorm `263.4732.34` changed the lsp4j diagnostic-message API and exposed a highlighting
+failure in 0.1.6; 0.1.7 adds a reflection-based accessor for both library versions. The
+[refresh report](UPSTREAM_REFRESH_REPORT.md) records the actual verification results and remaining
+evidence gaps for the build.
 
 ## Quick Start
 
@@ -101,12 +107,29 @@ The repository currently uses these primary validation commands:
 timeout 90s ./gradlew runIde
 timeout 90s ./gradlew runIdeVerifierWebStorm
 ./gradlew verifyPlugin
+node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc
+node scripts/verify-instrumentation.mjs
 ```
 
 The shipped artifact is intended for the WebStorm/IntelliJ Platform `262.*` and `263.*` build lines
 (`sinceBuild` `262`, `untilBuild` `263.*`). Recorded
 real-binary LSP smoke exists for the checked-in fixtures; full manual IDE/editor smoke and broader
 semantic coverage remain follow-up validation items.
+
+The recorded native LSP smoke uses `@effect/tsgo@0.45.0`, `typescript@7.0.2`, and
+`effect@4.0.0-rc.115`. New cases cover `obsoleteSchemaImport`, applied
+`preferSucceedSomeOrNone` / `allOfMapToForEach` fixes, and opt-in `schemaSync`. The post-tag rules
+`catchIfTagToCatchTag`, `flatMapIgnoredParamToAndThen`, and `catchRefailToTapError` remain excluded
+from published-binary coverage and directive completion.
+
+The instrumentation verifier reuses the repository's
+[`runtime smoke app`](src/test/testData/fixtures/runtime/smoke-app/) to check real Effect runtimes
+before and after the rc.113 fiber-cache change. Its
+[`SMOKE_CHECKLIST.md`](src/test/testData/fixtures/runtime/smoke-app/SMOKE_CHECKLIST.md) covers the
+user-run editor, DevTools, and paused-debugger pass. See the [development guide](docs/development.md)
+for both probe commands and fixture setup, and the [usage guide](docs/usage.md#current-tsgo-smoke-targets)
+for upstream `diagnostics --list-files`, corrected rule metadata, and preset behavior. Oxlint and
+tsgolint remain upstream-managed package contents only.
 
 ## Development
 

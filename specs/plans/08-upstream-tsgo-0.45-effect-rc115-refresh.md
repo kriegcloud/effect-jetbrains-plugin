@@ -81,3 +81,16 @@ the scope agreed for plugin build `0.1.7`.
 | #26 LSP API migration | defer to separate PR |
 | Manifest schema/resolver branch, private-key migration, tracer/metrics interception | not applicable |
 | VS Code / Zed / language-service / template ports | not applicable (zero commits) |
+
+## Addendum 2026-09-16: platform findings during implementation
+
+- **lsp4j 1.0.0 on 263.4732+.** The user hit `NoSuchMethodError: 'java.lang.String org.eclipse.lsp4j.Diagnostic.getMessage()'`
+  on 0.1.6 (WebStorm `263.4732.34`). That build bundles lsp4j `1.0.0.v20260209-1721` (jar renamed
+  `intellij.libraries.eclipse.lsp4j.jar`) where `getMessage()` returns `Either<String, MarkupContent>`;
+  262.x and the previous verifier pin `263.3889.67` bundle `0.24.0` returning `String`. Moving the
+  verifier pins to `263.4732.x` reproduced it as two compatibility problems per EAP target. Fix:
+  `EffectLsp4jDiagnosticMessage` resolves the getter/setters reflectively and normalizes both shapes.
+  Only `Diagnostic.getMessage/setMessage` changed among the lsp4j classes the plugin uses.
+- **Sandbox IDE boots and host Plasma config.** The platform's `UnixDesktopEnv` runs `plasmashell --version`
+  at startup; inside an agent sandbox with read-only `~/.config` that child raised a KDE "not writable"
+  dialog. Every `RunIdeTask` now gets its own `XDG_CONFIG_HOME` under `build/sandbox-xdg/config`.

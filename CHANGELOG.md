@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.7]
+
+- Fixed diagnostic highlighting on WebStorm 2026.3 EAP `263.4732.34`, where the bundled lsp4j 1.0.0 changes `Diagnostic.getMessage()` from `String` to `Either<String, MarkupContent>` and caused `NoSuchMethodError` in 0.1.6. Diagnostic message reads and copies now use a reflection-based accessor compatible with both lsp4j shapes, with unit coverage for plain strings, Either string/markup values, and severity-override copying.
+- Restored debugger span stacks, source locations, and pause-on-defect reveal on Effect rc.113+ by reading `fiber.cache.span` / `fiber.cache.stackFrame` with fallback to the older fields. Added `scripts/verify-instrumentation.mjs` to exercise the injected instrumentation against real Effect runtimes on both sides of the cache transition, including source/defect locations, fiber interruption, and legacy fallback controls.
+- Added 18 published rule names to Effect diagnostic directive completion: `acquireReleaseDisposable`, `allOfMapToForEach`, `catchAllTagDispatchToCatchTag`, `catchConditionalRefailToCatchIf`, `catchDieToOrDie`, `flatMapConditionalToFilterOrFail`, `mapSomeToAsSome`, `matchEffectToMapBoth`, `matchEffectToMatch`, `obsoleteMatchImport`, `obsoleteSchemaImport`, `optionMatchToFromOption`, `preferSucceedSomeOrNone`, `provideLayerSucceedToProvideService`, `raceFirstWithSleepToTimeout`, `runOfExitToRunExit`, `schemaSync`, and `timeoutCatchTagToTimeoutOrElse`. A rule-name snapshot test checks completion against all 113 rules in the 0.45.0 release tag and excludes unpublished names.
+- Updated the real-binary LSP smoke target to `@effect/tsgo@0.45.0` and `effect@4.0.0-rc.115`, keeping `typescript@7.0.2`. New fixture cases cover the `obsoleteSchemaImport` warning and suppression-only actions, applied `preferSucceedSomeOrNone` / `allOfMapToForEach` fixes, and next-line opt-in for default-off `schemaSync`.
+- Added a repository runtime smoke fixture app with exact Effect rc.115 / TypeScript 7.0.2 dependencies, a DevTools client, nested spans, periodic failures and defects, metrics, an interruptible `Effect.never` fiber, editor examples, and a manual `SMOKE_CHECKLIST.md`; the instrumentation verifier reuses its runtime cases.
+- Advanced Plugin Verifier targets to WebStorm `263.4732.34` and IntelliJ IDEA Ultimate `263.4732.28`, retaining the WebStorm `262.10315.144` stable compile target and `262`–`263.*` compatibility range. EAP verifier pins must track the newest build because bundled library APIs can change within a platform line. Sandbox IDE tasks now isolate `XDG_CONFIG_HOME` to avoid host Plasma configuration warnings.
+- Reconciled `gradleVersion` with the Gradle `9.7.1` wrapper and refreshed the six-reference provenance, published-package canary notes, and upstream behavior guidance; only the tsgo and Effect source pins moved.
+
 ## [0.1.6]
 
 - Extended plugin compatibility to the WebStorm/IntelliJ Platform `263.*` line (`pluginUntilBuild` `263.*`, `pluginSinceBuild` still `262`), so the plugin loads on WebStorm 2026.3 EAP (`WS-263.3889.67`) instead of being rejected as requiring build `262.*` or older.

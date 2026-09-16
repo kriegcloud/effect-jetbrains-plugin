@@ -48,9 +48,9 @@ for diagnostics that the source has explicitly disabled.
 
 ### Current TSGO Smoke Targets
 
-The current recorded real-binary smoke target is `@effect/tsgo@0.37.0` with
+The current recorded real-binary smoke target is `@effect/tsgo@0.45.0` with
 `typescript@7.0.2` (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) and
-`effect@4.0.0-rc.112`. In addition to the existing
+`effect@4.0.0-rc.115`. In addition to the existing
 `catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, `newSchemaClass`, `catchToIgnore`
 (published as of 0.16.0), fixable `flatMapToMap` (as of 0.19.0), `missingPipeableSignature`
 (0.21.0, off by default), `schemaOpaqueInstanceMember` (0.22.0, **error by default**, Effect v4
@@ -62,12 +62,32 @@ default) coverage, the 0.25–0.27 line adds seven diagnostics: `schemaLiteralNo
 `newSchemaClass` remains off by default. The 0.28–0.33 line adds one more: the fixable
 `preferTypedSchemaDecoder` (0.33.0, suggestion by default, Effect v4 only), which offers a
 `Replace with decodeSync`-style typed decoder rewrite; 0.31.0 also added an `Add yield* statement`
-quick fix for `floatingEffect` findings inside yieldable `Effect.gen` contexts. The published 0.34–0.37.0
-line adds no new diagnostics or quick fixes (0.36.0 regenerated the shipped severity schema, so
-`preferTypedSchemaDecoder` now appears in it too). Four diagnostics at the recorded tsgo source pin
-are newer than the 0.37.0 tag and are intentionally excluded from published-binary claims. Effect v4
-samples must install the exact `effect@4.0.0-rc.112` smoke target because the `rc` dist-tag is a
-moving convenience alias and npm `effect` `latest` remains v3.
+quick fix for `floatingEffect` findings inside yieldable `Effect.gen` contexts.
+
+The 0.45.0 refresh adds published-binary coverage for `obsoleteSchemaImport` (Effect v4 warning,
+suppression actions only), `preferSucceedSomeOrNone` and `allOfMapToForEach` (suggestions enabled at
+warning in the fixture, with applied quick-fix edits), and `schemaSync` (off by default, enabled for
+one line by a directive). The four rules deferred in the previous refresh—`allOfMapToForEach`,
+`mapSomeToAsSome`, `catchDieToOrDie`, and `catchConditionalRefailToCatchIf`—are now published and
+included in directive completion. Completion covers all 113 published rules; the real-binary
+fixtures exercise a representative subset.
+
+Three rules at the recorded source pin are newer than the 0.45.0 tag:
+`catchIfTagToCatchTag`, `flatMapIgnoredParamToAndThen`, and `catchRefailToTapError`. They remain
+excluded from completion and published-binary claims. Effect v4 samples must install the exact
+`effect@4.0.0-rc.115` smoke target because the `rc` dist-tag is a moving convenience alias and npm
+`effect` `latest` remains v3.
+
+Upstream rule metadata now marks `genericEffectServices` as v3-only and `schemaSyncInEffect` as
+v3 + v4. `unsafeEffectTypeAssertion` moves from `effectNative` to `correctness`, including its
+Oxlint preset placement. `schemaSync` defaults off in the language service, while the upstream
+effect-native preset enables it at warning. These are upstream rule and preset choices; the plugin
+consumes diagnostics and code actions through LSP. Oxlint and tsgolint remain upstream-managed
+package contents, with no IDE-owned configuration or process lifecycle.
+
+The upstream CLI also adds `diagnostics --list-files`, which reports each file's `file`,
+`detectedEffect`, and `supportedEffect` values (and optional JSON `files`). The plugin's direct
+`--lsp --stdio` launch is unchanged.
 
 For common language-service options, prefer the typed settings controls. They emit `effect.*`
 workspace configuration only when explicitly set, and they override duplicate raw JSON keys. Keep
@@ -111,10 +131,10 @@ Equivalent raw JSON example:
 
 ### Recorded Real-Binary Smoke
 
-On August 27, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
-for `@effect/tsgo@0.37.0`; fixture workspaces install the validated `typescript@7.0.2` package
+On September 16, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
+for `@effect/tsgo@0.45.0`; fixture workspaces install the validated `typescript@7.0.2` package
 (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`, confirmed identical to the tarball's
-`lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.0.0-rc.112` release.
+`lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.0.0-rc.115` release.
 All four lanes passed against that fixed pair.
 
 Command (since 0.32.0 the packaged executables live under `artifacts/typescript/<version>/`; the
@@ -139,10 +159,34 @@ Observed through LSP:
   `Replace with Schema.Finite`, `Replace with Schema.FiniteFromString`,
   `Replace with Effect.succeed`, `Replace with Scope.makeUnsafe`, `Replace with decodeSync`
   (0.33.0), and `Add yield* statement` (the 0.31.0 floating-Effect quick fix).
+- New published cases: `obsoleteSchemaImport` appeared once at warning severity with only the two
+  suppression actions. `preferSucceedSomeOrNone` and `allOfMapToForEach` fixes produced
+  `Effect.succeedSome(42)`, `Effect.succeedNone`, and `Effect.forEach`; applying the edits cleared
+  those findings while preserving the fixture's one baseline error.
 - Diagnostic-directive fixture: next-line and section directives suppressed the intended
   `strictEffectProvide` and `floatingEffect` findings, then surfaced them again when re-enabled.
-- The published `0.37.0` server still did not advertise `executeCommandProvider.commands`, so the local
+  The next-line `schemaSync:warning` directive enabled exactly one warning and did not affect the
+  default-off examples before or after it.
+- The published `0.45.0` server still did not advertise `executeCommandProvider.commands`, so the local
   Mermaid graph action remains experimental; hover Mermaid links are the supported path.
+
+### Runtime Instrumentation Smoke
+
+The companion `scripts/verify-instrumentation.mjs` probe copies the repository's
+[`smoke-app`](../src/test/testData/fixtures/runtime/smoke-app/) fixture into temporary workspaces,
+installs exact Effect v4 release candidates 112 and 115, and injects the same instrumentation used
+by the IDE:
+
+```bash
+node scripts/verify-instrumentation.mjs
+```
+
+Both versions passed span-stack, source/defect-location, and fiber-interruption assertions. Cache
+and legacy-field controls exercise the rc.113+ transition and older runtime fallback. The fixture
+also supplies a DevTools client, metrics, nested spans, a defect loop, an `Effect.never` long-runner,
+and `example.ts` for the human editor pass. Follow its
+[`SMOKE_CHECKLIST.md`](../src/test/testData/fixtures/runtime/smoke-app/SMOKE_CHECKLIST.md) for setup
+and paused-session checks; automated Node results do not establish manual IDE parity.
 
 ## LSP Widget
 
