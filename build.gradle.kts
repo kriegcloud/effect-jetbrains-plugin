@@ -145,6 +145,17 @@ tasks {
     }
 }
 
+// Sandbox IDE boots (runIde, runIdeVerifierWebStorm) may run inside agent sandboxes whose host
+// ~/.config is read-only. The platform's desktop probe (`plasmashell --version`, see
+// com.intellij.util.ui.UnixDesktopEnv) would then raise a KDE "configuration file not writable"
+// dialog against the host Plasma configuration. Give every sandbox IDE its own throwaway XDG config
+// home so neither the IDE nor its child processes touch the host configuration.
+tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask>().configureEach {
+    val sandboxXdgConfigHome = layout.buildDirectory.dir("sandbox-xdg/config")
+    environment("XDG_CONFIG_HOME", sandboxXdgConfigHome.get().asFile.absolutePath)
+    doFirst { sandboxXdgConfigHome.get().asFile.mkdirs() }
+}
+
 tasks.named("qodanaScan") {
     mustRunAfter(tasks.matching { candidate -> candidate.name != name })
 }

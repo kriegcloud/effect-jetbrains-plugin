@@ -326,6 +326,40 @@ function lineNumberOf(text, needle) {
   return text.slice(0, index).split("\n").length - 1
 }
 
+function applyTextEdits(text, edits) {
+  const offsetAt = (position) => {
+    const lines = text.split("\n")
+    return lines.slice(0, position.line).reduce((offset, line) => offset + line.length + 1, 0) + position.character
+  }
+  const ordered = edits.map((edit) => ({
+    start: offsetAt(edit.range.start),
+    end: offsetAt(edit.range.end),
+    text: edit.newText,
+  })).sort((a, b) => b.start - a.start)
+  let previousStart = text.length
+  for (const edit of ordered) {
+    assert(edit.end <= previousStart, "Quick-fix edits must not overlap")
+    text = text.slice(0, edit.start) + edit.text + text.slice(edit.end)
+    previousStart = edit.start
+  }
+  return text
+}
+
+async function quickFixForDiagnostic(client, uri, diagnostic, title) {
+  assert(diagnostic, `Missing diagnostic for ${title}`)
+  const actions = await client.request("textDocument/codeAction", {
+    textDocument: { uri },
+    range: diagnostic.range,
+    context: { diagnostics: [diagnostic], only: ["quickfix"] },
+  })
+  const action = actions?.find((candidate) => candidate.title === title)
+  assert(action, `Expected quick fix ${title}; received ${JSON.stringify(actions)}`)
+  const edits = action.edit?.changes?.[uri] ?? action.edit?.documentChanges
+    ?.filter((change) => change.textDocument?.uri === uri).flatMap((change) => change.edits) ?? []
+  assert(edits.length > 0, `Expected actual text edits for ${title}`)
+  return edits
+}
+
 function diagnosticsFromReport(report) {
   if (Array.isArray(report)) {
     return report
@@ -560,6 +594,9 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
           messages.some((message) => message.includes("effect(preferTypedSchemaDecoder)")) &&
           messages.some((message) => message.includes("effect(preferUnsafeConstructor)")) &&
           messages.some((message) => message.includes("effect(promiseInEffectSuccess)")) &&
+          messages.some((message) => message.includes("effect(obsoleteSchemaImport)")) &&
+          messages.some((message) => message.includes("effect(preferSucceedSomeOrNone)")) &&
+          messages.some((message) => message.includes("effect(allOfMapToForEach)")) &&
           messages.some((message) => message.includes("effect(floatingEffect)"))
       },
     )
@@ -641,9 +678,50 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       "Expected floatingEffect code action to offer the yield* quick fix in yieldable contexts (published since @effect/tsgo 0.31.0)",
     )
 
+    const obsolete = diagnosticsForRule(diagnostics, "obsoleteSchemaImport")
+    assert(obsolete.length === 1 && obsolete[0].severity === 2, "Expected one v4 obsoleteSchemaImport warning")
+    const obsoleteActions = await client.request("textDocument/codeAction", {
+      textDocument: { uri },
+      range: obsolete[0].range,
+      context: { diagnostics: obsolete, only: ["quickfix"] },
+    })
+    assert(obsoleteActions.length === 2 && obsoleteActions.every((action) => action.title.startsWith("Disable obsoleteSchemaImport for ")),
+      `Expected only suppression actions, no obsoleteSchemaImport migration fix: ${JSON.stringify(obsoleteActions)}`)
+
+    const optionDiagnostics = diagnosticsForRule(diagnostics, "preferSucceedSomeOrNone")
+    assert(optionDiagnostics.length === 2, "Expected both Some and None diagnostics")
+    const someEdits = await quickFixForDiagnostic(client, uri,
+      optionDiagnostics.find((diagnostic) => diagnostic.range.start.line === lineNumberOf(text, "export const some")),
+      "Replace with Effect.succeedSome")
+    const noneEdits = await quickFixForDiagnostic(client, uri,
+      optionDiagnostics.find((diagnostic) => diagnostic.range.start.line === lineNumberOf(text, "export const none")),
+      "Replace with Effect.succeedNone")
+    const mappingEdits = await quickFixForDiagnostic(client, uri,
+      diagnosticsForRule(diagnostics, "allOfMapToForEach")[0], "Replace with Effect.forEach")
+    const fixedText = applyTextEdits(text, [...someEdits, ...noneEdits, ...mappingEdits])
+    assert(fixedText.includes("Effect.succeedSome(42)"), "Expected direct Some constructor after fix")
+    assert(fixedText.includes("Effect.succeedNone"), "Expected direct None constructor after fix")
+    assert(fixedText.includes("Effect.forEach("), "Expected effectful array traversal after fix")
+    client.notify("textDocument/didChange", {
+      textDocument: { uri, version: 2 }, contentChanges: [{ text: fixedText }],
+    })
+    const fixedDiagnostics = await pullDiagnosticsWithRetries(client, uri, (candidate) =>
+      diagnosticsForRule(candidate, "obsoleteSchemaImport").length === 1 &&
+      diagnosticsForRule(candidate, "preferSucceedSomeOrNone").length === 0 &&
+      diagnosticsForRule(candidate, "allOfMapToForEach").length === 0)
+    // This workspace deliberately includes invalid examples for other diagnostics. Preserve
+    // those baseline errors while proving the new rewrites introduce none of their own.
+    const errorSignatures = (items) => items.filter((diagnostic) => diagnostic.severity === 1)
+      .map((diagnostic) => JSON.stringify([diagnostic.code, diagnostic.message])).sort()
+    assert(JSON.stringify(errorSignatures(fixedDiagnostics)) === JSON.stringify(errorSignatures(diagnostics)),
+      `Quick fixes changed baseline errors: before=${JSON.stringify(errorSignatures(diagnostics))}; after=${JSON.stringify(errorSignatures(fixedDiagnostics))}`)
+
     return {
       diagnostics: messages,
       codeActionTitles,
+      obsoleteSchemaImport: { severity: obsolete[0].severity, suppressionOnly: true },
+      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach"],
+      quickFixBaselineErrorCount: errorSignatures(diagnostics).length,
       executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],
       workspacePath,
     }
@@ -701,6 +779,7 @@ async function verifyDiagnosticDirectivesWorkspace(workspacePath) {
       (candidateDiagnostics) => {
         const messages = diagnosticMessages(candidateDiagnostics)
         return messages.some((message) => message.includes("effect(strictEffectProvide)")) &&
+          messages.some((message) => message.includes("effect(schemaSync)")) &&
           messages.some((message) => message.includes("effect(floatingEffect)"))
       },
     )
@@ -716,8 +795,16 @@ async function verifyDiagnosticDirectivesWorkspace(workspacePath) {
     assert(!hasDiagnosticOnLine(floatingDiagnostics, lineNumberOf(text, "hidden-floating-section")), "Expected floatingEffect section directive to suppress diagnostic")
     assert(hasDiagnosticOnLine(floatingDiagnostics, lineNumberOf(text, "visible-floating-section")), "Expected later floatingEffect directive to re-enable diagnostic")
 
+    const schemaDiagnostics = diagnosticsForRule(diagnostics, "schemaSync")
+    assert(schemaDiagnostics.length === 1, "Expected schemaSync only on the opt-in line")
+    assert(hasDiagnosticOnLine(schemaDiagnostics, lineNumberOf(text, "export const schemaOptIn")), "Expected next-line schemaSync:warning to enable the off-by-default rule")
+    assert(schemaDiagnostics[0].severity === 2, "Expected schemaSync directive warning severity")
+    assert(!hasDiagnosticOnLine(schemaDiagnostics, lineNumberOf(text, "export const schemaDefaultOff")), "schemaSync must be off before the directive")
+    assert(!hasDiagnosticOnLine(schemaDiagnostics, lineNumberOf(text, "export const schemaAfterOptIn")), "Next-line opt-in must not leak to the following line")
+
     return {
       diagnostics: messages,
+      schemaSyncLines: schemaDiagnostics.map((diagnostic) => diagnostic.range.start.line),
       strictEffectProvideLines: strictDiagnostics.map((diagnostic) => diagnostic.range.start.line),
       floatingEffectLines: floatingDiagnostics.map((diagnostic) => diagnostic.range.start.line),
       executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],
@@ -808,10 +895,10 @@ async function main() {
   }
 
   // typescript@7.0.2 has gitHead 2bd066d87f5bafd315be9f40889d0a60b9e58e0b,
-  // matching the native backend used for the recorded @effect/tsgo@0.37.0 smoke.
+  // matching the native backend used for the recorded @effect/tsgo@0.45.0 smoke.
   // effect is pinned to the rc release current at refresh kickoff so the verifier does not drift
   // when the convenience dist-tag advances.
-  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-rc.112"]
+  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-rc.115"]
   const result = {}
 
   if (only === "all" || only === "healthy") {

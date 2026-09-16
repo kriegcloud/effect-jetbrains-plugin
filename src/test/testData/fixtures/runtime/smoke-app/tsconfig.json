@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "target": "ESNext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnosticSeverity": {
+          "preferSucceedSomeOrNone": "warning",
+          "allOfMapToForEach": "warning"
+        }
+      }
+    ]
+  },
+  "include": ["example.ts"]
+}

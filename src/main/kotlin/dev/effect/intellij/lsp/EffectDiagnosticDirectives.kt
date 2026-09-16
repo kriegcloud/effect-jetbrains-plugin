@@ -108,7 +108,7 @@ internal fun effectDirectiveSeverityForDiagnostic(
         ?.let { ruleName -> EffectDiagnosticDirectiveSet.parse(sourceText).effectiveSeverity(ruleName, diagnosticLine) }
 
 internal fun Diagnostic.effectDiagnosticRuleName(): String? =
-    message
+    EffectLsp4jDiagnosticMessage.text(this)
         ?.let { diagnosticRulePattern.find(it) }
         ?.groupValues
         ?.getOrNull(1)
@@ -133,7 +133,7 @@ private fun Diagnostic.copy(): Diagnostic =
         diagnostic.code = code
         diagnostic.codeDescription = codeDescription
         diagnostic.source = source
-        diagnostic.message = message
+        EffectLsp4jDiagnosticMessage.copy(this, diagnostic)
         diagnostic.tags = tags
         diagnostic.relatedInformation = relatedInformation
         diagnostic.data = data

@@ -9,6 +9,8 @@
       {
         "name": "@effect/language-service",
         "diagnosticSeverity": {
+          "preferSucceedSomeOrNone": "warning",
+          "allOfMapToForEach": "warning",
           "catchToOrElseSucceed": "warning",
           "flatMapToMap": "warning",
           "redundantOrDie": "warning",

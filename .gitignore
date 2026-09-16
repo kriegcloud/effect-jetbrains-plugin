@@ -6,3 +6,5 @@
 .kotlin/
 build/
 out/
+src/test/testData/fixtures/runtime/smoke-app/node_modules/
+src/test/testData/fixtures/runtime/smoke-app/dist/

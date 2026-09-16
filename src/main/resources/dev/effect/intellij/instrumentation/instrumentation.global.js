@@ -216,13 +216,22 @@
     }
   }
 
+  // Effect rc.113+ caches these context-derived values; older v4 and v3 expose the fields.
+  function fiberCurrentSpan(fiber) {
+    return fiber && ((fiber.cache && fiber.cache.span) || fiber.currentSpan);
+  }
+
+  function fiberCurrentStackFrame(fiber) {
+    return fiber && ((fiber.cache && fiber.cache.stackFrame) || fiber.currentStackFrame);
+  }
+
   // Build name -> source-location and an ordered list by walking the fiber's StackFrame chain
-  // (v4: `fiber.currentStackFrame`, each frame `{ name, stack(), parent }`). v3 stored span->stack in a
+  // (v4: `fiber.cache.stackFrame`, each frame `{ name, stack(), parent }`). v3 stored span->stack in a
   // global store which no longer exists in v4.
   function fiberStackFrameLocations(fiber) {
     var byName = {};
     var ordered = [];
-    var frame = fiber && fiber.currentStackFrame;
+    var frame = fiberCurrentStackFrame(fiber);
     var guard = 0;
     while (frame && guard < 256) {
       var location = stackFrameLocation(frame);
@@ -251,7 +260,7 @@
 
   function getFiberCurrentSpanStack(fiber, maxDepth) {
     var spans = [];
-    var current = fiber && fiber.currentSpan;
+    var current = fiberCurrentSpan(fiber);
     var frames = fiberStackFrameLocations(fiber);
     var depth = 0;
     while (current) {
@@ -455,7 +464,7 @@
         }
         debuggerState.lastDefect = { value: defect };
         debuggerState.valuesToReveal = [{ label: "Fiber Defect", value: snapshotValue(defect, 2) }];
-        debuggerState.locationToReveal = fiber.currentStackFrame ? stackFrameLocation(fiber.currentStackFrame) : null;
+        debuggerState.locationToReveal = stackFrameLocation(fiberCurrentStackFrame(fiber));
         debugger;
       });
     } catch (_) {

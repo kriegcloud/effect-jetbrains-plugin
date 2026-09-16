@@ -2,6 +2,11 @@ package dev.effect.intellij.lsp
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.eclipse.lsp4j.Diagnostic
+import org.eclipse.lsp4j.DiagnosticSeverity
+import org.eclipse.lsp4j.MarkupContent
+import org.eclipse.lsp4j.Position
+import org.eclipse.lsp4j.Range
+import org.eclipse.lsp4j.jsonrpc.messages.Either
 
 class EffectDiagnosticDirectivesTest : BasePlatformTestCase() {
     fun testDescriptorUsesEffectDiagnosticsCustomizer() {
@@ -103,6 +108,38 @@ class EffectDiagnosticDirectivesTest : BasePlatformTestCase() {
         assertNull(severity)
     }
 
+
+    fun testDiagnosticMessageTextHandlesEveryLsp4jShape() {
+        assertNull(EffectLsp4jDiagnosticMessage.textOf(null))
+        assertEquals("effect(foo)", EffectLsp4jDiagnosticMessage.textOf("effect(foo)"))
+        assertEquals("effect(foo)", EffectLsp4jDiagnosticMessage.textOf(Either.forLeft<String, MarkupContent>("effect(foo)")))
+        assertEquals(
+            "Prefer decodeSync. effect(preferTypedSchemaDecoder)",
+            EffectLsp4jDiagnosticMessage.textOf(
+                Either.forRight<String, MarkupContent>(MarkupContent("markdown", "Prefer decodeSync. effect(preferTypedSchemaDecoder)")),
+            ),
+        )
+        assertEquals("plain", EffectLsp4jDiagnosticMessage.textOf(MarkupContent("plaintext", "plain")))
+    }
+
+    fun testDiagnosticMessageIsReadReflectivelyFromTheRunningLsp4j() {
+        val diagnostic = Diagnostic().also { it.message = "Use Effect.forEach instead. effect(allOfMapToForEach)" }
+
+        assertEquals("Use Effect.forEach instead. effect(allOfMapToForEach)", EffectLsp4jDiagnosticMessage.text(diagnostic))
+        assertEquals("allOfMapToForEach", diagnostic.effectDiagnosticRuleName())
+    }
+
+    fun testSeverityOverrideCopiesTheMessageThroughTheCompatibilityAccessor() {
+        val diagnostic = effectDiagnostic("effect(strictEffectProvide)").also {
+            it.range = Range(Position(0, 0), Position(0, 1))
+        }
+
+        val adjusted = diagnostic.withEffectDirectiveSeverity(EffectDiagnosticDirectiveSeverity.ERROR)
+
+        assertEquals(DiagnosticSeverity.Error, adjusted.severity)
+        assertEquals("Effect diagnostic. effect(strictEffectProvide)", EffectLsp4jDiagnosticMessage.text(adjusted))
+        assertEquals("strictEffectProvide", adjusted.effectDiagnosticRuleName())
+    }
     private fun effectDiagnostic(messageSuffix: String): Diagnostic =
         Diagnostic().also { diagnostic ->
             diagnostic.message = "Effect diagnostic. $messageSuffix"
