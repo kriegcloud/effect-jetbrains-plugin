@@ -26,9 +26,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-private const val CURRENT_TSGO_VERSION = "0.45.0"
+private const val CURRENT_TSGO_VERSION = "0.48.1"
 private const val STABLE_TYPESCRIPT_HEAD = "2bd066d87f5bafd315be9f40889d0a60b9e58e0b"
-private const val NEXT_TYPESCRIPT_HEAD = "f3b04fe05642d53b4ff126a4af05fe2587b43748"
+private const val NEXT_TYPESCRIPT_HEAD = "0681ef7fa3a2378ccf49645b6d5b7463bdca74bb"
 
 class EffectBinaryServiceTest : BasePlatformTestCase() {
     private lateinit var server: HttpServer
@@ -111,7 +111,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
     }
 
     fun testLatestModeSelectsNextBinaryMatchingWorkspaceTypeScript() {
-        writeWorkspacePackage("typescript", "7.1.0-dev.20260909.1", NEXT_TYPESCRIPT_HEAD)
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260929.1", NEXT_TYPESCRIPT_HEAD)
         registerModernLatestEndpoints(CURRENT_TSGO_VERSION)
 
         val resolution = resolveLatest()
@@ -121,7 +121,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
 
     fun testLatestModeFallsBackToNativePreviewWhenTypescriptIsNotNative() {
         writeWorkspacePackage("typescript", "6.0.3", "typescript-six-head")
-        writeWorkspacePackage("@typescript/native-preview", "7.1.0-dev.20260909.1", NEXT_TYPESCRIPT_HEAD)
+        writeWorkspacePackage("@typescript/native-preview", "7.1.0-dev.20260929.1", NEXT_TYPESCRIPT_HEAD)
         registerModernLatestEndpoints(CURRENT_TSGO_VERSION)
 
         val resolution = resolveLatest()
@@ -192,7 +192,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
     }
 
     fun testLatestModeSelectsNextBinaryFromUpstreamManifest() {
-        writeWorkspacePackage("typescript", "7.1.0-dev.20260909.1", NEXT_TYPESCRIPT_HEAD)
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260929.1", NEXT_TYPESCRIPT_HEAD)
         registerManifestLatestEndpoints(CURRENT_TSGO_VERSION)
 
         val resolution = resolveLatest()
@@ -243,14 +243,23 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         )
     }
 
+    fun testLatestModeKeepsStandardLibraryBesideSelectedCompiler() {
+        writeWorkspacePackage("typescript", "7.0.2", STABLE_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION)
+
+        val resolution = resolveLatest()
+
+        assertEquals("latest-lib", Files.readString(resolution.binaryPath.resolveSibling("lib.d.ts")))
+    }
+
     fun testLatestModeSelectsNextArtifactBinaryFromComponentsManifest() {
-        writeWorkspacePackage("typescript", "7.1.0-dev.20260909.1", NEXT_TYPESCRIPT_HEAD)
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260929.1", NEXT_TYPESCRIPT_HEAD)
         registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION)
 
         val resolution = resolveLatest()
 
         assertEquals(
-            listOf("artifacts", "typescript", "7.1.0-dev.20260909.1", stableBinaryName),
+            listOf("artifacts", "typescript", "7.1.0-dev.20260929.1", stableBinaryName),
             packageRelativeSegments(resolution),
         )
     }
@@ -284,7 +293,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
     fun testLatestModeRepairsComponentsInstallationWhenArtifactDeleted() {
         val metadataRequests = AtomicInteger(0)
         val tarballRequests = AtomicInteger(0)
-        writeWorkspacePackage("typescript", "7.1.0-dev.20260909.1", NEXT_TYPESCRIPT_HEAD)
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260929.1", NEXT_TYPESCRIPT_HEAD)
         registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests = metadataRequests, tarballRequests = tarballRequests)
 
         val initial = resolveLatest()
@@ -314,7 +323,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
     fun testLatestModeParsesSchemaFiveComponentProviderShape() {
         val metadataRequests = AtomicInteger(0)
         val tarballRequests = AtomicInteger(0)
-        writeWorkspacePackage("typescript", "7.1.0-dev.20260909.1", NEXT_TYPESCRIPT_HEAD)
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260929.1", NEXT_TYPESCRIPT_HEAD)
         registerComponentsLatestEndpoints(
             CURRENT_TSGO_VERSION,
             schemaVersion = 5,
@@ -327,7 +336,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         val again = resolveLatest()
 
         assertEquals(
-            listOf("artifacts", "typescript", "7.1.0-dev.20260909.1", stableBinaryName),
+            listOf("artifacts", "typescript", "7.1.0-dev.20260929.1", stableBinaryName),
             packageRelativeSegments(resolution),
         )
         assertEquals(resolution.binaryPath, again.binaryPath)
@@ -354,7 +363,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
     }
 
     fun testLatestModeDoesNotUseCompatBinaryForNextComponent() {
-        writeWorkspacePackage("typescript", "7.1.0-dev.20260909.1", NEXT_TYPESCRIPT_HEAD)
+        writeWorkspacePackage("typescript", "7.1.0-dev.20260929.1", NEXT_TYPESCRIPT_HEAD)
         registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, includeNextArtifact = false)
 
         try {
@@ -802,7 +811,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
                     """{"tsVersion":"7.0.2","tsGitHead":"$STABLE_TYPESCRIPT_HEAD"}""",
                 "package/lib/$nextBinaryName" to "next-binary",
                 "package/lib/$nextBinaryName.json" to
-                    """{"tsVersion":"7.1.0-dev.20260909.1","tsGitHead":"$NEXT_TYPESCRIPT_HEAD"}""",
+                    """{"tsVersion":"7.1.0-dev.20260929.1","tsGitHead":"$NEXT_TYPESCRIPT_HEAD"}""",
             ),
         )
     }
@@ -816,7 +825,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
                 "package/lib/upstream.json" to
                     """
                     {"schemaVersion":2,"profiles":[
-                      {"kind":"ts","name":"next","ts":{"npmVersion":"7.1.0-dev.20260909.1","gitHead":"$NEXT_TYPESCRIPT_HEAD"},"binName":"tsc-next"},
+                      {"kind":"ts","name":"next","ts":{"npmVersion":"7.1.0-dev.20260929.1","gitHead":"$NEXT_TYPESCRIPT_HEAD"},"binName":"tsc-next"},
                       {"kind":"ts","name":"latest","ts":{"npmVersion":"7.0.2","gitHead":"$STABLE_TYPESCRIPT_HEAD"},"binName":"tsc"},
                       {"kind":"oxlint","name":"oxlint","ts":{"npmVersion":"7.0.2","gitHead":"$STABLE_TYPESCRIPT_HEAD"},"tsgolint":{"npmVersion":"7.0.2001","gitHead":"tsgolint-head"},"oxlint":{"npmVersion":"1.77.0","gitHead":"oxlint-head"}}
                     ]}
@@ -839,24 +848,28 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
             "package/lib/upstream.json" to
                 """
                 {"schemaVersion":$schemaVersion,
-                 "tags":{"typescript":{"latest":"7.0.2","next":"7.1.0-dev.20260909.1"},"oxlint":{"latest":"1.77.0"}},
+                 "tags":{"typescript":{"latest":"7.0.2","next":"7.1.0-dev.20260929.1"},"oxlint":{"latest":"1.77.0"},"oxlint-tsgolint":{"latest":"7.0.2001"}},
                  "components":{
                    "typescript":{
                      "7.0.2":{"gitHead":"$STABLE_TYPESCRIPT_HEAD"$latestProvider},
-                     "7.1.0-dev.20260909.1":{"gitHead":"$NEXT_TYPESCRIPT_HEAD"$nextProvider}
+                     "7.1.0-dev.20260929.1":{"gitHead":"$NEXT_TYPESCRIPT_HEAD"$nextProvider}
                    },
                    "oxlint":{"1.77.0":{"gitHead":"oxlint-head"}}
                  },
                  "profiles":[{"name":"vite-plus","description":"Vite+ compatibility runtime","dependencies":{"oxlint":"1.77.0"}}]}
                 """.trimIndent(),
             "package/lib/$stableBinaryName" to "compat-binary",
+            // Since 0.48.0 the compilers no longer embed the standard library; it ships beside each one.
+            "package/lib/lib.d.ts" to "compat-lib",
             "package/artifacts/oxlint-tsgolint/7.0.2001/tsgolint" to "tsgolint-binary",
         )
         if (includeLatestArtifact) {
             entries["package/artifacts/typescript/7.0.2/$stableBinaryName"] = "latest-binary"
+            entries["package/artifacts/typescript/7.0.2/lib.d.ts"] = "latest-lib"
         }
         if (includeNextArtifact) {
-            entries["package/artifacts/typescript/7.1.0-dev.20260909.1/$stableBinaryName"] = "next-binary"
+            entries["package/artifacts/typescript/7.1.0-dev.20260929.1/$stableBinaryName"] = "next-binary"
+            entries["package/artifacts/typescript/7.1.0-dev.20260929.1/lib.d.ts"] = "next-lib"
         }
         writeTarball(path, entries)
     }

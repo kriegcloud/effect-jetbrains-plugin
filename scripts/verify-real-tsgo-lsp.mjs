@@ -678,6 +678,22 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       "Expected floatingEffect code action to offer the yield* quick fix in yieldable contexts (published since @effect/tsgo 0.31.0)",
     )
 
+    for (const title of ["Replace with Effect.catchTag", "Replace with Effect.andThen"]) {
+      assert(codeActionTitles.includes(title), `Expected the "${title}" quick fix (published since @effect/tsgo 0.46.0)`)
+    }
+    assert(
+      diagnosticsForRule(diagnostics, "catchRefailToTapError").length === 1 &&
+        !codeActionTitles.some((title) => title.includes("Effect.tapError")),
+      "Expected one catchRefailToTapError suggestion without a rewrite (published since @effect/tsgo 0.46.0)",
+    )
+    for (const [rule, name] of [["unstableApiUsage", "unstablePreviewApi"], ["experimentalApiUsage", "experimentalPreviewApi"]]) {
+      const stability = diagnosticsForRule(diagnostics, rule)
+      assert(
+        stability.length === 1 && stability[0].severity === 2 && stability[0].message.includes(`#${name}\``),
+        `Expected one ${rule} warning naming the export as module#${name} (published since @effect/tsgo 0.47.0): ${JSON.stringify(stability)}`,
+      )
+    }
+
     const obsolete = diagnosticsForRule(diagnostics, "obsoleteSchemaImport")
     assert(obsolete.length === 1 && obsolete[0].severity === 2, "Expected one v4 obsoleteSchemaImport warning")
     const obsoleteActions = await client.request("textDocument/codeAction", {
@@ -698,7 +714,13 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       "Replace with Effect.succeedNone")
     const mappingEdits = await quickFixForDiagnostic(client, uri,
       diagnosticsForRule(diagnostics, "allOfMapToForEach")[0], "Replace with Effect.forEach")
-    const fixedText = applyTextEdits(text, [...someEdits, ...noneEdits, ...mappingEdits])
+    const catchTagEdits = await quickFixForDiagnostic(client, uri,
+      diagnosticsForRule(diagnostics, "catchIfTagToCatchTag")[0], "Replace with Effect.catchTag")
+    const andThenEdits = await quickFixForDiagnostic(client, uri,
+      diagnosticsForRule(diagnostics, "flatMapIgnoredParamToAndThen")[0], "Replace with Effect.andThen")
+    const fixedText = applyTextEdits(text, [...someEdits, ...noneEdits, ...mappingEdits, ...catchTagEdits, ...andThenEdits])
+    assert(/Effect\.catchTag\(\s*"NotFound"/.test(fixedText), "Expected tagged recovery after fix")
+    assert(fixedText.includes("Effect.andThen(constantNext)"), "Expected direct sequencing after fix")
     assert(fixedText.includes("Effect.succeedSome(42)"), "Expected direct Some constructor after fix")
     assert(fixedText.includes("Effect.succeedNone"), "Expected direct None constructor after fix")
     assert(fixedText.includes("Effect.forEach("), "Expected effectful array traversal after fix")
@@ -708,7 +730,9 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
     const fixedDiagnostics = await pullDiagnosticsWithRetries(client, uri, (candidate) =>
       diagnosticsForRule(candidate, "obsoleteSchemaImport").length === 1 &&
       diagnosticsForRule(candidate, "preferSucceedSomeOrNone").length === 0 &&
-      diagnosticsForRule(candidate, "allOfMapToForEach").length === 0)
+      diagnosticsForRule(candidate, "allOfMapToForEach").length === 0 &&
+      diagnosticsForRule(candidate, "catchIfTagToCatchTag").length === 0 &&
+      diagnosticsForRule(candidate, "flatMapIgnoredParamToAndThen").length === 0)
     // This workspace deliberately includes invalid examples for other diagnostics. Preserve
     // those baseline errors while proving the new rewrites introduce none of their own.
     const errorSignatures = (items) => items.filter((diagnostic) => diagnostic.severity === 1)
@@ -720,7 +744,7 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       diagnostics: messages,
       codeActionTitles,
       obsoleteSchemaImport: { severity: obsolete[0].severity, suppressionOnly: true },
-      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach"],
+      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach", "Effect.catchTag", "Effect.andThen"],
       quickFixBaselineErrorCount: errorSignatures(diagnostics).length,
       executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],
       workspacePath,
@@ -895,10 +919,10 @@ async function main() {
   }
 
   // typescript@7.0.2 has gitHead 2bd066d87f5bafd315be9f40889d0a60b9e58e0b,
-  // matching the native backend used for the recorded @effect/tsgo@0.45.0 smoke.
-  // effect is pinned to the rc release current at refresh kickoff so the verifier does not drift
-  // when the convenience dist-tag advances.
-  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-rc.115"]
+  // matching the native backend used for the recorded @effect/tsgo@0.48.1 smoke.
+  // effect is pinned to the exact release current at refresh kickoff so the verifier does not drift
+  // when the dist-tag advances.
+  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.1"]
   const result = {}
 
   if (only === "all" || only === "healthy") {

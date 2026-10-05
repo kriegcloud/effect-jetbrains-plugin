@@ -1,5 +1,5 @@
 import { Effect, Fiber, Metric } from "effect"
-import { DevTools } from "effect/unstable/devtools"
+import { DevTools } from "effect/devtools"
 import { pathToFileURL } from "node:url"
 
 // Shared with scripts/verify-instrumentation.mjs; importing does not start the app.

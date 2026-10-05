@@ -1,4 +1,4 @@
-import { Effect, Option, Schema, Scope } from "effect"
+import { Data, Effect, Option, Schema, Scope } from "effect"
 
 // @ts-expect-error obsolete package intentionally absent, as in the upstream v4 fixture
 import * as OldSchema from "@effect/schema/Schema"
@@ -59,3 +59,34 @@ export const floatingInGen = Effect.gen(function*() {
 
   return yield* second
 })
+
+class NotFound extends Data.TaggedError("NotFound")<{}> {}
+class Timeout extends Data.TaggedError("Timeout")<{}> {}
+
+declare const lookup: Effect.Effect<string, NotFound | Timeout>
+
+export const recovered = lookup.pipe(
+  Effect.catchIf(
+    (error) => error._tag === "NotFound",
+    () => Effect.succeed("guest")
+  )
+)
+
+const constantNext = Effect.succeed("next")
+
+export const sequenced = Effect.succeed(1).pipe(Effect.flatMap(() => constantNext))
+
+declare const save: Effect.Effect<void, Error>
+declare const rollback: Effect.Effect<void>
+
+export const rolledBack = save.pipe(
+  Effect.catch(error => rollback.pipe(Effect.andThen(Effect.fail(error))))
+)
+
+/** @stability unstable */
+export const unstablePreviewApi = () => 1
+
+/** @stability experimental */
+export const experimentalPreviewApi = () => 1
+
+export const stabilityUses = [unstablePreviewApi(), experimentalPreviewApi()]

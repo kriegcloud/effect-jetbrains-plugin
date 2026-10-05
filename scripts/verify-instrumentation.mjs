@@ -72,8 +72,8 @@ async function verifyRuntime(workspace) {
     const fiber = api.getCurrentFiber()
     assert.ok(fiber, "IDE current-fiber global must be populated while running")
     legacyFieldsAbsent = !("currentSpan" in fiber) && !("currentStackFrame" in fiber)
-    if (version === "4.0.0-rc.115") {
-      assert.ok(legacyFieldsAbsent, "Negative control: rc.115 must lack both legacy fields")
+    if (version !== "4.0.0-rc.112") {
+      assert.ok(legacyFieldsAbsent, `Negative control: ${version} must lack both legacy fields`)
       assert.ok(fiber.cache.span && fiber.cache.stackFrame)
     }
     snapshot = api.getFiberCurrentSpanStackSnapshot(fiber, 64)
@@ -111,8 +111,8 @@ async function main() {
     await verifyRuntime(args[1])
     return
   }
-  assert.ok(args.length === 0 || (args.length === 2 && args[0] === "--effect"), "Usage: node scripts/verify-instrumentation.mjs [--effect 4.0.0-rc.112,4.0.0-rc.115]")
-  const versions = args.length ? args[1].split(",") : ["4.0.0-rc.112", "4.0.0-rc.115"]
+  assert.ok(args.length === 0 || (args.length === 2 && args[0] === "--effect"), "Usage: node scripts/verify-instrumentation.mjs [--effect 4.0.0-rc.112,4.0.1]")
+  const versions = args.length ? args[1].split(",") : ["4.0.0-rc.112", "4.0.0-rc.115", "4.0.1"]
   assert.ok(versions.every((version) => /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(version)), "Use exact Effect versions")
   const results = []
   for (const version of versions) {
@@ -123,6 +123,12 @@ async function main() {
       manifest.dependencies.effect = version
       await writeFile(path.join(workspace, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
       await runCommand("npm", ["install", "--ignore-scripts", "--no-fund", "--no-audit", "--package-lock=false"], workspace)
+      const installed = JSON.parse(await readFile(path.join(workspace, "node_modules/effect/package.json"), "utf8"))
+      if (!("./devtools" in installed.exports)) {
+        // Releases before rc.118 publish DevTools under the unstable path; the fixture uses the stable one.
+        const entry = path.join(workspace, "index.mjs")
+        await writeFile(entry, (await readFile(entry, "utf8")).replace('"effect/devtools"', '"effect/unstable/devtools"'))
+      }
       const summary = await runCommand(process.execPath, [scriptPath, "--worker", workspace], workspace)
       results.push({ version, status: "PASS", summary, workspace })
     } catch (error) {
