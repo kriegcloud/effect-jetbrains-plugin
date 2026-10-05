@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.8]
+
+- Added five published rule names to Effect diagnostic directive completion: `catchIfTagToCatchTag`, `catchRefailToTapError`, and `flatMapIgnoredParamToAndThen` (0.46.0, deferred as unpublished in 0.1.7), plus `experimentalApiUsage` and `unstableApiUsage` (0.47.0, Effect v4 only, warning by default). The rule-name snapshot test now checks completion against all 118 rules in the 0.48.1 release tag.
+- Updated the real-binary LSP smoke target to `@effect/tsgo@0.48.1` and `effect@4.0.1`, the first stable Effect v4 line, keeping `typescript@7.0.2`. New fixture cases apply the `Replace with Effect.catchTag` and `Replace with Effect.andThen` quick fixes, check the rewrite-free `catchRefailToTapError` suggestion, and check that `unstableApiUsage` / `experimentalApiUsage` warn with the `module#exportName` form that `allowedUnstableApis` / `allowedExperimentalApis` match.
+- Followed Effect 4.0's move of DevTools from `effect/unstable/devtools` to `effect/devtools` (rc.118 and later) in the runtime smoke fixture. The DevTools wire schema, client, and server logic are unchanged across the move, so the plugin's decoder needs no change. `scripts/verify-instrumentation.mjs` now covers Effect `4.0.0-rc.112`, `4.0.0-rc.115`, and `4.0.1`, rewriting the fixture import for releases that predate the move.
+- Validated managed binary resolution against the published `@effect/tsgo@0.48.1` package. It keeps the schema-5 component manifest; since 0.48.0 the packaged compilers no longer embed the TypeScript standard library and ship `lib.*.d.ts` beside each executable instead. The plugin already extracts the whole package and launches the compiler in place, so no resolver change is needed; a regression test now asserts the library files stay beside the selected compiler.
+- Moved the compile target to the WebStorm 2026.2.3 stable build (`262.10968.77`) and advanced Plugin Verifier targets to WebStorm `263.6259.34` and IntelliJ IDEA Ultimate `263.6259.32`, retaining the `262`–`263.*` compatibility range.
+- Reconciled `gradleVersion` with the Gradle `9.8.0` wrapper and refreshed the six-reference provenance, published-package canary notes, and upstream behavior guidance; the tsgo, Effect, language-service, and IntelliJ template pins moved.
+
 ## [0.1.7]
 
 - Fixed diagnostic highlighting on WebStorm 2026.3 EAP `263.4732.34`, where the bundled lsp4j 1.0.0 changes `Diagnostic.getMessage()` from `String` to `Either<String, MarkupContent>` and caused `NoSuchMethodError` in 0.1.6. Diagnostic message reads and copies now use a reflection-based accessor compatible with both lsp4j shapes, with unit coverage for plain strings, Either string/markup values, and severity-override copying.

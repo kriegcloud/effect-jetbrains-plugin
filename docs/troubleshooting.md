@@ -72,7 +72,7 @@ returns `String`; 0.1.6's compiled call therefore fails on the new bundle.
 
 This is fixed in **0.1.7** by reading and copying diagnostic messages through a reflection-based
 accessor that accepts both return types, including Either values containing strings or markup.
-Install the 0.1.7 build and restart WebStorm. Changing the tsgo binary or clearing its cache does
+Install 0.1.7 or later and restart WebStorm. Changing the tsgo binary or clearing its cache does
 not repair this IDE-library mismatch. EAP verifier pins must track the newest build because bundled
 libraries can change within the same platform line.
 

@@ -48,9 +48,9 @@ for diagnostics that the source has explicitly disabled.
 
 ### Current TSGO Smoke Targets
 
-The current recorded real-binary smoke target is `@effect/tsgo@0.45.0` with
+The current recorded real-binary smoke target is `@effect/tsgo@0.48.1` with
 `typescript@7.0.2` (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) and
-`effect@4.0.0-rc.115`. In addition to the existing
+`effect@4.0.1`. In addition to the existing
 `catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, `newSchemaClass`, `catchToIgnore`
 (published as of 0.16.0), fixable `flatMapToMap` (as of 0.19.0), `missingPipeableSignature`
 (0.21.0, off by default), `schemaOpaqueInstanceMember` (0.22.0, **error by default**, Effect v4
@@ -69,14 +69,26 @@ suppression actions only), `preferSucceedSomeOrNone` and `allOfMapToForEach` (su
 warning in the fixture, with applied quick-fix edits), and `schemaSync` (off by default, enabled for
 one line by a directive). The four rules deferred in the previous refresh—`allOfMapToForEach`,
 `mapSomeToAsSome`, `catchDieToOrDie`, and `catchConditionalRefailToCatchIf`—are now published and
-included in directive completion. Completion covers all 113 published rules; the real-binary
-fixtures exercise a representative subset.
+included in directive completion.
 
-Three rules at the recorded source pin are newer than the 0.45.0 tag:
-`catchIfTagToCatchTag`, `flatMapIgnoredParamToAndThen`, and `catchRefailToTapError`. They remain
-excluded from completion and published-binary claims. Effect v4 samples must install the exact
-`effect@4.0.0-rc.115` smoke target because the `rc` dist-tag is a moving convenience alias and npm
-`effect` `latest` remains v3.
+The 0.48.1 refresh adds published-binary coverage for the fixable `catchIfTagToCatchTag` and
+`flatMapIgnoredParamToAndThen` (both 0.46.0, with applied `Replace with Effect.catchTag` /
+`Replace with Effect.andThen` edits), the v4-only `catchRefailToTapError` suggestion (0.46.0, no
+rewrite), and the v4-only `unstableApiUsage` / `experimentalApiUsage` warnings (0.47.0) for APIs
+tagged `@stability unstable` or `@stability experimental`. Those two report the declaration as
+`package/module#exportName`; since 0.48.0 the `allowedUnstableApis` and `allowedExperimentalApis`
+plugin options accept either a whole module or that per-export form. Completion covers all 118
+published rules; the real-binary fixtures exercise a representative subset. The recorded source pin
+is the 0.48.1 release commit, so no rule is deferred as unpublished.
+
+Since 0.46.0 an unknown rule name in `diagnosticSeverity` reports `effect(unknownRuleName)` in
+`tsconfig.json`, and a `strict` preset promotes every default-enabled diagnostic to an error. Both
+are upstream configuration behavior; the plugin does not manage presets.
+
+npm `effect` `latest` is now the stable v4 line. Samples install the exact `effect@4.0.1` smoke
+target so the verifier does not drift when the dist-tag advances. Effect 4.0 publishes former
+`effect/unstable/*` modules at top-level paths, so a DevTools client imports from `effect/devtools`
+(`effect/unstable/devtools` before rc.118).
 
 Upstream rule metadata now marks `genericEffectServices` as v3-only and `schemaSyncInEffect` as
 v3 + v4. `unsafeEffectTypeAssertion` moves from `effectNative` to `correctness`, including its
@@ -131,10 +143,10 @@ Equivalent raw JSON example:
 
 ### Recorded Real-Binary Smoke
 
-On September 16, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
-for `@effect/tsgo@0.45.0`; fixture workspaces install the validated `typescript@7.0.2` package
+On October 5, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
+for `@effect/tsgo@0.48.1`; fixture workspaces install the validated `typescript@7.0.2` package
 (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`, confirmed identical to the tarball's
-`lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.0.0-rc.115` release.
+`lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.0.1` release.
 All four lanes passed against that fixed pair.
 
 Command (since 0.32.0 the packaged executables live under `artifacts/typescript/<version>/`; the
@@ -167,7 +179,7 @@ Observed through LSP:
   `strictEffectProvide` and `floatingEffect` findings, then surfaced them again when re-enabled.
   The next-line `schemaSync:warning` directive enabled exactly one warning and did not affect the
   default-off examples before or after it.
-- The published `0.45.0` server still did not advertise `executeCommandProvider.commands`, so the local
+- The published `0.48.1` server still did not advertise `executeCommandProvider.commands`, so the local
   Mermaid graph action remains experimental; hover Mermaid links are the supported path.
 
 ### Runtime Instrumentation Smoke
