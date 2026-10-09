@@ -29,7 +29,7 @@ TypeScript and JavaScript files.
 | Feature | Status | Notes |
 | --- | --- | --- |
 | Diagnostics | Implemented | Delivered through JetBrains LSP support |
-| Code actions | Implemented | Uses standard LSP code-action flows |
+| Code actions | Implemented | Uses standard LSP code-action flows; every Effect codemod quick fix also offers "Fix all '…' problems in file" in its submenu |
 | Completion | Implemented | Uses standard LSP completion |
 | Hover | Implemented | Uses standard LSP hover / quick documentation |
 | Inlay hints | Implemented | Available on the `262.*`/`263.*` platform baseline |
@@ -45,6 +45,30 @@ Effect diagnostic directive comments such as `// @effect-diagnostics-next-line s
 and `/** @effect-diagnostics floatingEffect:skip-file */` are honored before LSP diagnostics become
 JetBrains editor annotations. This keeps manual server configurations from showing stale red squiggles
 for diagnostics that the source has explicitly disabled.
+
+### Fix all problems of one rule in a file
+
+Every codemod quick fix that `@effect/tsgo` offers on an Effect diagnostic (for example `Replace
+yield* Effect.fail with yield*`, `Replace with Effect.map`, or `Add yield* statement`) carries a
+submenu entry (the `…`/right-arrow next to the fix in the Alt+Enter popup) named
+**Fix all '<fix title>' problems in file**. Choosing it:
+
+1. asks the running Effect language server for the file's current diagnostics
+   (`textDocument/diagnostic`),
+2. keeps the diagnostics of the same rule that no `@effect-diagnostics` directive silences,
+3. requests their quick fixes in one `textDocument/codeAction` call, and
+4. applies the fixes whose title matches the chosen one as a single undoable edit.
+
+A fix at another site counts as "the same" when its title is identical, or differs only inside
+quotes (`Remove redundant identifier 'x'` / `'y'`, `Convert to Effect.fn("a")` / `("b")`). Rules that
+offer different rewrites per site (`Catch all errors with Effect.catch/catchAll` vs `Catch unexpected
+errors with Effect.catchTag`) only apply the exact variant you picked, and a site where several fixes
+share one title shape is skipped rather than guessed; skipped sites are reported, not rewritten
+differently. Fixes whose edits overlap an already-applied fix are left
+for a second run, and a notification reports anything that was skipped. The `Disable <rule> for this
+line` / `for entire file` directive fixes have no fix-all entry. `@effect/tsgo` itself only produces
+combined "fix all" actions for providers that implement `GetAllCodeActions`, which the Effect
+fixables do not, so this is a plugin-side feature.
 
 ### Current TSGO Smoke Targets
 

@@ -57,6 +57,7 @@ The repository also carries a real-binary probe script for `@effect/tsgo`:
 node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc
 node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only new-diagnostics
 node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only diagnostic-directives
+node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only fix-all
 ```
 
 The verifier copies its fixtures to temporary directories and installs the validated
@@ -64,6 +65,12 @@ The verifier copies its fixtures to temporary directories and installs the valid
 `effect@4.0.1`. The recorded published native target is `@effect/tsgo@0.48.1`. It does not
 install `@effect/language-service`: that string is the `compilerOptions.plugins[].name` consumed by
 the language service already compiled into `@effect/tsgo`.
+
+The `fix-all` lane mirrors the plugin's "Fix all '…' problems in file" pipeline against the real
+binary: it pulls the fixture's diagnostics, sends every `missingStarInYieldEffectGen` diagnostic in a
+single `textDocument/codeAction` request, checks that the server links one codemod per diagnostic
+under a shared title, applies the merged edits, and confirms the rule clears while an unrelated
+`floatingEffect` finding survives.
 
 The new cases check `obsoleteSchemaImport` warning severity and suppression-only actions, apply
 `preferSucceedSomeOrNone` / `allOfMapToForEach` edits and verify that the findings clear without new
