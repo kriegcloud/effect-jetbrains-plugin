@@ -29,7 +29,7 @@ function parseArgs(argv) {
 
 const { binary, only = "all" } = parseArgs(process.argv.slice(2))
 if (!binary) {
-  console.error("Usage: node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/tsgo [--only healthy|failing|new-diagnostics|diagnostic-directives|all]")
+  console.error("Usage: node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/tsgo [--only healthy|failing|new-diagnostics|diagnostic-directives|fix-all|all]")
   process.exit(1)
 }
 
@@ -678,6 +678,22 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       "Expected floatingEffect code action to offer the yield* quick fix in yieldable contexts (published since @effect/tsgo 0.31.0)",
     )
 
+    for (const title of ["Replace with Effect.catchTag", "Replace with Effect.andThen"]) {
+      assert(codeActionTitles.includes(title), `Expected the "${title}" quick fix (published since @effect/tsgo 0.46.0)`)
+    }
+    assert(
+      diagnosticsForRule(diagnostics, "catchRefailToTapError").length === 1 &&
+        !codeActionTitles.some((title) => title.includes("Effect.tapError")),
+      "Expected one catchRefailToTapError suggestion without a rewrite (published since @effect/tsgo 0.46.0)",
+    )
+    for (const [rule, name] of [["unstableApiUsage", "unstablePreviewApi"], ["experimentalApiUsage", "experimentalPreviewApi"]]) {
+      const stability = diagnosticsForRule(diagnostics, rule)
+      assert(
+        stability.length === 1 && stability[0].severity === 2 && stability[0].message.includes(`#${name}\``),
+        `Expected one ${rule} warning naming the export as module#${name} (published since @effect/tsgo 0.47.0): ${JSON.stringify(stability)}`,
+      )
+    }
+
     const obsolete = diagnosticsForRule(diagnostics, "obsoleteSchemaImport")
     assert(obsolete.length === 1 && obsolete[0].severity === 2, "Expected one v4 obsoleteSchemaImport warning")
     const obsoleteActions = await client.request("textDocument/codeAction", {
@@ -698,7 +714,13 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       "Replace with Effect.succeedNone")
     const mappingEdits = await quickFixForDiagnostic(client, uri,
       diagnosticsForRule(diagnostics, "allOfMapToForEach")[0], "Replace with Effect.forEach")
-    const fixedText = applyTextEdits(text, [...someEdits, ...noneEdits, ...mappingEdits])
+    const catchTagEdits = await quickFixForDiagnostic(client, uri,
+      diagnosticsForRule(diagnostics, "catchIfTagToCatchTag")[0], "Replace with Effect.catchTag")
+    const andThenEdits = await quickFixForDiagnostic(client, uri,
+      diagnosticsForRule(diagnostics, "flatMapIgnoredParamToAndThen")[0], "Replace with Effect.andThen")
+    const fixedText = applyTextEdits(text, [...someEdits, ...noneEdits, ...mappingEdits, ...catchTagEdits, ...andThenEdits])
+    assert(/Effect\.catchTag\(\s*"NotFound"/.test(fixedText), "Expected tagged recovery after fix")
+    assert(fixedText.includes("Effect.andThen(constantNext)"), "Expected direct sequencing after fix")
     assert(fixedText.includes("Effect.succeedSome(42)"), "Expected direct Some constructor after fix")
     assert(fixedText.includes("Effect.succeedNone"), "Expected direct None constructor after fix")
     assert(fixedText.includes("Effect.forEach("), "Expected effectful array traversal after fix")
@@ -708,7 +730,9 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
     const fixedDiagnostics = await pullDiagnosticsWithRetries(client, uri, (candidate) =>
       diagnosticsForRule(candidate, "obsoleteSchemaImport").length === 1 &&
       diagnosticsForRule(candidate, "preferSucceedSomeOrNone").length === 0 &&
-      diagnosticsForRule(candidate, "allOfMapToForEach").length === 0)
+      diagnosticsForRule(candidate, "allOfMapToForEach").length === 0 &&
+      diagnosticsForRule(candidate, "catchIfTagToCatchTag").length === 0 &&
+      diagnosticsForRule(candidate, "flatMapIgnoredParamToAndThen").length === 0)
     // This workspace deliberately includes invalid examples for other diagnostics. Preserve
     // those baseline errors while proving the new rewrites introduce none of their own.
     const errorSignatures = (items) => items.filter((diagnostic) => diagnostic.severity === 1)
@@ -720,7 +744,7 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       diagnostics: messages,
       codeActionTitles,
       obsoleteSchemaImport: { severity: obsolete[0].severity, suppressionOnly: true },
-      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach"],
+      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach", "Effect.catchTag", "Effect.andThen"],
       quickFixBaselineErrorCount: errorSignatures(diagnostics).length,
       executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],
       workspacePath,
@@ -887,18 +911,150 @@ async function verifyFailingWorkspace(workspacePath) {
   }
 }
 
+// Mirrors the plugin's "Fix all '…' problems in file" pipeline (EffectFixAllInFileService): pull the
+// file's diagnostics, keep the ones of one rule, ask for all of their quick fixes in a single
+// textDocument/codeAction request, keep the fixes whose title matches the chosen one, apply the
+// non-overlapping edits, and check the rule is gone while other rules are untouched.
+const DISABLE_DIRECTIVE_FIX_TITLE = /^Disable \S+ for (?:this line|entire file)$/
+
+function diagnosticKey(diagnostic) {
+  const { start, end } = diagnostic.range
+  return `${start.line}:${start.character}-${end.line}:${end.character}:${diagnostic.code ?? ""}`
+}
+
+async function verifyFixAllWorkspace(workspacePath) {
+  const filePath = path.join(workspacePath, "src", "index.ts")
+  const text = await readFile(filePath, "utf8")
+  const uri = pathToFileURL(filePath).href
+  const workspaceUri = pathToFileURL(workspacePath).href
+  const client = new LspClient(binary, ["--lsp", "--stdio"], workspacePath)
+  try {
+    const initializeResult = await client.request("initialize", {
+      processId: process.pid,
+      clientInfo: { name: "effect-jetbrains-plugin-lsp-verifier", version: "1" },
+      rootPath: workspacePath,
+      rootUri: workspaceUri,
+      workspaceFolders: [
+        {
+          uri: workspaceUri,
+          name: path.basename(workspacePath),
+        },
+      ],
+      capabilities: {
+        textDocument: {
+          codeAction: {
+            codeActionLiteralSupport: {
+              codeActionKind: {
+                valueSet: ["quickfix", "refactor", "source"],
+              },
+            },
+          },
+        },
+      },
+      workspace: {},
+    })
+    console.error("fix-all capabilities:", JSON.stringify(initializeResult.capabilities ?? {}, null, 2))
+    assert(initializeResult.capabilities?.diagnosticProvider, "Fix all relies on pull diagnostics (textDocument/diagnostic)")
+    client.notify("initialized", {})
+    client.notify("workspace/didChangeConfiguration", { settings: {} })
+    client.notify("textDocument/didOpen", {
+      textDocument: {
+        uri,
+        languageId: "typescript",
+        version: 1,
+        text,
+      },
+    })
+
+    const rule = "missingStarInYieldEffectGen"
+    const diagnostics = await pullDiagnosticsWithRetries(
+      client,
+      uri,
+      (candidates) => diagnosticsForRule(candidates, rule).length >= 3 &&
+        diagnosticsForRule(candidates, "floatingEffect").length >= 1,
+    )
+    const selected = diagnosticsForRule(diagnostics, rule)
+    assert(selected.length === 3, `Expected three ${rule} diagnostics, received ${selected.length}`)
+    assert(
+      selected.every((diagnostic) => Number.isInteger(diagnostic.code) && diagnostic.code >= 377000 && diagnostic.code <= 377999),
+      `Expected Effect diagnostic codes in the 377000 range; received ${JSON.stringify(selected.map((diagnostic) => diagnostic.code))}`,
+    )
+
+    // One request for every diagnostic of the rule, exactly like the plugin sends it.
+    const codeActions = await client.request("textDocument/codeAction", {
+      textDocument: { uri },
+      range: fullDocumentRange(text),
+      context: { diagnostics: selected, only: ["quickfix"] },
+    })
+    assert(Array.isArray(codeActions) && codeActions.length > 0, "Expected quick fixes for the selected diagnostics")
+
+    const codemodsByDiagnostic = new Map()
+    for (const action of codeActions) {
+      if (action.kind && action.kind !== "quickfix" && !String(action.kind).startsWith("quickfix.")) continue
+      if (DISABLE_DIRECTIVE_FIX_TITLE.test(String(action.title ?? "").trim())) continue
+      for (const diagnostic of action.diagnostics ?? []) {
+        const key = diagnosticKey(diagnostic)
+        codemodsByDiagnostic.set(key, [...(codemodsByDiagnostic.get(key) ?? []), action])
+      }
+    }
+    for (const diagnostic of selected) {
+      assert(
+        (codemodsByDiagnostic.get(diagnosticKey(diagnostic)) ?? []).length > 0,
+        `Expected the server to link a codemod to the ${rule} diagnostic on line ${diagnostic.range.start.line}`,
+      )
+    }
+
+    const fixTitle = codemodsByDiagnostic.get(diagnosticKey(selected[0]))[0].title
+    const chosen = selected.map((diagnostic) => {
+      const action = (codemodsByDiagnostic.get(diagnosticKey(diagnostic)) ?? []).find((candidate) => candidate.title === fixTitle)
+      assert(action, `Expected "${fixTitle}" for the ${rule} diagnostic on line ${diagnostic.range.start.line}`)
+      const edits = action.edit?.changes?.[uri] ?? action.edit?.documentChanges
+        ?.filter((change) => change.textDocument?.uri === uri).flatMap((change) => change.edits) ?? []
+      assert(edits.length > 0, `Expected text edits for "${fixTitle}" on line ${diagnostic.range.start.line}`)
+      return edits
+    })
+    const fixedText = applyTextEdits(text, chosen.flat())
+    assert(fixedText !== text, "Expected the merged fix-all edits to change the file")
+
+    client.notify("textDocument/didChange", {
+      textDocument: { uri, version: 2 },
+      contentChanges: [{ text: fixedText }],
+    })
+    const remaining = await pullDiagnosticsWithRetries(
+      client,
+      uri,
+      (candidates) => diagnosticsForRule(candidates, rule).length === 0 &&
+        diagnosticsForRule(candidates, "floatingEffect").length >= 1,
+    )
+    assert(diagnosticsForRule(remaining, rule).length === 0, `Expected no ${rule} diagnostics after fix all`)
+    assert(diagnosticsForRule(remaining, "floatingEffect").length >= 1, "Expected unrelated floatingEffect diagnostic to survive fix all")
+    assert(!fixedText.includes("yield Effect.succeed("), "Expected every plain yield to be rewritten")
+
+    return {
+      rule,
+      fixTitle,
+      fixedDiagnostics: selected.length,
+      codeActionTitles: codeActions.map((action) => action.title),
+      remainingRules: [...new Set(remaining.map((diagnostic) => String(diagnostic.message ?? "").match(/effect\(([^)]+)\)\s*$/)?.[1]).filter(Boolean))],
+      workspacePath,
+    }
+  } finally {
+    await client.shutdown()
+  }
+}
+
 async function main() {
   await chmod(binary, 0o755).catch(() => {})
-  const validOnlyValues = new Set(["all", "healthy", "failing", "new-diagnostics", "diagnostic-directives"])
+  const validOnlyValues = new Set(["all", "healthy", "failing", "new-diagnostics", "diagnostic-directives", "fix-all"])
   if (!validOnlyValues.has(only)) {
     throw new Error(`Invalid --only value: ${only}`)
   }
 
   // typescript@7.0.2 has gitHead 2bd066d87f5bafd315be9f40889d0a60b9e58e0b,
-  // matching the native backend used for the recorded @effect/tsgo@0.45.0 smoke.
-  // effect is pinned to the rc release current at refresh kickoff so the verifier does not drift
-  // when the convenience dist-tag advances.
-  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.0-rc.115"]
+  // matching the native backend used for the recorded @effect/tsgo@0.48.1 smoke.
+  // effect is pinned to the exact release current at refresh kickoff so the verifier does not drift
+  // when the dist-tag advances.
+  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.1"]
   const result = {}
 
   if (only === "all" || only === "healthy") {
@@ -923,6 +1079,12 @@ async function main() {
     const diagnosticDirectivesWorkspace = await copyFixtureWorkspace("diagnostic-directives-workspace")
     await runCommand("npm", ["install", "--no-fund", "--no-audit", ...workspaceDependencies], diagnosticDirectivesWorkspace)
     result.diagnosticDirectives = await verifyDiagnosticDirectivesWorkspace(diagnosticDirectivesWorkspace)
+  }
+
+  if (only === "all" || only === "fix-all") {
+    const fixAllWorkspace = await copyFixtureWorkspace("fix-all-workspace")
+    await runCommand("npm", ["install", "--no-fund", "--no-audit", ...workspaceDependencies], fixAllWorkspace)
+    result.fixAll = await verifyFixAllWorkspace(fixAllWorkspace)
   }
 
   console.log(JSON.stringify(result, null, 2))

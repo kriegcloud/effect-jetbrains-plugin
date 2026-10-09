@@ -39,9 +39,9 @@ The current plugin baseline is:
 
 | IDE | Status | Notes |
 | --- | --- | --- |
-| WebStorm `2026.2` (stable) | Primary target | The compile target is the pinned `262.10315.144` stable build; `runIde` and verifier coverage run against it. |
-| WebStorm `2026.3` EAP | Primary target | Plugin Verifier and the `runIdeVerifierWebStorm` sandbox target the pinned `263.4732.34` EAP build. |
-| IntelliJ IDEA Ultimate `2026.3` EAP | Secondary target | Plugin Verifier targets the pinned `263.4732.28` IDEA EAP build. |
+| WebStorm `2026.2` (stable) | Primary target | The compile target is the pinned `262.10968.77` stable build; `runIde` and verifier coverage run against it. |
+| WebStorm `2026.3` EAP | Primary target | Plugin Verifier and the `runIdeVerifierWebStorm` sandbox target the pinned `263.6259.34` EAP build. |
+| IntelliJ IDEA Ultimate `2026.3` EAP | Secondary target | Plugin Verifier targets the pinned `263.6259.32` IDEA EAP build. |
 | Unified PyCharm `2025.1+` | Later target | Not a current compatibility promise. |
 | IntelliJ IDEA Community Edition | Unsupported | JetBrains public LSP support is out of scope here. |
 | Android Studio | Unsupported | Not a supported target for this plugin. |
@@ -116,11 +116,10 @@ The shipped artifact is intended for the WebStorm/IntelliJ Platform `262.*` and 
 real-binary LSP smoke exists for the checked-in fixtures; full manual IDE/editor smoke and broader
 semantic coverage remain follow-up validation items.
 
-The recorded native LSP smoke uses `@effect/tsgo@0.45.0`, `typescript@7.0.2`, and
-`effect@4.0.0-rc.115`. New cases cover `obsoleteSchemaImport`, applied
-`preferSucceedSomeOrNone` / `allOfMapToForEach` fixes, and opt-in `schemaSync`. The post-tag rules
-`catchIfTagToCatchTag`, `flatMapIgnoredParamToAndThen`, and `catchRefailToTapError` remain excluded
-from published-binary coverage and directive completion.
+The recorded native LSP smoke uses `@effect/tsgo@0.48.1`, `typescript@7.0.2`, and
+`effect@4.0.1`. New cases cover applied `catchIfTagToCatchTag` / `flatMapIgnoredParamToAndThen`
+fixes, the `catchRefailToTapError` suggestion, and the `unstableApiUsage` / `experimentalApiUsage`
+warnings. Directive completion covers all 118 published rules.
 
 The instrumentation verifier reuses the repository's
 [`runtime smoke app`](src/test/testData/fixtures/runtime/smoke-app/) to check real Effect runtimes

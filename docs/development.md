@@ -35,9 +35,9 @@ with `DirectoryLock$CannotActivateException` / exit code 6. Confirm no sandbox I
 and delete those files before the release command. Every sandbox boot also gets its own
 `XDG_CONFIG_HOME` under `build/sandbox-xdg/config`, so the IDE's `plasmashell --version` desktop
 probe cannot touch the host Plasma configuration.
-Plugin Verifier targets WebStorm stable `262.10315.144`, WebStorm 2026.3 EAP `263.4732.34`, and
-IntelliJ IDEA Ultimate 2026.3 EAP `263.4732.28` (`pluginVerifierIntelliJIdeaVersion`). The declared
-`gradleVersion` matches the `9.7.1` wrapper.
+Plugin Verifier targets WebStorm stable `262.10968.77`, WebStorm 2026.3 EAP `263.6259.34`, and
+IntelliJ IDEA Ultimate 2026.3 EAP `263.6259.32` (`pluginVerifierIntelliJIdeaVersion`). The declared
+`gradleVersion` matches the `9.8.0` wrapper.
 
 EAP verifier pins must track the newest build: bundled libraries can change within a platform line.
 The move to `263.4732.x` exposed lsp4j 1.0.0's `Diagnostic.getMessage()` return-type change from
@@ -57,38 +57,48 @@ The repository also carries a real-binary probe script for `@effect/tsgo`:
 node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc
 node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only new-diagnostics
 node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only diagnostic-directives
+node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only fix-all
 ```
 
 The verifier copies its fixtures to temporary directories and installs the validated
 `typescript@7.0.2` package (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) plus
-`effect@4.0.0-rc.115`. The recorded published native target is `@effect/tsgo@0.45.0`. It does not
+`effect@4.0.1`. The recorded published native target is `@effect/tsgo@0.48.1`. It does not
 install `@effect/language-service`: that string is the `compilerOptions.plugins[].name` consumed by
 the language service already compiled into `@effect/tsgo`.
 
+The `fix-all` lane mirrors the plugin's "Fix all '…' problems in file" pipeline against the real
+binary: it pulls the fixture's diagnostics, sends every `missingStarInYieldEffectGen` diagnostic in a
+single `textDocument/codeAction` request, checks that the server links one codemod per diagnostic
+under a shared title, applies the merged edits, and confirms the rule clears while an unrelated
+`floatingEffect` finding survives.
+
 The new cases check `obsoleteSchemaImport` warning severity and suppression-only actions, apply
 `preferSucceedSomeOrNone` / `allOfMapToForEach` edits and verify that the findings clear without new
-errors, and enable default-off `schemaSync` for exactly one line. The rule-name snapshot at
-`src/test/testData/tsgo/rule-names-0.45.0.json` comes from release tag `54bbc1e7`; a Kotlin test checks
-completion against all 113 names. `catchIfTagToCatchTag`, `flatMapIgnoredParamToAndThen`, and
-`catchRefailToTapError` are post-tag source rules and remain excluded from that snapshot and
-published-binary claims.
+errors, and enable default-off `schemaSync` for exactly one line. The 0.48.1 cases also apply the
+`catchIfTagToCatchTag` / `flatMapIgnoredParamToAndThen` edits, expect one rewrite-free
+`catchRefailToTapError` suggestion, and expect `unstableApiUsage` / `experimentalApiUsage` warnings
+that name a local `@stability`-tagged export as `module#exportName`. The rule-name snapshot at
+`src/test/testData/tsgo/rule-names-0.48.1.json` comes from release tag `d1e539c4`; a Kotlin test checks
+completion against all 118 names. The source pin is that release commit, so nothing is deferred.
 
 The runtime companion probe exercises the plugin's actual injected instrumentation:
 
 ```bash
 node scripts/verify-instrumentation.mjs
-node scripts/verify-instrumentation.mjs --effect 4.0.0-rc.115
+node scripts/verify-instrumentation.mjs --effect 4.0.1
 ```
 
-By default it installs exact Effect v4 release candidates 112 and 115 in separate temporary
+By default it installs exact Effect `4.0.0-rc.112`, `4.0.0-rc.115`, and `4.0.1` in separate temporary
 workspaces copied from [`smoke-app`](../src/test/testData/fixtures/runtime/smoke-app/). It checks
 inner-to-outer span stacks, source locations, pause-on-defect reveal state, current/alive fibers,
 and interruption. Structural controls exercise legacy v3/older-v4 fields and cache precedence;
-the real rc.115 negative control proves the removed fields are absent. The `--effect` option takes
+the real rc.115 and 4.0.1 negative controls prove the removed fields are absent. The fixture imports
+DevTools from `effect/devtools`; for releases that predate that path (before rc.118) the verifier
+rewrites its temporary copy to `effect/unstable/devtools`. The `--effect` option takes
 a comma-separated list of exact versions. Network access to npm is required; Node 22+ supplies the
 global WebSocket used by the runtime fixture.
 
-The same fixture app pins `effect@4.0.0-rc.115` and `typescript@7.0.2` for manual smoke, with
+The same fixture app pins `effect@4.0.1` and `typescript@7.0.2` for manual smoke, with
 `index.mjs` (DevTools client, nested spans, metrics, periodic failures, defect loop, and an
 interruptible `Effect.never` fiber), `example.ts`, and
 [`SMOKE_CHECKLIST.md`](../src/test/testData/fixtures/runtime/smoke-app/SMOKE_CHECKLIST.md). To run it:
@@ -152,8 +162,10 @@ Use the resulting Effect-patched native binary path in `MANUAL` mode. Current pu
 (0.32.0+) ship per-version `tsc` executables under `artifacts/typescript/<version>/` with a `lib/tsc`
 compatibility copy of the `latest` build; 0.19.0–0.31.x called their binaries `lib/tsc` and
 `lib/tsc-next` (0.26.0 replaced their per-binary JSON metadata with `lib/upstream.json`), and older
-source builds may still produce `tsgo`. Version 0.45.0 retains the schema-5 component manifest and
-TypeScript provider metadata without changing those executable paths. This is the route
+source builds may still produce `tsgo`. Version 0.48.1 retains the schema-5 component manifest and
+TypeScript provider metadata without changing those executable paths; since 0.48.0 each compiler
+needs the `lib.*.d.ts` files shipped beside it, so point `--binary` at the executable inside an
+intact extracted package rather than a lone copied file. This is the route
 for validating the `_effectGetLayerMermaid` execute-command bridge before it exists in a published
 package.
 

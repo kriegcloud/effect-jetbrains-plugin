@@ -9,6 +9,8 @@
   "catchChainToFirstSuccessOf",
   "catchConditionalRefailToCatchIf",
   "catchDieToOrDie",
+  "catchIfTagToCatchTag",
+  "catchRefailToTapError",
   "catchTagToCatchReason",
   "catchToIgnore",
   "catchToOrElseSucceed",
@@ -28,8 +30,10 @@
   "effectMapFlatten",
   "effectMapVoid",
   "effectSucceedWithVoid",
+  "experimentalApiUsage",
   "extendsNativeError",
   "flatMapConditionalToFilterOrFail",
+  "flatMapIgnoredParamToAndThen",
   "flatMapToMap",
   "floatingEffect",
   "floatingEffectInVitest",
@@ -111,5 +115,6 @@
   "unnecessaryPipe",
   "unnecessaryPipeChain",
   "unnecessaryTypeofType",
-  "unsafeEffectTypeAssertion"
+  "unsafeEffectTypeAssertion",
+  "unstableApiUsage"
 ]

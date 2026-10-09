@@ -11,7 +11,9 @@
         "name": "@effect/language-service",
         "diagnosticSeverity": {
           "preferSucceedSomeOrNone": "warning",
-          "allOfMapToForEach": "warning"
+          "allOfMapToForEach": "warning",
+          "catchIfTagToCatchTag": "warning",
+          "flatMapIgnoredParamToAndThen": "warning"
         }
       }
     ]

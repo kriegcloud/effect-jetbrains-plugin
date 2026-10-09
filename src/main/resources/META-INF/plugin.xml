@@ -27,6 +27,7 @@
         <projectService serviceImplementation="dev.effect.intellij.devtools.EffectDevToolsService"/>
         <projectService serviceImplementation="dev.effect.intellij.lsp.EffectLayerMermaidService"/>
         <projectService serviceImplementation="dev.effect.intellij.lsp.EffectLspProjectService"/>
+        <projectService serviceImplementation="dev.effect.intellij.lsp.fixall.EffectFixAllInFileService"/>
         <projectService serviceImplementation="dev.effect.intellij.settings.EffectProjectSettingsService"/>
         <projectService serviceImplementation="dev.effect.intellij.settings.EffectTsconfigSyncService"/>
         <projectService serviceImplementation="dev.effect.intellij.status.EffectStatusService"/>
