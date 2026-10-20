@@ -90,8 +90,12 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
     fun validate(settings: EffectProjectSettings = currentSettings()): List<SettingProblem> {
         val problems = mutableListOf<SettingProblem>()
 
-        if (settings.binaryMode == EffectBinaryMode.PINNED && settings.pinnedVersion.isBlank()) {
-            problems += SettingProblem("pinnedVersion", "Pinned mode requires a package version.")
+        if (settings.binaryMode == EffectBinaryMode.PINNED) {
+            if (settings.pinnedVersion.isBlank()) {
+                problems += SettingProblem("pinnedVersion", "Pinned mode requires a package version.")
+            } else if (!EffectWorkspaceTsgoDetector.isExactVersion(settings.pinnedVersion)) {
+                problems += SettingProblem("pinnedVersion", PINNED_VERSION_SHAPE_MESSAGE)
+            }
         }
 
         if (settings.binaryMode == EffectBinaryMode.MANUAL) {
@@ -184,6 +188,10 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
     }
 
     companion object {
+        const val PINNED_VERSION_SHAPE_MESSAGE: String =
+            "Pinned mode requires an exact @effect/tsgo version such as 0.54.1, not a range, URL, or file path. " +
+                "Use Manual mode to launch a local binary."
+
         fun getInstance(project: Project): EffectProjectSettingsService = project.getService(EffectProjectSettingsService::class.java)
     }
 }

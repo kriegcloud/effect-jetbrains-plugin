@@ -492,6 +492,29 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         assertTrue(Files.exists(resolution.binaryPath))
     }
 
+    fun testPinnedModeRejectsNonVersionBeforeContactingRegistry() {
+        val metadataRequests = AtomicInteger(0)
+        writeWorkspacePackage("typescript", "7.0.2", STABLE_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests = metadataRequests)
+        val binaryService = EffectBinaryService.getInstance()
+        binaryService.registryBaseUrl = "http://127.0.0.1:${server.address.port}"
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.PINNED,
+                pinnedVersion = workspaceRoot().resolve("node_modules/@effect/tsgo-linux-x64/lib/tsc").toString(),
+            ),
+        )
+
+        try {
+            binaryService.ensureAvailable(project)
+            fail("Expected a pinned path to be rejected")
+        } catch (error: EffectBinaryException) {
+            assertTrue(error.message, error.message!!.contains("not an exact npm version"))
+            assertTrue(error.message, error.message!!.contains("Manual mode"))
+        }
+        assertEquals(0, metadataRequests.get())
+    }
+
     fun testManagedDownloadRejectsIntegrityMismatch() {
         val version = "8.8.8"
         val tarballName = "${platformPackage.substringAfter('/')}-${version}.tgz"
