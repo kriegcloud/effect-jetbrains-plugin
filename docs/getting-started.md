@@ -56,7 +56,7 @@ project-managed TypeScript binaries.
 | --- | --- | --- |
 | `MANUAL` | You already manage the binary yourself, or want no plugin-managed download | An executable Effect-patched native `tsc` or legacy `tsgo` path |
 | `LATEST` | You want the newest published `@effect/tsgo` for your platform | Network access to npm and a supported workspace native TypeScript package whose `gitHead` exactly matches packaged binary metadata |
-| `PINNED` | You need a stable version across projects or teammates | A specific `@effect/tsgo` version, network access to npm, and a supported workspace native TypeScript package whose `gitHead` exactly matches packaged binary metadata |
+| `PINNED` | You need a stable version across projects or teammates | An exact `@effect/tsgo` version (for example `0.54.1`), network access to npm, and a supported workspace native TypeScript package whose `gitHead` exactly matches packaged binary metadata |
 
 The plugin validates pinned versions, manual paths, JSON fields, the runtime server port, and the
 metrics polling interval before applying settings.
@@ -82,6 +82,30 @@ other builds under `artifacts/typescript/<version>/`, described by a `lib/upstre
 manifest (0.32.0–0.51.x shipped every build under `artifacts/` with `lib/tsc` as a compatibility
 copy; earlier packages carried `lib/tsc`/`lib/tsc-next`); the plugin matches that metadata to the
 native TypeScript package installed in the workspace.
+
+### Pinned version picker
+
+In `PINNED` mode the `Pinned version` field lists the exact `@effect/tsgo` versions the workspace
+already depends on: `node_modules/@effect/tsgo`, the `@effect/tsgo-<platform>` packages in any
+ancestor `node_modules` (nearest first), and an exact `@effect/tsgo` specifier in the workspace
+`package.json`. Selecting `PINNED` with an empty field fills in the nearest detected version, so the
+IDE runs the same release as the project's CLI. The `Select…` entry opens a file chooser; pick an
+`@effect/tsgo` package directory (or its `package.json`) to pin that package's version. You can
+still type any exact npm version. The field accepts only exact versions such as `0.54.1`: a path,
+range, or URL is rejected before anything is downloaded, because `PINNED` always fetches from npm.
+To run a binary that is already on disk, use `MANUAL` and point it at the executable (for example
+`node_modules/@effect/tsgo-linux-x64/lib/tsc`).
+
+### WebStorm TypeScript settings
+
+The plugin launches the Effect-patched native compiler itself as a complete TypeScript language
+server. It never reads `Languages & Frameworks | TypeScript`, and that page's `TypeScript:` field
+expects a TypeScript package directory (`node_modules/typescript` or the bundled native build), not
+the tsgo executable. Upstream recommends running `effect-tsgo` instead of the stock service, not
+alongside it: leave `TypeScript:` on the workspace package and uncheck `TypeScript language service`
+on that page so the two servers do not report duplicate diagnostics. If you keep the built-in
+service on, expect each Effect-aware finding to appear once from the plugin and the plain TypeScript
+findings to appear twice.
 
 ## Start The Language Server
 
