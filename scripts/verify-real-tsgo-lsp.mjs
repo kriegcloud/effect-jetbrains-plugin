@@ -597,7 +597,11 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
           messages.some((message) => message.includes("effect(obsoleteSchemaImport)")) &&
           messages.some((message) => message.includes("effect(preferSucceedSomeOrNone)")) &&
           messages.some((message) => message.includes("effect(allOfMapToForEach)")) &&
-          messages.some((message) => message.includes("effect(floatingEffect)"))
+          messages.some((message) => message.includes("effect(floatingEffect)")) &&
+          messages.some((message) => message.includes("effect(effectSleepZeroToYieldNow)")) &&
+          messages.some((message) => message.includes("effect(flatMapToTap)")) &&
+          messages.some((message) => message.includes("effect(schemaClassObjectLiteral)")) &&
+          messages.some((message) => message.includes("effect(apiStabilityLeak)"))
       },
     )
     const messages = diagnosticMessages(diagnostics)
@@ -687,10 +691,53 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       "Expected one catchRefailToTapError suggestion without a rewrite (published since @effect/tsgo 0.46.0)",
     )
     for (const [rule, name] of [["unstableApiUsage", "unstablePreviewApi"], ["experimentalApiUsage", "experimentalPreviewApi"]]) {
-      const stability = diagnosticsForRule(diagnostics, rule)
+      // The apiStabilityLeak case below adds a second experimental export, so match by name.
+      const stability = diagnosticsForRule(diagnostics, rule).filter((diagnostic) => diagnostic.message.includes(`#${name}\``))
       assert(
-        stability.length === 1 && stability[0].severity === 2 && stability[0].message.includes(`#${name}\``),
+        stability.length === 1 && stability[0].severity === 2,
         `Expected one ${rule} warning naming the export as module#${name} (published since @effect/tsgo 0.47.0): ${JSON.stringify(stability)}`,
+      )
+    }
+
+    // Published between 0.49.0 and 0.54.1: default-on correctness rules.
+    const missingBrand = diagnosticsForRule(diagnostics, "schemaClassMissingBrand")
+    assert(
+      missingBrand.length === 2 && missingBrand.every((diagnostic) => diagnostic.severity === 4),
+      `Expected v4 schemaClassMissingBrand suggestions on the unbranded Point and Label classes (published since @effect/tsgo 0.52.0): ${JSON.stringify(missingBrand)}`,
+    )
+    const objectLiteral = diagnosticsForRule(diagnostics, "schemaClassObjectLiteral")
+    assert(
+      objectLiteral.length === 1 && objectLiteral[0].severity === 2 && objectLiteral[0].message.includes("'BrandedPoint'") &&
+        objectLiteral[0].range.start.line === lineNumberOf(text, "export const copiedPoint"),
+      `Expected one schemaClassObjectLiteral warning on the spread copy (published since @effect/tsgo 0.54.0): ${JSON.stringify(objectLiteral)}`,
+    )
+    const shadowedName = diagnosticsForRule(diagnostics, "errorPayloadShadowsName")
+    assert(
+      shadowedName.length === 1 && shadowedName[0].severity === 4 &&
+        shadowedName[0].range.start.line === lineNumberOf(text, "class ToolNotFound"),
+      `Expected one errorPayloadShadowsName suggestion on the ToolNotFound payload (published since @effect/tsgo 0.53.0): ${JSON.stringify(shadowedName)}`,
+    )
+    // Opt-in rules enabled through tsconfig diagnosticSeverity; none of them offers a rewrite.
+    for (const [rule, count, fragment] of [
+      ["preferEffectArray", 2, "effect/Array.findFirst"],
+      ["preferEffectRecord", 1, "effect/Record.toEntries"],
+      ["preferSchemaTaggedError", 3, "Schema.TaggedError"],
+      ["apiStabilityLeak", 1, "#StableShape` exposes `ExperimentalShape`"],
+    ]) {
+      const found = diagnosticsForRule(diagnostics, rule)
+      assert(
+        found.length === count && found.every((diagnostic) => diagnostic.severity === 2) &&
+          found.some((diagnostic) => diagnostic.message.includes(fragment)),
+        `Expected ${count} opt-in ${rule} warning(s) mentioning ${fragment} (published since @effect/tsgo 0.50.0–0.52.0): ${JSON.stringify(found)}`,
+      )
+      const actions = await client.request("textDocument/codeAction", {
+        textDocument: { uri },
+        range: found[0].range,
+        context: { diagnostics: [found[0]], only: ["quickfix"] },
+      })
+      assert(
+        actions.length === 2 && actions.every((action) => action.title.startsWith(`Disable ${rule} for `)),
+        `Expected only suppression actions for ${rule}: ${JSON.stringify(actions)}`,
       )
     }
 
@@ -718,7 +765,15 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       diagnosticsForRule(diagnostics, "catchIfTagToCatchTag")[0], "Replace with Effect.catchTag")
     const andThenEdits = await quickFixForDiagnostic(client, uri,
       diagnosticsForRule(diagnostics, "flatMapIgnoredParamToAndThen")[0], "Replace with Effect.andThen")
-    const fixedText = applyTextEdits(text, [...someEdits, ...noneEdits, ...mappingEdits, ...catchTagEdits, ...andThenEdits])
+    const yieldNowEdits = await quickFixForDiagnostic(client, uri,
+      diagnosticsForRule(diagnostics, "effectSleepZeroToYieldNow")[0], "Replace with Effect.yieldNow")
+    const tapEdits = await quickFixForDiagnostic(client, uri,
+      diagnosticsForRule(diagnostics, "flatMapToTap")[0], "Replace with Effect.tap")
+    const fixedText = applyTextEdits(text, [
+      ...someEdits, ...noneEdits, ...mappingEdits, ...catchTagEdits, ...andThenEdits, ...yieldNowEdits, ...tapEdits,
+    ])
+    assert(fixedText.includes("export const cooperativeYield = Effect.yieldNow"), "Expected scheduler yield after fix (published since @effect/tsgo 0.52.0)")
+    assert(/Effect\.tap\(\(value\) => audit\(value\)\)/.test(fixedText), "Expected tap observation after fix (published since @effect/tsgo 0.52.0)")
     assert(/Effect\.catchTag\(\s*"NotFound"/.test(fixedText), "Expected tagged recovery after fix")
     assert(fixedText.includes("Effect.andThen(constantNext)"), "Expected direct sequencing after fix")
     assert(fixedText.includes("Effect.succeedSome(42)"), "Expected direct Some constructor after fix")
@@ -732,7 +787,9 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       diagnosticsForRule(candidate, "preferSucceedSomeOrNone").length === 0 &&
       diagnosticsForRule(candidate, "allOfMapToForEach").length === 0 &&
       diagnosticsForRule(candidate, "catchIfTagToCatchTag").length === 0 &&
-      diagnosticsForRule(candidate, "flatMapIgnoredParamToAndThen").length === 0)
+      diagnosticsForRule(candidate, "flatMapIgnoredParamToAndThen").length === 0 &&
+      diagnosticsForRule(candidate, "effectSleepZeroToYieldNow").length === 0 &&
+      diagnosticsForRule(candidate, "flatMapToTap").length === 0)
     // This workspace deliberately includes invalid examples for other diagnostics. Preserve
     // those baseline errors while proving the new rewrites introduce none of their own.
     const errorSignatures = (items) => items.filter((diagnostic) => diagnostic.severity === 1)
@@ -744,7 +801,8 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       diagnostics: messages,
       codeActionTitles,
       obsoleteSchemaImport: { severity: obsolete[0].severity, suppressionOnly: true },
-      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach", "Effect.catchTag", "Effect.andThen"],
+      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach", "Effect.catchTag", "Effect.andThen", "Effect.yieldNow", "Effect.tap"],
+      optInSuppressionOnly: ["preferEffectArray", "preferEffectRecord", "preferSchemaTaggedError", "apiStabilityLeak"],
       quickFixBaselineErrorCount: errorSignatures(diagnostics).length,
       executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],
       workspacePath,
@@ -1051,10 +1109,10 @@ async function main() {
   }
 
   // typescript@7.0.2 has gitHead 2bd066d87f5bafd315be9f40889d0a60b9e58e0b,
-  // matching the native backend used for the recorded @effect/tsgo@0.48.1 smoke.
+  // matching the native backend used for the recorded @effect/tsgo@0.54.1 smoke.
   // effect is pinned to the exact release current at refresh kickoff so the verifier does not drift
   // when the dist-tag advances.
-  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.1"]
+  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.5"]
   const result = {}
 
   if (only === "all" || only === "healthy") {

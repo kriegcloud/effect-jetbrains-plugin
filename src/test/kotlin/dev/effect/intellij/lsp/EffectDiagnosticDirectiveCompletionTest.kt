@@ -13,14 +13,14 @@ import org.junit.Test
 
 class EffectDiagnosticDirectiveCompletionTest {
     @Test
-    fun ruleNamesMatchPublishedTsgo0481Snapshot() {
-        // Generated from @effect/tsgo@0.48.1:_packages/tsgo/src/metadata.json (d1e539c4).
+    fun ruleNamesMatchPublishedTsgo0541Snapshot() {
+        // Generated from @effect/tsgo@0.54.1:_packages/tsgo/src/metadata.json (00f79e04).
         // No legacy exceptions: every previously offered name is still shipped in this release.
         val snapshot = EffectJson.mapper.readTree(
-            Files.readString(Path.of("src", "test", "testData", "tsgo", "rule-names-0.48.1.json")),
+            Files.readString(Path.of("src", "test", "testData", "tsgo", "rule-names-0.54.1.json")),
         ).map { it.asText() }
         val actual = EffectDiagnosticDirectiveCompletionContributor.RULE_NAMES
-        assertEquals(118, snapshot.size)
+        assertEquals(129, snapshot.size)
         assertEquals(snapshot.sorted().distinct(), snapshot)
         assertEquals("Duplicate directive rule names", actual.distinct(), actual)
         val missing = snapshot.toSet() - actual.toSet()

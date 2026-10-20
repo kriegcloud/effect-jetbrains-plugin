@@ -7,7 +7,7 @@
     "debug": "node --inspect-brk index.mjs"
   },
   "dependencies": {
-    "effect": "4.0.1"
+    "effect": "4.0.5"
   },
   "devDependencies": {
     "typescript": "7.0.2"
