@@ -35,6 +35,22 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         assertTrue(problems.any { it.field == "pinnedVersion" })
     }
 
+    fun testPinnedModeRejectsPathsAndRangesButAcceptsExactVersions() {
+        val service = project.getService(EffectProjectSettingsService::class.java)
+        fun pinnedProblems(version: String) = service.validate(
+            EffectProjectSettings(binaryMode = EffectBinaryMode.PINNED, pinnedVersion = version),
+        ).filter { it.field == "pinnedVersion" }
+
+        assertTrue(pinnedProblems("0.54.1").isEmpty())
+        assertTrue(pinnedProblems("0.55.0-next.2").isEmpty())
+        listOf("/home/me/node_modules/@effect/tsgo-linux-x64/lib/tsc", "^0.54.1", "latest").forEach { version ->
+            val problems = pinnedProblems(version)
+            assertEquals(version, 1, problems.size)
+            assertEquals(SettingSeverity.ERROR, problems.single().severity)
+            assertEquals(EffectProjectSettingsService.PINNED_VERSION_SHAPE_MESSAGE, problems.single().message)
+        }
+    }
+
     fun testJsonValidationReportsErrors() {
         val service = project.getService(EffectProjectSettingsService::class.java)
 
@@ -125,6 +141,39 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
             assertEquals(DEFAULT_NODE_DEBUG_CONFIGURATION_TYPES, service.currentSettings().injectDebugConfigurationTypes)
         } finally {
             configurable.disposeUIResources()
+        }
+    }
+
+    fun testSwitchingToPinnedModeDetectsWorkspaceTsgoVersion() {
+        val workspaceRoot = java.nio.file.Path.of(requireNotNull(project.basePath))
+        val tsgoManifest = workspaceRoot.resolve("node_modules/@effect/tsgo/package.json")
+        Files.createDirectories(tsgoManifest.parent)
+        Files.writeString(tsgoManifest, """{"name":"@effect/tsgo","version":"0.53.4"}""")
+        val service = project.getService(EffectProjectSettingsService::class.java)
+        service.updateSettings(EffectProjectSettings(binaryMode = EffectBinaryMode.LATEST))
+        val configurable = EffectProjectSettingsConfigurable(project)
+        val component = configurable.createComponent()
+        try {
+            val comboBoxes = collectComponents(component).filterIsInstance<ComboBox<*>>()
+            val modeBox = comboBoxes.first { box -> (0 until box.itemCount).any { box.getItemAt(it) == EffectBinaryMode.PINNED } }
+            val versionBox = comboBoxes.first { box -> (0 until box.itemCount).any { box.getItemAt(it) is PinnedVersionItem } }
+
+            modeBox.selectedItem = EffectBinaryMode.PINNED
+            configurable.apply()
+
+            assertEquals("0.53.4", service.currentSettings().pinnedVersion)
+            assertEquals(EffectBinaryMode.PINNED, service.currentSettings().binaryMode)
+            val labels = (0 until versionBox.itemCount).map { (versionBox.getItemAt(it) as PinnedVersionItem).label }
+            assertTrue(labels.toString(), labels.first().startsWith("0.53.4  —  @effect/tsgo"))
+            assertEquals("Select…", labels.last())
+
+            // A hand-typed version still wins over detection and is what gets saved.
+            versionBox.editor.item = "0.54.1"
+            configurable.apply()
+            assertEquals("0.54.1", service.currentSettings().pinnedVersion)
+        } finally {
+            configurable.disposeUIResources()
+            tsgoManifest.parent.parent.parent.toFile().deleteRecursively()
         }
     }
 
