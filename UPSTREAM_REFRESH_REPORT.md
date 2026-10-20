@@ -182,8 +182,14 @@ Result: **BUILD SUCCESSFUL in 6m 55s**.
 ### Distribution
 
 - ZIP: `build/distributions/effect-jetbrains-plugin-0.1.9.zip`
-- Size: 5,269,406 bytes; 13 entries; `unzip -t` reports no errors.
-- SHA-256: `54b68e63cf4112f17881e4b249574ad1a7daf7556121f84738a26803ed2c696d`
+- Release-lane build at `cbba7512`: 5,269,406 bytes; 13 entries; `unzip -t` reports no errors;
+  SHA-256 `54b68e63cf4112f17881e4b249574ad1a7daf7556121f84738a26803ed2c696d`. That is the artifact
+  the verifier, Qodana, and sandbox-boot evidence above describe.
+- After Dependabot #55 (Kotlin 2.4.21) merged and `main` was merged into this branch (`37e8ee95`),
+  `./gradlew buildPlugin` was rerun: 5,269,409 bytes; `unzip -t` clean; SHA-256
+  `047dcd9bc900e415e59985cc927c554d91b707ab38a7609d98b0a3bbdda362c4`. The hosted checks on the
+  merged head are the release-grade proof for that toolchain change; the local release lane was not
+  repeated for it.
 
 ### Bounded sandbox boots
 
