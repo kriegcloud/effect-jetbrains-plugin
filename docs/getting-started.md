@@ -22,8 +22,9 @@
   - Plugin-managed `LATEST` or `PINNED` after you explicitly choose managed npm downloads; these
     modes require `typescript >= 7`, `@typescript/native`, an npm alias, or the legacy
     `@typescript/native-preview` package whose workspace `gitHead` metadata exactly matches one of
-    the packaged TypeScript builds (`artifacts/typescript/<version>/tsc` since `@effect/tsgo`
-    0.32.0, `lib/tsc`/`lib/tsc-next` before that)
+    the packaged TypeScript builds (`lib/tsc` for the `latest` build and
+    `artifacts/typescript/<version>/tsc` for the others since `@effect/tsgo` 0.32.0,
+    `lib/tsc`/`lib/tsc-next` before that)
 
 Community Edition and Android Studio are out of scope for this plugin.
 
@@ -76,10 +77,11 @@ Use the resulting native executable path in `MANUAL` mode. Do not point manual m
 native server.
 
 Managed modes download the complete npm platform package and validate npm tarball integrity before
-extraction. Current packages (0.32.0+) ship one TypeScript build per version under
-`artifacts/typescript/<version>/` plus a `lib/upstream.json` component manifest, keeping `lib/tsc`
-as a compatibility copy of the `latest` build (earlier packages carried `lib/tsc`/`lib/tsc-next`);
-the plugin matches that metadata to the native TypeScript package installed in the workspace.
+extraction. Current packages (0.52.0+) ship the `latest` TypeScript build as `lib/tsc` and the
+other builds under `artifacts/typescript/<version>/`, described by a `lib/upstream.json` component
+manifest (0.32.0–0.51.x shipped every build under `artifacts/` with `lib/tsc` as a compatibility
+copy; earlier packages carried `lib/tsc`/`lib/tsc-next`); the plugin matches that metadata to the
+native TypeScript package installed in the workspace.
 
 ## Start The Language Server
 
