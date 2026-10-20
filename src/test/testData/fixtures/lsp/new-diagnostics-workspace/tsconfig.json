@@ -20,10 +20,16 @@
           "schemaOpaqueInstanceMember": "warning",
           "preferTypedSchemaDecoder": "warning",
           "preferUnsafeConstructor": "warning",
-          "promiseInEffectSuccess": "warning"
+          "promiseInEffectSuccess": "warning",
+          "preferEffectArray": "warning",
+          "preferEffectRecord": "warning",
+          "preferSchemaTaggedError": "warning",
+          "apiStabilityLeak": "warning"
         }
       }
     ]
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

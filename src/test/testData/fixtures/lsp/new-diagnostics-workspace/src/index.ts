@@ -90,3 +90,45 @@ export const unstablePreviewApi = () => 1
 export const experimentalPreviewApi = () => 1
 
 export const stabilityUses = [unstablePreviewApi(), experimentalPreviewApi()]
+
+// 0.52.0 style suggestions with quick fixes.
+export const cooperativeYield = Effect.sleep(0)
+
+declare const audit: (value: number) => Effect.Effect<void>
+
+export const observed = Effect.succeed(1).pipe(
+  Effect.flatMap((value) => audit(value).pipe(Effect.as(value)))
+)
+
+// 0.52.0 schemaClassMissingBrand fires on `Point` above; a branded class is the control, and the
+// 0.54.0 schemaClassObjectLiteral warning fires on the spread copy.
+export class BrandedPoint extends Schema.Class<BrandedPoint, { readonly brand: unique symbol }>("BrandedPoint")({
+  x: Schema.Number
+}) {}
+
+export const brandedOrigin = BrandedPoint.make({ x: 0 })
+
+export const copiedPoint: BrandedPoint = { ...brandedOrigin }
+
+// 0.53.0 errorPayloadShadowsName.
+class ToolNotFound extends Data.TaggedError("ToolNotFound")<{ readonly name: string }> {}
+
+export const toolError = new ToolNotFound({ name: "search" })
+
+// Opt-in rules enabled through tsconfig diagnosticSeverity: preferEffectArray and preferEffectRecord
+// (0.52.0, effect-native preset), preferSchemaTaggedError (0.52.0, also fires on the
+// Data.TaggedError classes above), and apiStabilityLeak (0.50.0, maintainers preset).
+const numbers = [1, 2, 3]
+
+export const firstLarge = numbers.find((n) => n > 1)
+
+export const scoreEntries = Object.entries({ alice: 1 })
+
+/** @stability experimental */
+export interface ExperimentalShape {
+  readonly value: string
+}
+
+export interface StableShape {
+  readonly leaked: ExperimentalShape
+}
