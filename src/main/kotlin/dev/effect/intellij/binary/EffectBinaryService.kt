@@ -10,6 +10,7 @@ import dev.effect.intellij.core.EffectPluginConstants
 import dev.effect.intellij.core.logger
 import dev.effect.intellij.settings.EffectApplicationStateService
 import dev.effect.intellij.settings.EffectBinaryMode
+import dev.effect.intellij.settings.EffectWorkspaceTsgoDetector
 import dev.effect.intellij.settings.EffectProjectSettingsService
 import dev.effect.intellij.status.EffectStatusService
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -82,7 +83,16 @@ class EffectBinaryService {
                         resolveLatestVersion()
                     }
 
-                    EffectBinaryMode.PINNED -> settings.pinnedVersion
+                    EffectBinaryMode.PINNED -> settings.pinnedVersion.trim().also { pinned ->
+                        // Fail closed before any registry request: a path or range here would
+                        // otherwise become a bogus metadata URL and surface as an npm 404.
+                        if (pinned.isNotBlank() && !EffectWorkspaceTsgoDetector.isExactVersion(pinned)) {
+                            throw EffectBinaryException(
+                                "The pinned @effect/tsgo version \"$pinned\" is not an exact npm version such as 0.54.1. " +
+                                    "Pinned mode downloads from npm; use Manual mode to launch a local binary.",
+                            )
+                        }
+                    }
                     EffectBinaryMode.MANUAL -> error("unreachable")
                 }.ifBlank {
                     throw EffectBinaryException("The configured @effect/tsgo version is blank.")

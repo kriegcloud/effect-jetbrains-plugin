@@ -1,5 +1,7 @@
 package dev.effect.intellij.settings
 
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.options.SearchableConfigurable
@@ -8,6 +10,7 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.TextBrowseFolderListener
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.DocumentAdapter
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -17,6 +20,8 @@ import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.panel as uiPanel
 import com.intellij.ui.dsl.builder.rows
 import com.intellij.util.ui.JBUI
+import java.nio.file.Path
+import javax.swing.DefaultComboBoxModel
 import javax.swing.JComponent
 import javax.swing.JCheckBox
 import javax.swing.JSpinner
@@ -65,7 +70,12 @@ class EffectProjectSettingsConfigurable(private val project: Project) : Searchab
 private class EffectProjectSettingsComponent(private val project: Project) {
     private val booleanOptions = arrayOf(SERVER_DEFAULT_OPTION, "true", "false")
     private val binaryMode = ComboBox(EffectBinaryMode.entries.toTypedArray())
-    private val pinnedVersion = JBTextField()
+    private val pinnedVersion = ComboBox<PinnedVersionItem>().apply {
+        isEditable = true
+        renderer = SimpleListCellRenderer.create { label, item, _ ->
+            label.text = item?.label.orEmpty()
+        }
+    }
     private val manualBinaryPath = TextFieldWithBrowseButton()
     private val extraEnv = JBTextArea(4, 40)
     private val initializationOptions = JBTextArea(4, 40)
@@ -99,6 +109,11 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             description = "Choose the native tsgo executable for manual mode."
         }
         manualBinaryPath.addBrowseFolderListener(TextBrowseFolderListener(manualBinaryDescriptor, project))
+        pinnedVersion.addActionListener {
+            if (pinnedVersion.selectedItem === PinnedVersionItem.SELECT) {
+                choosePinnedVersionFromPackage()
+            }
+        }
 
         binaryMode.addActionListener { updateBinaryFieldState() }
         val clearProblemsListener = object : DocumentAdapter() {
@@ -240,7 +255,8 @@ private class EffectProjectSettingsComponent(private val project: Project) {
 
     fun reset(settings: EffectProjectSettings) {
         binaryMode.selectedItem = settings.binaryMode
-        pinnedVersion.text = settings.pinnedVersion
+        refreshDetectedVersions()
+        setPinnedVersionText(settings.pinnedVersion)
         manualBinaryPath.text = settings.manualBinaryPath
         extraEnv.text = settings.extraEnv.entries.joinToString(separator = "\n") { (key, value) -> "$key=$value" }
         initializationOptions.text = settings.initializationOptionsJson
@@ -262,7 +278,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     fun toSettings(): EffectProjectSettings =
         EffectProjectSettings(
             binaryMode = binaryMode.selectedItem as? EffectBinaryMode ?: EffectBinaryMode.MANUAL,
-            pinnedVersion = pinnedVersion.text.trim(),
+            pinnedVersion = pinnedVersionText(),
             manualBinaryPath = manualBinaryPath.text.trim(),
             extraEnv = parseEnv(extraEnv.text),
             initializationOptionsJson = initializationOptions.text.trim(),
@@ -308,6 +324,63 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         manualBinaryPathRow.visible(mode == EffectBinaryMode.MANUAL)
         pinnedVersion.isEnabled = mode == EffectBinaryMode.PINNED
         manualBinaryPath.isEnabled = mode == EffectBinaryMode.MANUAL
+        if (mode == EffectBinaryMode.PINNED && pinnedVersionText().isBlank()) {
+            // Switching to PINNED defaults to the release the workspace already depends on.
+            refreshDetectedVersions()
+            detectedVersions.firstOrNull()?.let { detected -> setPinnedVersionText(detected.version) }
+        }
+    }
+
+    /** The exact version typed or picked; detected entries and the `Select…` sentinel never leak their labels. */
+    fun pinnedVersionText(): String =
+        when (val item = pinnedVersion.editor.item) {
+            is PinnedVersionItem -> item.version
+            else -> item?.toString().orEmpty().trim()
+        }
+
+    private fun setPinnedVersionText(version: String) {
+        val matching = detectedVersions.firstOrNull { it.version == version }
+        pinnedVersion.selectedItem = matching?.let { PinnedVersionItem.Detected(it) } ?: version
+        pinnedVersion.editor.item = version
+    }
+
+    private var detectedVersions: List<DetectedTsgoVersion> = emptyList()
+
+    private fun refreshDetectedVersions() {
+        detectedVersions = project.basePath?.takeIf(String::isNotBlank)
+            ?.let { basePath -> runCatching { EffectWorkspaceTsgoDetector.detect(Path.of(basePath)) }.getOrDefault(emptyList()) }
+            .orEmpty()
+        val current = pinnedVersionText()
+        val items = detectedVersions.map { detected -> PinnedVersionItem.Detected(detected) as PinnedVersionItem } + PinnedVersionItem.SELECT
+        pinnedVersion.model = DefaultComboBoxModel(items.toTypedArray())
+        pinnedVersion.editor.item = current
+    }
+
+    private fun choosePinnedVersionFromPackage() {
+        val previous = pinnedVersionText()
+        val descriptor = FileChooserDescriptor(true, true, false, false, false, false).apply {
+            title = "Select @effect/tsgo package"
+            description = "Choose a node_modules/@effect/tsgo (or @effect/tsgo-<platform>) directory or its package.json to pin its version."
+            withFileFilter { file -> file.isDirectory || file.name == "package.json" }
+        }
+        val chosen = FileChooser.chooseFile(descriptor, project, null)
+        val detected = chosen?.let { file -> EffectWorkspaceTsgoDetector.fromPackageDirectory(Path.of(file.path)) }
+        when {
+            chosen == null -> setPinnedVersionText(previous)
+            detected == null -> {
+                setPinnedVersionText(previous)
+                validationLabel.text = "${chosen.presentableUrl} is not an @effect/tsgo package with an exact version."
+            }
+            else -> {
+                if (detectedVersions.none { it.version == detected.version }) {
+                    detectedVersions = detectedVersions + detected
+                    val items = detectedVersions.map { PinnedVersionItem.Detected(it) as PinnedVersionItem } + PinnedVersionItem.SELECT
+                    pinnedVersion.model = DefaultComboBoxModel(items.toTypedArray())
+                }
+                setPinnedVersionText(detected.version)
+                clearProblems()
+            }
+        }
     }
 
     private fun parseEnv(text: String): Map<String, String> =
@@ -351,4 +424,17 @@ private class EffectProjectSettingsComponent(private val project: Project) {
                 "injection applies to Node.js run/debug configurations; live Context, Span Stack, Fibers, " +
                 "and Breakpoints snapshots remain best-effort while the JetBrains debugger bridge matures."
     }
+}
+
+/** Entries of the pinned-version picker: detected workspace releases plus the `Select…` chooser sentinel. */
+internal sealed class PinnedVersionItem(val version: String, val label: String) {
+    class Detected(val detected: DetectedTsgoVersion) : PinnedVersionItem(
+        detected.version,
+        "${detected.version}  —  ${detected.packageName} (${detected.source.parent})",
+    )
+
+    object SELECT : PinnedVersionItem("", "Select…")
+
+    /** The editable combo box shows this for a selected item, so it must be the bare version. */
+    override fun toString(): String = version
 }
