@@ -332,8 +332,9 @@ class EffectBinaryService {
      * compatibility metadata: per-binary `<binary>.json` files up to `@effect/tsgo` 0.25.x, a
      * single `lib/upstream.json` profile manifest (`schemaVersion` 2) for 0.26.0–0.31.x, and a
      * component manifests (`schemaVersion` 4 since 0.32.0; 5 since 0.37.0) whose executables live under
-     * `artifacts/typescript/<version>/` (with `lib/tsc` kept as a compatibility copy of the
-     * `latest` build). Select the binary built from the workspace's exact TypeScript git head;
+     * `artifacts/typescript/<version>/` (0.32.0–0.51.x kept `lib/tsc` as a compatibility copy of the
+     * `latest` build; since 0.52.0 the `latest` build ships only as `lib/tsc`). Select the binary built
+     * from the workspace's exact TypeScript git head;
      * older packages without metadata retain their dedicated `tsgo` executable.
      */
     private fun selectManagedBinary(project: Project, packageRoot: Path, platform: PlatformPackage): Path {
@@ -403,8 +404,9 @@ class EffectBinaryService {
 
     /**
      * Candidate executables for a component manifest (`schemaVersion` 4 or 5): one per TypeScript
-     * component version at `artifacts/typescript/<version>/tsc`, falling back to the `lib/tsc`
-     * compatibility copy for the `latest`-tagged version when its artifact is absent.
+     * component version at `artifacts/typescript/<version>/tsc`, falling back to `lib/tsc` for the
+     * `latest`-tagged version when its artifact is absent (a compatibility copy through 0.51.x, the
+     * only copy since 0.52.0).
      */
     private fun componentCandidates(
         packageRoot: Path,

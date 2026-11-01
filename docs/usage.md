@@ -72,9 +72,9 @@ fixables do not, so this is a plugin-side feature.
 
 ### Current TSGO Smoke Targets
 
-The current recorded real-binary smoke target is `@effect/tsgo@0.48.1` with
+The current recorded real-binary smoke target is `@effect/tsgo@0.54.1` with
 `typescript@7.0.2` (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) and
-`effect@4.0.1`. In addition to the existing
+`effect@4.0.5`. In addition to the existing
 `catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, `newSchemaClass`, `catchToIgnore`
 (published as of 0.16.0), fixable `flatMapToMap` (as of 0.19.0), `missingPipeableSignature`
 (0.21.0, off by default), `schemaOpaqueInstanceMember` (0.22.0, **error by default**, Effect v4
@@ -101,15 +101,26 @@ The 0.48.1 refresh adds published-binary coverage for the fixable `catchIfTagToC
 rewrite), and the v4-only `unstableApiUsage` / `experimentalApiUsage` warnings (0.47.0) for APIs
 tagged `@stability unstable` or `@stability experimental`. Those two report the declaration as
 `package/module#exportName`; since 0.48.0 the `allowedUnstableApis` and `allowedExperimentalApis`
-plugin options accept either a whole module or that per-export form. Completion covers all 118
-published rules; the real-binary fixtures exercise a representative subset. The recorded source pin
-is the 0.48.1 release commit, so no rule is deferred as unpublished.
+plugin options accept either a whole module or that per-export form.
+
+The 0.54.1 refresh adds published-binary coverage for the fixable `effectSleepZeroToYieldNow` and
+`flatMapToTap` style suggestions (0.52.0, with applied `Replace with Effect.yieldNow` /
+`Replace with Effect.tap` edits), the default-on `schemaClassMissingBrand` suggestion (0.52.0, v4
+only), `errorPayloadShadowsName` suggestion (0.53.0), and `schemaClassObjectLiteral` warning
+(0.54.0), plus four opt-in rules enabled through `diagnosticSeverity` that report with suppression
+actions only: `preferEffectArray` and `preferEffectRecord` (0.52.0, `effect-native` preset),
+`preferSchemaTaggedError` (0.52.0), and `apiStabilityLeak` (0.50.0, v4 only, `maintainers` preset).
+`preferNamespaceImport` and `preferBarrelImport` (0.53.0, off by default) report imports that
+contradict `namespaceImportPackages` / `barrelImportPackages`, which may now also appear in per-file
+`overrides`; they are in completion but not in the fixture. Completion covers all 129 published
+rules; the real-binary fixtures exercise a representative subset. `preferEffectString` is only on
+upstream `main` past the 0.54.1 tag and is deferred until published.
 
 Since 0.46.0 an unknown rule name in `diagnosticSeverity` reports `effect(unknownRuleName)` in
 `tsconfig.json`, and a `strict` preset promotes every default-enabled diagnostic to an error. Both
 are upstream configuration behavior; the plugin does not manage presets.
 
-npm `effect` `latest` is now the stable v4 line. Samples install the exact `effect@4.0.1` smoke
+npm `effect` `latest` is now the stable v4 line. Samples install the exact `effect@4.0.5` smoke
 target so the verifier does not drift when the dist-tag advances. Effect 4.0 publishes former
 `effect/unstable/*` modules at top-level paths, so a DevTools client imports from `effect/devtools`
 (`effect/unstable/devtools` before rc.118).
@@ -167,17 +178,17 @@ Equivalent raw JSON example:
 
 ### Recorded Real-Binary Smoke
 
-On October 5, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
-for `@effect/tsgo@0.48.1`; fixture workspaces install the validated `typescript@7.0.2` package
+On October 20, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
+for `@effect/tsgo@0.54.1`; fixture workspaces install the validated `typescript@7.0.2` package
 (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`, confirmed identical to the tarball's
-`lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.0.1` release.
-All four lanes passed against that fixed pair.
+`lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.0.5` release.
+All five lanes passed against that fixed pair.
 
-Command (since 0.32.0 the packaged executables live under `artifacts/typescript/<version>/`; the
-`lib/tsc` compatibility copy of the `latest` build also works):
+Command (since 0.52.0 the `latest` TypeScript build ships only as `lib/tsc`; other builds live
+under `artifacts/typescript/<version>/`):
 
 ```bash
-node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/@effect/tsgo-linux-x64/artifacts/typescript/7.0.2/tsc
+node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/@effect/tsgo-linux-x64/lib/tsc
 ```
 
 Observed through LSP:
@@ -199,11 +210,17 @@ Observed through LSP:
   suppression actions. `preferSucceedSomeOrNone` and `allOfMapToForEach` fixes produced
   `Effect.succeedSome(42)`, `Effect.succeedNone`, and `Effect.forEach`; applying the edits cleared
   those findings while preserving the fixture's one baseline error.
+- 0.54.1 cases: `effectSleepZeroToYieldNow` and `flatMapToTap` fixes produced `Effect.yieldNow`
+  and `Effect.tap((value) => audit(value))`; `schemaClassMissingBrand` reported the two unbranded v4
+  classes, `schemaClassObjectLiteral` warned on the spread copy of a branded class instance, and
+  `errorPayloadShadowsName` reported the `name` payload field. The opt-in `preferEffectArray`,
+  `preferEffectRecord`, `preferSchemaTaggedError`, and `apiStabilityLeak` warnings appeared with only
+  the two suppression actions each.
 - Diagnostic-directive fixture: next-line and section directives suppressed the intended
   `strictEffectProvide` and `floatingEffect` findings, then surfaced them again when re-enabled.
   The next-line `schemaSync:warning` directive enabled exactly one warning and did not affect the
   default-off examples before or after it.
-- The published `0.48.1` server still did not advertise `executeCommandProvider.commands`, so the local
+- The published `0.54.1` server still did not advertise `executeCommandProvider.commands`, so the local
   Mermaid graph action remains experimental; hover Mermaid links are the supported path.
 
 ### Runtime Instrumentation Smoke
