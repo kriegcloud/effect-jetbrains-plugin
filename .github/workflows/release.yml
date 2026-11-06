@@ -12,6 +12,23 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Require signing and publishing secrets
+        shell: bash
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: |
+          missing=0
+          for name in CERTIFICATE_CHAIN PRIVATE_KEY PRIVATE_KEY_PASSWORD PUBLISH_TOKEN; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required secret $name is empty or unavailable."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Maximize build space
         uses: jlumbroso/free-disk-space@v2.0.0
         with:
@@ -44,6 +61,13 @@ jobs:
           echo "$CHANGELOG" > "$RELEASE_NOTE"
 
           ./gradlew patchChangelog --release-note-file="$RELEASE_NOTE"
+
+      - name: Check, verify, and sign plugin
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: ./gradlew check verifyPlugin signPlugin verifyPluginSignature
 
       - name: Publish plugin
         env:

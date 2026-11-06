@@ -1,5 +1,6 @@
 package dev.effect.intellij.devtools
 
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PathManager
@@ -37,7 +38,7 @@ class EffectExportTracerAction : DumbAwareAction() {
                     val file = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(target)
                     ApplicationManager.getApplication().invokeLater {
                         if (!project.isDisposed) {
-                            file?.let { FileEditorManager.getInstance(project).openFile(it, true) }
+                            file?.let { OpenFileDescriptor(project, it).navigate(true) }
                             notifications.info(project, "Effect: tracer exported", "Wrote the active span tree to $target.")
                         }
                     }

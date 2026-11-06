@@ -1,5 +1,6 @@
 package dev.effect.intellij.settings
 
+import dev.effect.intellij.schema.EffectSchemaService
 import com.intellij.json.psi.JsonFile
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
@@ -57,6 +58,7 @@ class EffectTsconfigSyncService(private val project: Project) {
             return
         }
 
+        project.getService(EffectSchemaService::class.java).preload(psiFile.virtualFile?.parent)
         var result: EffectTsconfigSync.SyncResult? = null
         WriteCommandAction.runWriteCommandAction(project, "Sync Effect Options To tsconfig.json", null, Runnable {
             PsiDocumentManager.getInstance(project).commitDocument(document)
@@ -66,6 +68,10 @@ class EffectTsconfigSyncService(private val project: Project) {
                 documentManager.saveDocument(document)
             }
         })
+
+        if (result?.warnings?.isNotEmpty() == true) {
+            notifications.warning(project, "Effect: tsconfig option warnings", result!!.warnings.joinToString("\n"))
+        }
 
         when {
             result == null -> notifications.info(

@@ -96,6 +96,7 @@ TypeScript binaries.
 - [Publishing guide](docs/publishing.md)
 - [Reference sources](docs/reference-sources.md)
 - [Privacy](PRIVACY.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Verification
 

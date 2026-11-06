@@ -1,5 +1,6 @@
 package dev.effect.intellij.lsp
 
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.fasterxml.jackson.databind.JsonNode
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PathManager
@@ -8,8 +9,8 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.lsp.api.LspServer
-import com.intellij.platform.lsp.api.LspServerManager
+import com.intellij.platform.lsp.api.LspClient
+import com.intellij.platform.lsp.api.LspClientManager
 import com.intellij.platform.lsp.api.LspServerState
 import dev.effect.intellij.core.EffectJson
 import dev.effect.intellij.core.EffectPluginConstants
@@ -31,7 +32,7 @@ class EffectLayerMermaidService(private val project: Project) {
         val notifications = ApplicationManager.getApplication().getService(EffectNotificationService::class.java)
         val server = findRunningServer(file)
         if (server == null) {
-            LspServerManager.getInstance(project).startServersIfNeeded(EffectLspServerSupportProvider::class.java)
+            LspClientManager.getInstance(project).startClientsIfNeeded(EffectLspServerSupportProvider::class.java)
             notifications.warning(
                 project,
                 "Effect Mermaid graph unavailable",
@@ -77,7 +78,7 @@ class EffectLayerMermaidService(private val project: Project) {
     }
 
     private fun requestMermaidViaCommand(
-        server: LspServer,
+        server: LspClient,
         commandPlan: MermaidCommandPlan,
         file: VirtualFile,
         line: Int,
@@ -96,7 +97,7 @@ class EffectLayerMermaidService(private val project: Project) {
         return extractMermaidCode(result)
     }
 
-    private fun requestMermaidViaHover(server: LspServer, file: VirtualFile, line: Int, character: Int): String? {
+    private fun requestMermaidViaHover(server: LspClient, file: VirtualFile, line: Int, character: Int): String? {
         val hover: Hover? = server.sendRequestSync(REQUEST_TIMEOUT_MS) { languageServer ->
             languageServer.textDocumentService.hover(
                 HoverParams(TextDocumentIdentifier(documentUri(file)), Position(line, character)),
@@ -106,14 +107,14 @@ class EffectLayerMermaidService(private val project: Project) {
         return decodeMermaidFromHover(markdown)
     }
 
-    private fun findRunningServer(file: VirtualFile): LspServer? =
-        LspServerManager.getInstance(project)
-            .getServersForProvider(EffectLspServerSupportProvider::class.java)
+    private fun findRunningServer(file: VirtualFile): LspClient? =
+        LspClientManager.getInstance(project)
+            .getClients(EffectLspServerSupportProvider::class.java)
             .firstOrNull { server ->
                 server.state == LspServerState.Running && server.descriptor.isSupportedFile(file)
             }
 
-    private fun commandPlan(server: LspServer): MermaidCommandPlan? {
+    private fun commandPlan(server: LspClient): MermaidCommandPlan? {
         val commands = server.initializeResult?.capabilities?.executeCommandProvider?.commands.orEmpty()
         return when {
             TSSERVER_REQUEST_COMMAND in commands -> MermaidCommandPlan(TSSERVER_REQUEST_COMMAND) { request ->
@@ -149,7 +150,7 @@ class EffectLayerMermaidService(private val project: Project) {
 
     private fun openMermaidSource(virtualFile: VirtualFile) {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        if (!project.isDisposed) FileEditorManager.getInstance(project).openFile(virtualFile, true)
+        if (!project.isDisposed) OpenFileDescriptor(project, virtualFile).navigate(true)
     }
 
     private fun filePath(file: VirtualFile): String =

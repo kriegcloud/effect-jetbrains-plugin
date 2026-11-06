@@ -4,7 +4,7 @@ import com.intellij.execution.ExecutionException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.lsp.api.LspServerListener
-import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
+import com.intellij.platform.lsp.api.ProjectWideLspClientDescriptor
 import com.intellij.platform.lsp.api.customization.LspCustomization
 import com.intellij.platform.lsp.api.customization.LspDiagnosticsCustomizer
 import dev.effect.intellij.core.EffectPluginConstants
@@ -13,7 +13,7 @@ import dev.effect.intellij.status.EffectStatusService
 import org.eclipse.lsp4j.ConfigurationItem
 import org.eclipse.lsp4j.InitializeResult
 
-class EffectLspServerDescriptor(project: Project) : ProjectWideLspServerDescriptor(project, "Effect Tsgo") {
+class EffectLspServerDescriptor(project: Project) : ProjectWideLspClientDescriptor(project, "Effect Tsgo") {
     override fun isSupportedFile(file: VirtualFile): Boolean =
         file.extension in EffectPluginConstants.SUPPORTED_TYPESCRIPT_EXTENSIONS
 

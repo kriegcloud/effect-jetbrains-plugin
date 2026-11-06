@@ -1,5 +1,7 @@
 package dev.effect.intellij.settings
 
+import dev.effect.intellij.schema.EffectSchemaService
+import dev.effect.intellij.schema.EffectOptionSchema
 import com.intellij.json.psi.JsonArray
 import com.intellij.json.psi.JsonElementGenerator
 import com.intellij.json.psi.JsonFile
@@ -25,6 +27,7 @@ object EffectTsconfigSync {
     data class SyncResult(
         val changed: Boolean,
         val errorMessage: String? = null,
+        val warnings: List<String> = emptyList(),
     )
 
     /**
@@ -73,7 +76,10 @@ object EffectTsconfigSync {
                 }
             }
 
-            SyncResult(changed = editor.changed)
+            val options = EffectOptionSchema.parseOptions(entry.text)
+            val warnings = tsconfigFile.project.getService(EffectSchemaService::class.java)
+                .warnings(options, tsconfigFile.virtualFile?.parent)
+            SyncResult(changed = editor.changed, warnings = warnings)
         } catch (error: InvalidTsconfigStructure) {
             SyncResult(changed = false, errorMessage = error.message)
         }

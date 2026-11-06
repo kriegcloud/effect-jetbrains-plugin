@@ -1,5 +1,6 @@
 package dev.effect.intellij.settings
 
+import dev.effect.intellij.schema.EffectSchemaService
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.fileChooser.FileChooser
@@ -44,9 +45,15 @@ class EffectProjectSettingsConfigurable(private val project: Project) : Searchab
     override fun getDisplayName(): String = "Effect"
 
     override fun createComponent(): JComponent {
+        project.getService(EffectSchemaService::class.java).preload()
         val ui = EffectProjectSettingsComponent(project)
         ui.reset(settingsService.currentSettings())
         component = ui
+        project.getService(EffectSchemaService::class.java).preload(onReady = {
+            ApplicationManager.getApplication().invokeLater({
+                if (!project.isDisposed && component === ui) ui.showProblems(settingsService.validate(ui.toSettings()))
+            }, ModalityState.any())
+        })
         return ui.panel
     }
 
@@ -206,6 +213,7 @@ internal class EffectProjectSettingsComponent(
             group("Binary") {
                 row("Binary mode") {
                     cell(binaryMode)
+                        .comment("LATEST and PINNED contact the npm registry and download executable packages. See PRIVACY.md.")
                 }
                 pinnedVersionRow = row("Pinned version") {
                     cell(pinnedVersion)

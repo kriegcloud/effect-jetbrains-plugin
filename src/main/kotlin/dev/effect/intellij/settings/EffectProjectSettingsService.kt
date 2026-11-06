@@ -1,5 +1,6 @@
 package dev.effect.intellij.settings
 
+import dev.effect.intellij.schema.EffectSchemaService
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.RoamingType
 import com.intellij.openapi.components.Service
@@ -142,10 +143,15 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
             return
         }
 
-        try {
-            EffectJson.parseObjectOrNull(raw)
+        val root = try {
+            EffectJson.parseObjectOrNull(raw) ?: return
         } catch (error: Exception) {
             problems += SettingProblem(field, "Invalid JSON: ${error.message}")
+            return
+        }
+        val options = if (field == "workspaceConfigurationJson") root.get("effect") ?: return else root.get("effect") ?: root
+        project.getService(EffectSchemaService::class.java).warnings(options).forEach { warning ->
+            problems += SettingProblem(field, warning, SettingSeverity.WARNING)
         }
     }
 

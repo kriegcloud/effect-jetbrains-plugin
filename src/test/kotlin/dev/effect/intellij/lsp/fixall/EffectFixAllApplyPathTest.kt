@@ -9,7 +9,7 @@ import com.intellij.platform.lsp.api.LspClient
 import com.intellij.platform.lsp.api.LspClientDescriptor
 import com.intellij.platform.lsp.api.LspIntegrationProvider
 import com.intellij.platform.lsp.api.LspServerState
-import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
+import com.intellij.platform.lsp.api.ProjectWideLspClientDescriptor
 import com.intellij.platform.lsp.api.customization.LspIntentionAction
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import dev.effect.intellij.lsp.EffectLspServerSupportProvider
@@ -164,7 +164,7 @@ class EffectFixAllApplyPathTest : BasePlatformTestCase() {
         project: Project,
         private val fakeUri: String,
         private val file: VirtualFile,
-    ) : ProjectWideLspServerDescriptor(project, "Fake Effect") {
+    ) : ProjectWideLspClientDescriptor(project, "Fake Effect") {
         override fun isSupportedFile(file: VirtualFile): Boolean = true
 
         override fun createCommandLine(): GeneralCommandLine = GeneralCommandLine("true")

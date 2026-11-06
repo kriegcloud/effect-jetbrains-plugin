@@ -176,6 +176,12 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/verify-real-tsgo-lsp.mjs --binary "$RUNNER_TEMP/effect-tsgo/node_modules/@effect/tsgo-linux-x64/lib/tsc" --only all 2>&1 | tee build/reports/runtime/lsp.log
+      - name: Verify diagnostics CLI and LSP rule-name parity
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-tsgo-diagnostics-cli.mjs 2>&1 | tee build/reports/runtime/diagnostics-cli.log
       - name: Upload runtime probe reports
         if: ${{ always() }}
         uses: actions/upload-artifact@v7

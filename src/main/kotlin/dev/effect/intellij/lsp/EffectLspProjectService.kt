@@ -1,7 +1,7 @@
 package dev.effect.intellij.lsp
 
 import com.intellij.execution.configurations.GeneralCommandLine
-import com.intellij.platform.lsp.api.LspServerManager
+import com.intellij.platform.lsp.api.LspClientManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import dev.effect.intellij.binary.EffectBinaryService
@@ -56,7 +56,7 @@ class EffectLspProjectService(private val project: Project) {
         log.info("LSP restart requested: $reason")
         clearActiveLaunchConfiguration()
         EffectStatusService.getInstance(project).requestRestart(reason)
-        LspServerManager.getInstance(project).stopAndRestartIfNeeded(EffectLspServerSupportProvider::class.java)
+        LspClientManager.getInstance(project).stopAndRestartClientsIfNeeded(EffectLspServerSupportProvider::class.java)
     }
 
     private fun currentLaunchConfigurationKey(): LaunchConfigurationKey {
