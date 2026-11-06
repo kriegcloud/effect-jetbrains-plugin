@@ -103,6 +103,22 @@ class EffectTsrsTypeScriptTest : BasePlatformTestCase() {
         assertEquals(1, Files.list(generated).use { it.count() })
     }
 
+    fun testConcurrentBuildsOfTheSamePackageBothSucceed() {
+        val install = artifact(root.resolve("tsrs-install"))
+        val candidate = TsrsCandidate(install.resolve("tsrs"), "7.1.0-beta", "0.22.0-ts7.1.0-beta", TsrsSource.WORKSPACE_TSRS_PACKAGE, false)
+        val generated = root.resolve("generated")
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+        try {
+            val results = (1..8).map { pool.submit<Path> { EffectTsrsTypeScriptPackage.create(generated, candidate, platform) } }.map { it.get() }
+
+            assertEquals(1, results.distinct().size)
+            assertEquals("tsrs-binary", EffectTsrsTypeScriptPackage.linkedExecutable(results.first(), platform)!!.readText())
+            assertEquals(1, Files.list(generated).use { it.count() })
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
     fun testGeneratedPackageIsRecognizedByWebStormsTypeScriptGoDetection() {
         val tsrsRoot = artifact(root.resolve("tsrs-install"))
         val candidate = TsrsCandidate(tsrsRoot.resolve("tsrs"), "7.1.0-beta", "0.22.0-ts7.1.0-beta", TsrsSource.WORKSPACE_TSRS_PACKAGE, false)

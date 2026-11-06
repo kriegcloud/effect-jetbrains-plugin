@@ -190,20 +190,35 @@ object EffectTsrsTypeScriptPackage {
      */
     fun create(cacheRoot: Path, candidate: TsrsCandidate, platform: TsrsPlatform): Path {
         val activeRoot = packageRoot(cacheRoot, candidate)
-        val stagingRoot = activeRoot.resolveSibling("${activeRoot.fileName}.staging-${System.nanoTime()}")
-        try {
-            writePackage(stagingRoot, candidate, platform)
-            if (Files.exists(activeRoot)) {
-                FileUtil.delete(activeRoot)
-            }
-            Files.move(stagingRoot, activeRoot)
-        } finally {
-            if (Files.exists(stagingRoot)) {
-                FileUtil.delete(stagingRoot)
+        // The Tools action and the settings button, in any open project, may build the same package.
+        synchronized(lockFor(activeRoot)) {
+            val stagingRoot = activeRoot.resolveSibling("${activeRoot.fileName}.staging-${System.nanoTime()}")
+            val backupRoot = activeRoot.resolveSibling("${activeRoot.fileName}.backup-${System.nanoTime()}")
+            try {
+                writePackage(stagingRoot, candidate, platform)
+                val hadActive = Files.exists(activeRoot)
+                if (hadActive) {
+                    Files.move(activeRoot, backupRoot)
+                }
+                try {
+                    Files.move(stagingRoot, activeRoot)
+                } catch (error: Exception) {
+                    // Put the previous package back so WebStorm's configured path keeps working.
+                    if (hadActive && !Files.exists(activeRoot)) {
+                        Files.move(backupRoot, activeRoot)
+                    }
+                    throw error
+                }
+            } finally {
+                listOf(stagingRoot, backupRoot).filter(Files::exists).forEach(FileUtil::delete)
             }
         }
         return packageDirectory(cacheRoot, candidate)
     }
+
+    private val locks = java.util.concurrent.ConcurrentHashMap<Path, Any>()
+
+    private fun lockFor(root: Path): Any = locks.computeIfAbsent(root.toAbsolutePath().normalize()) { Any() }
 
     private fun writePackage(root: Path, candidate: TsrsCandidate, platform: TsrsPlatform) {
         val nodeModules = root.resolve("node_modules")

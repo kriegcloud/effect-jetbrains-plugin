@@ -6,6 +6,7 @@ import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.progress.ProgressIndicator
@@ -92,9 +93,13 @@ class EffectWebStormTypeScriptService(private val project: Project) {
      * it is experimental API, the action id is stable across 2026.2 and 2026.3.
      */
     private fun restartWebStormTypeScriptService() {
-        val action = ActionManager.getInstance().getAction(TYPESCRIPT_RESTART_ACTION_ID) ?: return
-        val context = SimpleDataContext.getProjectContext(project)
-        ActionUtil.invokeAction(action, context, ActionPlaces.UNKNOWN, null, null)
+        // When this runs from the Settings dialog, restart once the dialog has closed: a restart
+        // inside it would run before the dialog's own Apply/OK and could start the old package.
+        ApplicationManager.getApplication().invokeLater({
+            val action = ActionManager.getInstance().getAction(TYPESCRIPT_RESTART_ACTION_ID) ?: return@invokeLater
+            val context = SimpleDataContext.getProjectContext(project)
+            ActionUtil.invokeAction(action, context, ActionPlaces.UNKNOWN, null, null)
+        }, ModalityState.nonModal(), project.disposed)
     }
 
     private fun report(result: Result<TsrsCandidate>) {
@@ -141,6 +146,9 @@ class EffectWebStormTypeScriptService(private val project: Project) {
 
     companion object {
         const val TYPESCRIPT_PACKAGE_CACHE_DIR = "effect-tsgo/webstorm-typescript"
+
+        /** `Languages & Frameworks | TypeScript` (`TypeScriptConfigurable`), stable across 2026.2 and 2026.3. */
+        const val TYPESCRIPT_CONFIGURABLE_ID = "settings.typescriptcompiler"
         private const val TYPESCRIPT_RESTART_ACTION_ID = "TypeScript.Restart.Service"
 
         fun getInstance(project: Project): EffectWebStormTypeScriptService = project.service()

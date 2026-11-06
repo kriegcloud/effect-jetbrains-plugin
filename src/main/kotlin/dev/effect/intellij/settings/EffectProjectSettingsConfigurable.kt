@@ -19,6 +19,8 @@ import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.panel as uiPanel
 import com.intellij.ui.dsl.builder.rows
 import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
+import com.intellij.ide.DataManager
+import com.intellij.openapi.options.ex.Settings
 import com.intellij.util.ui.JBUI
 import dev.effect.intellij.typescript.EffectWebStormTypeScriptService
 import java.nio.file.Path
@@ -138,7 +140,16 @@ private class EffectProjectSettingsComponent(private val project: Project) {
 
     private fun useTsrsForWebStormTypeScript() {
         webStormTypeScriptStatus.text = "Looking for tsrs…"
-        EffectWebStormTypeScriptService.getInstance(project).useTsrsForWebStormTypeScript { refreshWebStormTypeScriptStatus() }
+        EffectWebStormTypeScriptService.getInstance(project).useTsrsForWebStormTypeScript { result ->
+            refreshWebStormTypeScriptStatus()
+            if (result.isSuccess) {
+                // The TypeScript page of this Settings dialog still shows the old package; OK or Apply
+                // would write that stale value back. Reload it from the settings just changed.
+                Settings.KEY.getData(DataManager.getInstance().getDataContext(panel))
+                    ?.find(EffectWebStormTypeScriptService.TYPESCRIPT_CONFIGURABLE_ID)
+                    ?.reset()
+            }
+        }
     }
 
     private fun refreshWebStormTypeScriptStatus() {
