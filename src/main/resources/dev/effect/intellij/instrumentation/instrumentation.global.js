@@ -17,6 +17,7 @@
   }
 
   var fibers = [];
+  var fiberIndexes = new Map();
   var debuggerState = {
     pauseOnDefects: false,
     lastDefect: null,
@@ -249,11 +250,33 @@
     if (!span || span._tag !== "Span" || !span.attributes) {
       return [];
     }
-    if (typeof span.attributes.entries === "function") {
-      try { return Array.from(span.attributes.entries()); } catch (_) { return []; }
+    var attributes = span.attributes;
+    function safeKey(key) {
+      return typeof key === "string" ? key : snapshotValue(key, 0).summary;
     }
-    if (isObject(span.attributes)) {
-      return Object.keys(span.attributes).map(function(key) { return [key, span.attributes[key]]; });
+    // Invoke the built-in Map iterator, never an application entries method or value getter.
+    try {
+      var entries = Map.prototype.entries.call(attributes);
+      var result = [];
+      for (var entry of entries) {
+        result.push([safeKey(entry[0]), snapshotValue(entry[1], 2)]);
+        if (result.length >= 24) break;
+      }
+      return result;
+    } catch (_) { /* Object-backed attributes use data descriptors below. */ }
+    if (isObject(attributes)) {
+      try {
+        return Object.keys(attributes).slice(0, 24).map(function(key) {
+          try {
+            var descriptor = Object.getOwnPropertyDescriptor(attributes, key);
+            return [key, descriptor && "value" in descriptor
+              ? snapshotValue(descriptor.value, 2)
+              : { type: "accessor", summary: "[Accessor]", children: [] }];
+          } catch (_) {
+            return [key, { type: "unreadable", summary: "[Unreadable]", children: [] }];
+          }
+        });
+      } catch (_) { return []; }
     }
     return [];
   }
@@ -377,10 +400,24 @@
     }
 
     var nextSeen = seen.concat([value]);
-    var label = value && value._tag ? String(value._tag) : (value && value.constructor && value.constructor.name ? value.constructor.name : type);
+    // Read data descriptors only: inspecting application values must never invoke getters.
+    var label = type;
+    try {
+      var tag = Object.getOwnPropertyDescriptor(value, "_tag");
+      if (tag && "value" in tag && typeof tag.value === "string") {
+        label = tag.value;
+      }
+    } catch (_) { /* revoked/hostile proxy: retain the primitive type */ }
     var keys = [];
     try {
-      keys = Object.keys(value).slice(0, 24);
+      keys = Object.getOwnPropertyNames(value).filter(function(key) {
+        try {
+          var descriptor = Object.getOwnPropertyDescriptor(value, key);
+          return descriptor && descriptor.enumerable;
+        } catch (_) {
+          return true; // Keep the name so the child can explain its inspection failure.
+        }
+      }).slice(0, 24);
     } catch (_) {
       keys = [];
     }
@@ -390,7 +427,15 @@
       type: label,
       summary: keys.length > 0 ? label + " {" + keys.slice(0, 5).join(", ") + (keys.length > 5 ? ", ..." : "") + "}" : label,
       children: depth > 0 ? keys.map(function(key) {
-        return Object.assign({ label: key }, snapshotValue(value[key], depth - 1, nextSeen));
+        try {
+          var descriptor = Object.getOwnPropertyDescriptor(value, key);
+          var child = descriptor && "value" in descriptor
+            ? snapshotValue(descriptor.value, depth - 1, nextSeen)
+            : { type: "accessor", summary: "[Accessor]", children: [] };
+          return Object.assign({}, child, { label: key });
+        } catch (_) {
+          return { label: key, type: "unreadable", summary: "[Unreadable]", children: [] };
+        }
       }) : []
     };
   }
@@ -402,10 +447,14 @@
       var tag;
       if (typeof key === "string") {
         tag = key;
-      } else if (key && key.key) {
-        tag = String(key.key);
       } else {
-        tag = snapshotValue(key, 0).summary;
+        try {
+          var descriptor = key && Object.getOwnPropertyDescriptor(key, "key");
+          tag = descriptor && "value" in descriptor && typeof descriptor.value === "string"
+            ? descriptor.value : snapshotValue(key, 0).summary;
+        } catch (_) {
+          tag = "[Unreadable]";
+        }
       }
       return {
         tag: tag,
@@ -431,10 +480,8 @@
   }
 
   function getAliveFibersSnapshot() {
-    return getAliveFibers().map(function(fiber) {
-      var trackedFiber = fibers.filter(function(candidate) {
-        return encodeFiberId(candidate) === fiber.id;
-      })[0];
+    return getAliveFibers().map(function(fiber, index) {
+      var trackedFiber = fibers[index];
       return Object.assign({}, fiber, {
         stack: getFiberCurrentSpanStackSnapshot(trackedFiber, 8)
       });
@@ -478,15 +525,21 @@
     }
     try { fiber[trackedFiberKey] = true; } catch (_) { return; }
     try { fiber[firstSeenKey] = nowMillis(); } catch (_) { /* frozen fiber */ }
+    fiberIndexes.set(fiber, fibers.length);
     fibers.push(fiber);
     installDefectObserver(fiber);
     fiberChildren(fiber).forEach(addTrackedFiber);
     if (typeof fiber.addObserver === "function") {
       try {
         fiber.addObserver(function() {
-          var index = fibers.indexOf(fiber);
-          if (index >= 0) {
-            fibers.splice(index, 1);
+          var index = fiberIndexes.get(fiber);
+          if (index !== undefined) {
+            var last = fibers.pop();
+            fiberIndexes.delete(fiber);
+            if (index < fibers.length) {
+              fibers[index] = last;
+              fiberIndexes.set(last, index);
+            }
           }
         });
       } catch (_) {

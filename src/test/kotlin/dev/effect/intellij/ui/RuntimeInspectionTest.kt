@@ -1,0 +1,385 @@
+package dev.effect.intellij.ui
+
+import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import dev.effect.intellij.devtools.*
+import dev.effect.intellij.debug.*
+import javax.swing.tree.DefaultTreeModel
+import java.time.Instant
+import javax.swing.tree.DefaultMutableTreeNode
+import javax.swing.tree.TreePath
+
+class RuntimeInspectionTest : BasePlatformTestCase() {
+    fun testRuntimeRefreshDoesNotPublishSelectionChanges() {
+        val selected = mutableListOf<String?>()
+        val panel = ClientsTabPanel(project.getService(EffectDevToolsService::class.java)) { selected += it }
+        val clients = listOf(client("one"), client("two"))
+        val state = DevToolsRuntimeState(running = true, clients = clients, activeClientId = "two")
+        panel.refresh(state)
+        panel.refresh(state)
+        panel.refresh(state)
+        assertEmpty(selected)
+        assertEquals("two", panel.clientsList.selectedValue.id)
+        panel.clientsList.selectedIndex = 0
+        assertEquals(listOf("one"), selected)
+    }
+
+    fun testClientSelectionReturnsWhileIngestionHoldsServiceLock() {
+        val service = project.getService(EffectDevToolsService::class.java)
+        val panel = ClientsTabPanel(service)
+        panel.refresh(DevToolsRuntimeState(clients = listOf(client("one"), client("two")), activeClientId = "one"))
+        val lock = EffectDevToolsService::class.java.getDeclaredField("lock").apply { isAccessible = true }.get(service)
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val released = java.util.concurrent.CountDownLatch(1)
+        val holder = Thread {
+            synchronized(lock) {
+                entered.countDown()
+                release.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            released.countDown()
+        }
+        holder.start()
+        try {
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            panel.clientsList.selectedIndex = 1
+            assertEquals(1L, released.count) // The EDT returned before the ingestion lock was released.
+        } finally { release.countDown() }
+        holder.join(5000)
+        assertFalse(holder.isAlive)
+    }
+
+    fun testBurstKeepsOnePendingRenderAndLatestState() {
+        val queue = mutableListOf<() -> Unit>()
+        val rendered = mutableListOf<DevToolsRuntimeState>()
+        val refresh = LatestRuntimeRefresh({ queue += it }, { rendered += it })
+        repeat(10_000) { refresh.submit(DevToolsRuntimeState(port = it)) }
+        assertEquals(1, queue.size)
+        queue.removeAt(0)()
+        assertEquals(listOf(9999), rendered.map { it.port })
+    }
+
+    fun testRuntimeRefreshPreservesSelectedSpanAndExpansion() {
+        val panel = TracerTabPanel(project)
+        val first = span("first")
+        val second = span("second").copy(children = listOf(span("child")))
+        val client = client("one").copy(rootSpans = listOf(first, second))
+        val state = DevToolsRuntimeState(running = true, clients = listOf(client), activeClientId = "one")
+        panel.refresh(state)
+        val root = panel.tree.model.root as DefaultMutableTreeNode
+        val path = TreePath((root.getChildAt(1) as DefaultMutableTreeNode).path)
+        panel.tree.selectionPath = path
+        panel.tree.collapsePath(path)
+        panel.refresh(state.copy(clients = listOf(client.copy(metrics = listOf(metric("poll"))))))
+        assertSame(root.getChildAt(1), panel.tree.lastSelectedPathComponent)
+        panel.refresh(state.copy(clients = listOf(client.copy(rootSpans = listOf(first.copy(status = "Ended"), second)))))
+        val selected = panel.tree.lastSelectedPathComponent as DefaultMutableTreeNode
+        assertEquals("second", (selected.userObject as RuntimeSpanSnapshot).spanId)
+        assertFalse(panel.tree.isExpanded(TreePath(selected.path)))
+    }
+
+    fun testMetricSelectionSurvivesChangedValues() {
+        val panel = MetricsTabPanel()
+        val client = client("one").copy(metrics = listOf(metric("a"), metric("b")))
+        val state = DevToolsRuntimeState(running = true, clients = listOf(client), activeClientId = "one")
+        panel.refresh(state)
+        panel.tree.setSelectionRow(1)
+        panel.refresh(state.copy(clients = listOf(client.copy(metrics = listOf(metric("a"), metric("b").copy(summary = "2"))))))
+        val selected = panel.tree.lastSelectedPathComponent as DefaultMutableTreeNode
+        assertEquals("b", (selected.userObject as RuntimeMetricSnapshot).name)
+    }
+
+    fun testDebugSelectionsSurviveEquivalentRefreshAndIgnoreToggle() {
+        val group = DebugTabGroup(project, project.getService(EffectDebugBridgeService::class.java))
+        val snapshot = EffectDebugSnapshot(
+            context = listOf(EffectDebugContextEntry("Service", EffectDebugValueSnapshot("service", children = listOf(
+                EffectDebugValueSnapshot("nested", children = listOf(EffectDebugValueSnapshot("count", summary = "1"))),
+                EffectDebugValueSnapshot("other", children = listOf(EffectDebugValueSnapshot("child"))),
+            )))),
+            fibers = listOf(EffectDebugFiberEntry("42", isInterruptible = true)),
+        )
+        val state = DebugBridgeState(attachedSessionName = "test", snapshot = snapshot)
+        group.refresh(state)
+        val context = group.contextPanel.tree
+        val root = context.model.root as DefaultMutableTreeNode
+        val service = root.getChildAt(0) as DefaultMutableTreeNode
+        val nested = service.getChildAt(0) as DefaultMutableTreeNode
+        val other = service.getChildAt(1) as DefaultMutableTreeNode
+        context.expandPath(TreePath(nested.path))
+        context.collapsePath(TreePath(other.path))
+        context.selectionPath = TreePath((nested.getChildAt(0) as DefaultMutableTreeNode).path)
+        group.fibersPanel.tree.setSelectionRow(0)
+        group.refresh(state.copy(refreshInProgress = true, snapshot = null))
+        group.refresh(state.copy(snapshot = snapshot.copy(
+            fibers = listOf(EffectDebugFiberEntry("42", isCurrent = true, isInterruptible = true)),
+        )))
+        val selected = context.lastSelectedPathComponent as DefaultMutableTreeNode
+        assertEquals("count", (selected.userObject as EffectDebugTreeEntry).inspectionKey)
+        assertEquals("42", ((group.fibersPanel.tree.lastSelectedPathComponent as DefaultMutableTreeNode).userObject as EffectDebugTreeEntry).inspectionKey)
+        assertTrue(context.isExpanded(TreePath((selected.parent as DefaultMutableTreeNode).path)))
+        val rebuiltService = (root.getChildAt(0) as DefaultMutableTreeNode)
+        assertFalse(context.isExpanded(TreePath((rebuiltService.getChildAt(1) as DefaultMutableTreeNode).path)))
+        val fiberNode = group.fibersPanel.tree.lastSelectedPathComponent
+        group.toggleIgnore()
+        assertSame(selected, context.lastSelectedPathComponent)
+        assertSame(fiberNode, group.fibersPanel.tree.lastSelectedPathComponent)
+    }
+
+    fun testRetainedLimitTracerUpdateReusesUnchangedBranches() {
+        val events = (0 until 100).map { RuntimeSpanEventSnapshot("event$it", "$it", emptyList()) }
+        val spans = (0 until 2000).map { span("s$it").copy(events = events) }
+        val root = DefaultMutableTreeNode("root")
+        val model = DefaultTreeModel(root)
+        val fullStart = System.nanoTime()
+        reconcileSpanNodes(root, spans, model)
+        val fullNanos = System.nanoTime() - fullStart
+        val untouched = root.getChildAt(1999) as DefaultMutableTreeNode
+        val untouchedEvent = untouched.getChildAt(99)
+        // This unchanged branch must never be enumerated on the next update.
+        val guard = object : DefaultMutableTreeNode(spans[1998]) {
+            override fun children(): java.util.Enumeration<javax.swing.tree.TreeNode> {
+                error("Visited an unchanged collapsed branch")
+            }
+        }
+        root.remove(1998)
+        root.insert(guard, 1998)
+        val updated = spans.toMutableList()
+        updated[0] = spans[0].copy(events = events.drop(1) + RuntimeSpanEventSnapshot("new", "100", emptyList()))
+        val updateStart = System.nanoTime()
+        reconcileSpanNodes(root, updated, model)
+        val updateNanos = System.nanoTime() - updateStart
+        assertSame(untouched, root.getChildAt(1999))
+        assertSame(untouchedEvent, untouched.getChildAt(99))
+        assertSame(guard, root.getChildAt(1998))
+        println("Retained-limit EDT tree construction=${fullNanos / 1_000_000.0}ms; one-event update=${updateNanos / 1_000_000.0}ms")
+    }
+
+    fun testLiveProducerOneEventUpdateSkipsUnchangedBranches() = withLiveProducer { publish ->
+        val first = publish(buildString {
+            repeat(EffectDevToolsService.MAX_RETAINED_SPANS) { id ->
+                appendLine("""{"_tag":"Span","spanId":"s$id","traceId":"t$id","name":"s$id"}""")
+                repeat(EffectDevToolsService.MAX_EVENTS_PER_SPAN) { event ->
+                    appendLine("""{"_tag":"SpanEvent","spanId":"s$id","name":"e$event","startTime":"$event"}""")
+                }
+            }
+        })
+        assertEquals(2000, first.size)
+        assertTrue(first.all { it.events.size == 100 })
+        val root = DefaultMutableTreeNode("root")
+        val model = DefaultTreeModel(root)
+        reconcileSpanNodes(root, first, model)
+        val second = publish("""{"_tag":"SpanEvent","spanId":"s0","name":"new","startTime":"100"}""" + "\n")
+        assertNotSame(first.first(), second.first())
+        first.indices.drop(1).forEach { assertSame(first[it], second[it]) }
+        var visits = 0
+        reconcileSpanNodes(root, second, model) { visits++ }
+        assertEquals(2100, visits) // 2,000 root identities and only the changed root's 100 events.
+        assertEquals("e0", first.first().events.first().name) // Published snapshots stay immutable.
+        assertEquals("new", second.first().events.last().name)
+    }
+
+    fun testLiveProducerInvalidatesBothParentsAndRetainedChildrenOnEviction() = withLiveProducer { publish ->
+        fun spanLine(id: String, trace: String = id, parent: String? = null): String {
+            val parentJson = parent?.let { """{"_tag":"Some","value":{"_tag":"Span","spanId":"$it"}}""" } ?: """{"_tag":"None"}"""
+            return """{"_tag":"Span","spanId":"$id","traceId":"$trace","name":"$id","parent":$parentJson}""" + "\n"
+        }
+        val first = publish(spanLine("a") + spanLine("b") + spanLine("child", parent = "a") + spanLine("untouched"))
+        val moved = publish(spanLine("child", parent = "b"))
+        assertEmpty(moved.first { it.spanId == "a" }.children)
+        assertEquals("child", moved.first { it.spanId == "b" }.children.single().spanId)
+        assertNotSame(first.first { it.spanId == "a" }, moved.first { it.spanId == "a" })
+        assertNotSame(first.first { it.spanId == "b" }, moved.first { it.spanId == "b" })
+        assertSame(first.first { it.spanId == "untouched" }, moved.first { it.spanId == "untouched" })
+        val event = publish("""{"_tag":"SpanEvent","spanId":"child","name":"new","startTime":"1"}""" + "\n")
+        assertNotSame(moved.first { it.spanId == "b" }, event.first { it.spanId == "b" })
+        assertEquals(1, event.first { it.spanId == "b" }.children.single().events.size)
+        // Fill capacity, then evict a followed by b. The cross-trace child becomes a root.
+        publish(buildString { repeat(1996) { append(spanLine("fill$it")) } })
+        val evicted = publish(spanLine("extra1") + spanLine("extra2"))
+        assertFalse(evicted.any { it.spanId == "a" || it.spanId == "b" })
+        assertEquals(1, evicted.first { it.spanId == "child" }.events.size)
+    }
+
+    fun testLiveProducerAttachesMissingParentAndInvalidatesParentOnChildEviction() = withLiveProducer { publish ->
+        val orphan = publish("""{"_tag":"Span","spanId":"child","traceId":"oldest","name":"child","parent":{"_tag":"Some","value":{"_tag":"Span","spanId":"parent"}}}""" + "\n").single()
+        val attached = publish("""{"_tag":"Span","spanId":"parent","traceId":"parent-trace","name":"parent"}""" + "\n").single()
+        assertSame(orphan, attached.children.single())
+        publish(buildString {
+            repeat(1998) { id -> appendLine("""{"_tag":"Span","spanId":"fill$id","traceId":"t$id","name":"fill$id"}""") }
+        })
+        val evicted = publish("""{"_tag":"Span","spanId":"extra","traceId":"extra","name":"extra"}""" + "\n")
+        val parent = evicted.first { it.spanId == "parent" }
+        assertNotSame(attached, parent)
+        assertEmpty(parent.children)
+        assertEquals("child", attached.children.single().spanId)
+    }
+
+    fun testLiveProducerSameParentUpdateInvalidatesAncestorsOnce() = withLiveProducer { publish ->
+        val depth = 100
+        fun line(id: Int, ended: Boolean = false): String {
+            val parent = if (id == 0) "null" else """{"_tag":"Some","value":{"_tag":"Span","spanId":"s${id - 1}"}}"""
+            val status = if (ended) """{"_tag":"Ended","endTime":"1"}""" else """{"_tag":"Started","startTime":"0"}"""
+            return """{"_tag":"Span","spanId":"s$id","traceId":"trace","name":"s$id","parent":$parent,"status":$status,"attributes":{"version":"${if (ended) "new" else "old"}"}}""" + "\n"
+        }
+        val first = publish(buildString { repeat(depth) { append(line(it)) } }).single()
+        val service = project.getService(EffectDevToolsService::class.java)
+        val before = service.spanSnapshotInvalidationVisits
+        val second = publish(line(depth - 1, ended = true)).single()
+        assertEquals(depth, service.spanSnapshotInvalidationVisits - before)
+        var previous = first
+        var updated = second
+        repeat(depth - 1) {
+            assertNotSame(previous, updated)
+            previous = previous.children.single()
+            updated = updated.children.single()
+        }
+        assertNotSame(previous, updated)
+        assertEquals("Started @ 0", previous.status)
+        assertEquals("Ended @ 1", updated.status)
+        assertEquals("old", previous.details.single { it.key == "attr.version" }.value)
+        assertEquals("new", updated.details.single { it.key == "attr.version" }.value)
+    }
+
+    fun testLiveProducerPublicationWaitsForScheduler() {
+        val schedulerPaused = java.util.concurrent.CountDownLatch(1)
+        val polling = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val publications = object : java.util.concurrent.LinkedBlockingQueue<() -> Unit>() {
+            override fun poll(timeout: Long, unit: java.util.concurrent.TimeUnit): (() -> Unit)? {
+                assertTrue("Scheduler did not pause", schedulerPaused.await(30, java.util.concurrent.TimeUnit.SECONDS))
+                // This is reached only after receiving Pong, while enqueueing is still blocked.
+                assertEquals(1L, release.count)
+                polling.countDown()
+                return super.poll(timeout, unit)
+            }
+        }
+        val releaser = Thread {
+            if (polling.await(30, java.util.concurrent.TimeUnit.SECONDS)) release.countDown()
+        }
+        releaser.start()
+        try {
+            withLiveProducer(publications, beforeEnqueue = {
+                schedulerPaused.countDown()
+                check(release.await(30, java.util.concurrent.TimeUnit.SECONDS)) { "Scheduler release timed out" }
+            }) { publish ->
+                assertEquals("child", publish("""{"_tag":"Span","spanId":"child","traceId":"trace","name":"child"}""" + "\n").single().spanId)
+            }
+            assertEquals(0L, polling.count)
+        } finally {
+            release.countDown()
+            releaser.join(35_000)
+        }
+        assertFalse("Scheduler releaser did not terminate", releaser.isAlive)
+    }
+
+    private fun withLiveProducer(
+        publications: java.util.concurrent.LinkedBlockingQueue<() -> Unit> = java.util.concurrent.LinkedBlockingQueue(),
+        beforeEnqueue: () -> Unit = {},
+        test: ((String) -> List<RuntimeSpanSnapshot>) -> Unit,
+    ) {
+        val port = java.net.ServerSocket(0).use { it.localPort }
+        project.getService(dev.effect.intellij.settings.EffectProjectSettingsService::class.java).updateSettings(
+            dev.effect.intellij.settings.EffectProjectSettings(devToolsPort = port, metricsPollIntervalMs = 60_000),
+        )
+        val service = project.getService(EffectDevToolsService::class.java)
+        val scheduler = service.schedulePublication
+        service.schedulePublication = {
+            beforeEnqueue()
+            publications.add(it)
+        }
+        val replies = java.util.concurrent.LinkedBlockingQueue<String>()
+        service.startServer()
+        var client: org.java_websocket.client.WebSocketClient? = null
+        try {
+            repeat(50) {
+                if (client == null) {
+                    val candidate = object : org.java_websocket.client.WebSocketClient(java.net.URI("ws://127.0.0.1:$port")) {
+                        override fun onOpen(handshake: org.java_websocket.handshake.ServerHandshake?) = Unit
+                        override fun onMessage(message: String) { replies.add(message) }
+                        override fun onClose(code: Int, reason: String?, remote: Boolean) = Unit
+                        override fun onError(error: Exception?) = Unit
+                    }
+                    if (candidate.connectBlocking(1, java.util.concurrent.TimeUnit.SECONDS)) client = candidate
+                    else { candidate.closeBlocking(); Thread.sleep(20) }
+                }
+            }
+            val connected = checkNotNull(client) { "Runtime socket did not connect" }
+            test { payload ->
+                connected.send(payload + """{"_tag":"Ping"}""" + "\n")
+                assertTrue("Ingestion barrier timed out", replies.poll(30, java.util.concurrent.TimeUnit.SECONDS)?.contains("Pong") == true)
+                checkNotNull(publications.poll(30, java.util.concurrent.TimeUnit.SECONDS)) { "Publication scheduling timed out" }.invoke()
+                service.currentState().clients.single().rootSpans
+            }
+        } finally {
+            client?.closeBlocking()
+            service.stopServer()
+            service.schedulePublication = scheduler
+        }
+    }
+
+    fun testDeepLeafUpdateVisitsEachSpanOnce() {
+        for (depth in listOf(100, 300)) {
+            var reads = 0
+            fun chain(updated: Boolean): RuntimeSpanSnapshot {
+                var child = span("leaf").copy(status = if (updated) "Ended" else "Started")
+                repeat(depth - 1) {
+                    val descendant = child
+                    val children = object : AbstractList<RuntimeSpanSnapshot>() {
+                        override val size = 1
+                        override fun get(index: Int): RuntimeSpanSnapshot { reads++; return descendant }
+                    }
+                    child = span("s$it").copy(children = children)
+                }
+                return child
+            }
+            val root = DefaultMutableTreeNode("root")
+            val model = DefaultTreeModel(root)
+            reconcileSpanNodes(root, listOf(chain(false)), model)
+            val tree = javax.swing.JTree(model)
+            val top = root.getChildAt(0) as DefaultMutableTreeNode
+            tree.expandPath(TreePath(top.path))
+            tree.selectionPath = TreePath((top.getChildAt(0) as DefaultMutableTreeNode).path)
+            val selected = tree.lastSelectedPathComponent
+            val inspection = RuntimeTreeInspection.capture(tree)
+            var visits = 0
+            reads = 0
+            reconcileSpanNodes(root, listOf(chain(true)), model) { visits++ }
+            assertTrue("Descendant reads=$reads at depth=$depth", reads <= 2 * depth)
+            inspection.restore(tree)
+            assertEquals(depth, visits)
+            assertSame(selected, tree.lastSelectedPathComponent)
+            assertTrue(tree.isExpanded(TreePath(top.path)))
+        }
+    }
+
+    fun testExpandedSiblingRestoreUsesOneIndex() {
+        for (count in listOf(200, 600)) {
+            val root = DefaultMutableTreeNode("root")
+            repeat(count) { index ->
+                root.add(DefaultMutableTreeNode("s$index").apply { add(DefaultMutableTreeNode("child")) })
+            }
+            val collapsed = object : DefaultMutableTreeNode("collapsed") {
+                override fun children(): java.util.Enumeration<javax.swing.tree.TreeNode> {
+                    error("Enumerated an unrelated collapsed branch")
+                }
+            }
+            collapsed.add(DefaultMutableTreeNode("hidden"))
+            root.add(collapsed)
+            val tree = javax.swing.JTree(DefaultTreeModel(root))
+            repeat(count) { tree.expandPath(TreePath((root.getChildAt(it) as DefaultMutableTreeNode).path)) }
+            tree.selectionPath = TreePath((root.getChildAt(count - 1) as DefaultMutableTreeNode).path)
+            val inspection = RuntimeTreeInspection.capture(tree)
+            repeat(count) { tree.collapsePath(TreePath((root.getChildAt(it) as DefaultMutableTreeNode).path)) }
+            var lookups = 0
+            inspection.restore(tree) { lookups++; it.userObject.toString() }
+            // One root identity per saved path plus one indexing pass over its children.
+            assertTrue("Identity lookups=$lookups for $count roots", lookups <= 2 * count + 4)
+            repeat(count) { assertTrue(tree.isExpanded(TreePath((root.getChildAt(it) as DefaultMutableTreeNode).path))) }
+            assertSame(root.getChildAt(count - 1), tree.lastSelectedPathComponent)
+            assertFalse(tree.isExpanded(TreePath(collapsed.path)))
+        }
+    }
+
+    private fun client(id: String) = RuntimeClientSnapshot(id, id, "local", Instant.EPOCH, Instant.EPOCH)
+    private fun span(id: String) = RuntimeSpanSnapshot(id, "trace", id, "Started", true, emptyList(), emptyList(), emptyList())
+    private fun metric(id: String) = RuntimeMetricSnapshot(id, "Counter", "1", null, emptyList(), emptyList())
+}

@@ -43,7 +43,6 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }})
-    needs: [build]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -76,7 +75,6 @@ jobs:
 
   verify:
     name: Verify Plugin
-    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - name: Maximize build space
@@ -111,7 +109,6 @@ jobs:
 
   qodana:
     name: Qodana
-    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - name: Maximize build space
@@ -142,12 +139,85 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: qodana-reports
-          path: build/reports/qodana
+          # The Gradle Qodana task writes its SARIF and HTML report here, not under build/reports.
+          path: |
+            build/qodana/results/qodana.sarif.json
+            build/qodana/results/report
+          if-no-files-found: warn
+
+  workflowTests:
+    name: Release workflow regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+
+  runtime:
+    name: Real server and instrumentation probes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.22.0'
+      - name: Test diagnostic occurrence parity and negative controls
+        run: node scripts/tsgo-diagnostic-parity.test.mjs
+      - name: Install pinned native server with intact package layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/effect-tsgo" build/reports/runtime
+          npm install --prefix "$RUNNER_TEMP/effect-tsgo" --no-audit --no-fund --no-package-lock @effect/tsgo-linux-x64@0.67.4 2>&1 | tee build/reports/runtime/install.log
+          node --version | tee build/reports/runtime/versions.log
+          npm list --prefix "$RUNNER_TEMP/effect-tsgo" --depth=0 | tee -a build/reports/runtime/versions.log
+      - name: Verify injected instrumentation on Effect 4.1.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-instrumentation.mjs --effect 4.1.2 2>&1 | tee build/reports/runtime/instrumentation.log
+      - name: Verify all five real LSP lanes
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-real-tsgo-lsp.mjs --binary "$RUNNER_TEMP/effect-tsgo/node_modules/@effect/tsgo-linux-x64/lib/tsc" --only all 2>&1 | tee build/reports/runtime/lsp.log
+      - name: Verify diagnostics CLI and LSP occurrence parity
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-tsgo-diagnostics-cli.mjs 2>&1 | tee build/reports/runtime/diagnostics-cli.log
+      - name: Upload runtime probe reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-probe-reports
+          path: build/reports/runtime
+
+  compatibility:
+    name: WebStorm 263 platform compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v6
+        with:
+          distribution: zulu
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v6.4.1
+        with:
+          cache-read-only: true
+      - run: ./gradlew testIdeVerifierWebStorm
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: compatibility-test-reports
+          path: build/reports/tests/testIdeVerifierWebStorm
 
   releaseDraft:
     name: Release Draft
     if: github.event_name != 'pull_request'
-    needs: [build, test, verify, qodana]
+    needs: [build, test, verify, qodana, runtime, compatibility, workflowTests]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -172,14 +242,6 @@ jobs:
           name: plugin-distribution
           path: build/distributions
 
-      - name: Remove old release drafts
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api repos/{owner}/{repo}/releases \
-            --jq '.[] | select(.draft == true) | .id' \
-            | xargs -r -I '{}' gh api -X DELETE repos/{owner}/{repo}/releases/{}
-
       - name: Create release draft
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -188,7 +250,4 @@ jobs:
           RELEASE_NOTE="./build/tmp/release_note.txt"
           ./gradlew getChangelog --project-version "$VERSION" --no-header --quiet --console=plain --output-file="$RELEASE_NOTE"
 
-          gh release create "$VERSION" build/distributions/*.zip \
-            --draft \
-            --title "$VERSION" \
-            --notes-file "$RELEASE_NOTE"
+          python3 .github/scripts/release-assets.py draft "$VERSION" --notes "$RELEASE_NOTE"

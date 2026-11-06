@@ -9,6 +9,71 @@ import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 
 class EffectDiagnosticDirectivesTest : BasePlatformTestCase() {
+    fun testDirectiveTextInsideStringsDoesNotSuppressDiagnostics() {
+        val examples = listOf(
+            "const example = \"@effect-diagnostics *:off\"",
+            "const example = '@effect-diagnostics *:off'",
+            "const example = `first\n@effect-diagnostics *:off\nlast`",
+            "const example = /@effect-diagnostics *:off/",
+            "const example = `// @effect-diagnostics *:off`",
+        )
+        examples.forEach { example ->
+            val source = example + "\nconst following = 1"
+            assertNull(example, EffectDiagnosticDirectiveSet.parse(source).effectiveSeverity("floatingEffect", source.lineOf("following")))
+        }
+        listOf("// @effect-diagnostics *:off", "/**\n * @effect-diagnostics *:off\n */").forEach { comment ->
+            val source = comment + "\nconst following = 1"
+            assertEquals(EffectDiagnosticDirectiveSeverity.OFF, EffectDiagnosticDirectiveSet.parse(source).effectiveSeverity("floatingEffect", source.lineOf("following")))
+        }
+    }
+
+    fun testJsxTextDoesNotSuppressDiagnostics() {
+        listOf("tsx", "jsx").forEach { extension ->
+            val source = "const view = <div>\n// @effect-diagnostics *:off\n</div>;\nconst following = 1;"
+            val file = myFixture.configureByText("index.$extension", source)
+            val diagnostic = effectDiagnostic("effect(floatingEffect)").also {
+                it.range = Range(Position(3, 0), Position(3, 5))
+            }
+            assertNull(effectDiagnosticDirectives(file.viewProvider.document!!, file.name).effectiveSeverity("floatingEffect", 3))
+            assertNull(effectDirectiveSeverityForDiagnostic(source, 3, diagnostic, file.name))
+            assertEquals(listOf(diagnostic), dev.effect.intellij.lsp.fixall.selectFixAllDiagnostics(
+                listOf(diagnostic), source, "rule:floatingEffect", file.name,
+            ))
+            val comment = "const view = <div>{/* @effect-diagnostics-next-line floatingEffect:off */}\n{value}</div>;"
+            assertEquals(EffectDiagnosticDirectiveSeverity.OFF,
+                EffectDiagnosticDirectiveSet.parse(comment, file.name).effectiveSeverity("floatingEffect", 1))
+        }
+    }
+
+    fun testTypeScriptAngleBracketAssertionKeepsCommentDirectives() {
+        val source = "const value = <number>input;\n// @effect-diagnostics-next-line floatingEffect:off\nconst following = 1;"
+        assertEquals(EffectDiagnosticDirectiveSeverity.OFF,
+            EffectDiagnosticDirectiveSet.parse(source, "index.ts").effectiveSeverity("floatingEffect", 2))
+    }
+
+    fun testMixedSkipFileAndSectionRulesBothApply() {
+        val directives = EffectDiagnosticDirectiveSet.parse("before\n// @effect-diagnostics floatingEffect:skip-file strictEffectProvide:off\nafter")
+        assertEquals(EffectDiagnosticDirectiveSeverity.SKIP_FILE, directives.effectiveSeverity("floatingEffect", 0))
+        assertEquals(EffectDiagnosticDirectiveSeverity.SKIP_FILE, directives.effectiveSeverity("floatingEffect", 2))
+        assertNull(directives.effectiveSeverity("strictEffectProvide", 0))
+        assertEquals(EffectDiagnosticDirectiveSeverity.OFF, directives.effectiveSeverity("strictEffectProvide", 2))
+    }
+
+    fun testDirectiveParsingOccursOncePerDocumentVersion() {
+        val document = myFixture.configureByText("index.ts", "// @effect-diagnostics *:off\nconst value = 1").viewProvider.document!!
+        val first = effectDiagnosticDirectives(document)
+        repeat(500) {
+            assertSame(first, effectDiagnosticDirectives(document))
+            assertEquals(EffectDiagnosticDirectiveSeverity.OFF, first.effectiveSeverity("floatingEffect", 1))
+        }
+        com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(project) {
+            document.setText("// @effect-diagnostics *:warning\nconst value = 1")
+        }
+        val updated = effectDiagnosticDirectives(document)
+        assertNotSame(first, updated)
+        assertEquals(EffectDiagnosticDirectiveSeverity.WARNING, updated.effectiveSeverity("floatingEffect", 1))
+    }
+
     fun testDescriptorUsesEffectDiagnosticsCustomizer() {
         val customizer = EffectLspServerDescriptor(project).lspCustomization.diagnosticsCustomizer
 

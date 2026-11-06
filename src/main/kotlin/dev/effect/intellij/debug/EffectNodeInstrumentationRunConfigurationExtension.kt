@@ -8,8 +8,12 @@ import com.intellij.javascript.nodejs.execution.NodeTargetRun
 import com.intellij.javascript.nodejs.execution.runConfiguration.AbstractNodeRunConfigurationExtension
 import com.intellij.javascript.nodejs.execution.runConfiguration.NodeRunConfigurationLaunchSession
 import dev.effect.intellij.settings.EffectProjectSettingsService
+import java.nio.file.Path
 
-class EffectNodeInstrumentationRunConfigurationExtension : AbstractNodeRunConfigurationExtension() {
+class EffectNodeInstrumentationRunConfigurationExtension internal constructor(
+    private val instrumentationPath: () -> Path,
+) : AbstractNodeRunConfigurationExtension() {
+    constructor() : this({ EffectInstrumentationService.getInstance().ensureInstrumentationScript() })
     override fun isApplicableFor(configuration: AbstractNodeTargetRunProfile): Boolean = true
 
     override fun shouldExtendMainEditor(): Boolean = false
@@ -29,13 +33,11 @@ class EffectNodeInstrumentationRunConfigurationExtension : AbstractNodeRunConfig
         return object : NodeRunConfigurationLaunchSession() {
             @Throws(ExecutionException::class)
             override fun addNodeOptionsTo(targetRun: NodeTargetRun) {
-                val scriptPath = EffectInstrumentationService.getInstance()
-                    .ensureInstrumentationScript()
-                    .toString()
+                val scriptPath = instrumentationPath()
                 targetRun.addNodeOptions(
                     false,
                     TargetValue.fixed("--require"),
-                    TargetValue.fixed(scriptPath),
+                    targetRun.path(scriptPath),
                 )
             }
         }

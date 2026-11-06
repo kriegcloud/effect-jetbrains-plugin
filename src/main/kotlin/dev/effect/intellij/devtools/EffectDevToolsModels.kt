@@ -27,9 +27,6 @@ data class RuntimeMetricSnapshot(
     val tagsWithoutUnit: List<RuntimeMetricTagSnapshot>
         get() = tags.filterNot { it.key == "unit" || it.key == "time_unit" }
 
-    val unitSuffix: String
-        get() = tags.firstOrNull { it.key == "unit" || it.key == "time_unit" }?.value?.let { " $it" }.orEmpty()
-
     override fun toString(): String =
         if (summary.isBlank()) {
             name
@@ -75,6 +72,8 @@ data class RuntimeClientSnapshot(
     val lastSeenAt: Instant,
     val metrics: List<RuntimeMetricSnapshot> = emptyList(),
     val rootSpans: List<RuntimeSpanSnapshot> = emptyList(),
+    val droppedSpans: Int = 0,
+    val droppedEvents: Int = 0,
 ) {
     val metricsSummary: String?
         get() = metrics.takeIf { it.isNotEmpty() }?.size?.let { "$it metric(s)" }

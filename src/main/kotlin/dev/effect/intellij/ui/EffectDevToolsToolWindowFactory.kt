@@ -48,7 +48,6 @@ import javax.swing.JPanel
 import javax.swing.JTabbedPane
 import javax.swing.JToolBar
 import javax.swing.JTree
-import javax.swing.event.TreeSelectionListener
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -60,64 +59,69 @@ class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
     private var disposed = false
 
     val component: JComponent = SimpleToolWindowPanel(true, true).apply {
-        setToolbar(
-            ActionManager.getInstance().createActionToolbar(
-                "EffectDevToolsToolbar",
-                DefaultActionGroup(
-                    StartRuntimeAction(project),
-                    StopRuntimeAction(project),
-                    RestartRuntimeAction(project),
-                    SelectActiveClientAction(project),
-                    OpenSettingsAction(project),
-                    ResetMetricsAction(project),
-                    ResetTracerAction(project),
-                    AttachDebugAction(project),
-                    RefreshDebugSnapshotsAction(project),
-                    TogglePauseOnDefectsAction(project),
-                    InterruptCurrentFiberAction(project),
-                ),
-                true,
-            ).component,
-        )
+        toolbar = ActionManager.getInstance().createActionToolbar(
+            "EffectDevToolsToolbar",
+            DefaultActionGroup(
+                StartRuntimeAction(project),
+                StopRuntimeAction(project),
+                RestartRuntimeAction(project),
+                SelectActiveClientAction(project),
+                OpenSettingsAction(project),
+                ResetMetricsAction(project),
+                ResetTracerAction(project),
+                AttachDebugAction(project),
+                RefreshDebugSnapshotsAction(project),
+                TogglePauseOnDefectsAction(project),
+                InterruptCurrentFiberAction(project),
+            ),
+            true,
+        ).component
         setContent(buildContent())
     }
 
     private fun buildContent(): JComponent {
-        val clientsPanel = ClientsTabPanel(project, devToolsService)
-        val metricsPanel = MetricsTabPanel(devToolsService)
-        val tracerPanel = TracerTabPanel(project, devToolsService)
+        val clientsPanel = ClientsTabPanel(devToolsService)
+        val metricsPanel = MetricsTabPanel()
+        val tracerPanel = TracerTabPanel(project)
         val webTracerPanel = EffectWebTracerSupport.createPanelOrNull()
         browserTracerPanel = webTracerPanel
         val debugPanel = DebugTabGroup(project, debugBridgeService)
 
-        devToolsService.addListener({ state ->
-            onEdt {
-                clientsPanel.refresh(state)
-                metricsPanel.refresh(state)
-                tracerPanel.refresh(state)
-                webTracerPanel?.refresh(state)
-            }
-        }, this)
-        debugBridgeService.addListener({ state ->
-            onEdt {
-                debugPanel.refresh(state)
-            }
-        }, this)
-
-        val initialRuntimeState = devToolsService.currentState()
-        clientsPanel.refresh(initialRuntimeState)
-        metricsPanel.refresh(initialRuntimeState)
-        tracerPanel.refresh(initialRuntimeState)
-        webTracerPanel?.refresh(initialRuntimeState)
-        debugPanel.refresh(debugBridgeService.currentState())
-
-        return JTabbedPane().apply {
+        val tabs = JTabbedPane().apply {
             addTab("Clients", clientsPanel.component)
             addTab("Metrics", metricsPanel.component)
             addTab("Tracer", tracerPanel.component)
             webTracerPanel?.let { addTab("Tracer Web", it.component) }
             addTab("Debug", debugPanel.component)
         }
+        var latest = devToolsService.currentState()
+        var webKey: Any? = null
+        fun render() {
+            val state = latest
+            when (tabs.selectedComponent) {
+                clientsPanel.component -> clientsPanel.refresh(state)
+                metricsPanel.component -> metricsPanel.refresh(state)
+                tracerPanel.component -> tracerPanel.refresh(state)
+                webTracerPanel?.component -> {
+                    val active = state.clients.firstOrNull { it.id == state.activeClientId }
+                    val key = Triple(state.running, active?.id, active?.rootSpans)
+                    if (key != webKey) {
+                        webKey = key
+                        webTracerPanel?.refresh(state)
+                    }
+                }
+            }
+        }
+        val refresh = LatestRuntimeRefresh({ block -> onEdt(block) }) { state ->
+            latest = state
+            render()
+        }
+        devToolsService.addListener({ state -> refresh.submit(state) }, this)
+        tabs.addChangeListener { render() }
+        debugBridgeService.addListener({ state -> onEdt { debugPanel.refresh(state) } }, this)
+        render()
+        debugPanel.refresh(debugBridgeService.currentState())
+        return tabs
     }
 
     private fun onEdt(block: () -> Unit) {
@@ -135,13 +139,14 @@ class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
     }
 }
 
-private class ClientsTabPanel(
-    private val project: Project,
-    private val devToolsService: EffectDevToolsService,
+internal class ClientsTabPanel(
+    devToolsService: EffectDevToolsService,
+    private val selectClient: (String?) -> Unit = { id -> devToolsService.requestLifecycle { selectActiveClient(clientId = id) } },
 ) {
+    private var refreshing = false
     private val statusLabel = JBLabel()
     private val clientsModel = CollectionListModel<RuntimeClientSnapshot>()
-    private val clientsList = JBList(clientsModel).apply {
+    internal val clientsList = JBList(clientsModel).apply {
         cellRenderer = object : DefaultListCellRenderer() {
             override fun getListCellRendererComponent(
                 list: JList<*>?,
@@ -183,9 +188,9 @@ private class ClientsTabPanel(
 
     init {
         clientsList.addListSelectionListener {
-            if (!it.valueIsAdjusting) {
+            if (!refreshing && !it.valueIsAdjusting) {
                 val selected = clientsList.selectedValue
-                devToolsService.selectActiveClient(clientId = selected?.id)
+                selectClient(selected?.id)
                 detailArea.text = selected?.formatClientDetails() ?: "Select a runtime client to inspect details."
             }
         }
@@ -198,24 +203,23 @@ private class ClientsTabPanel(
             else -> "Runtime server is stopped. Start it to accept Effect Dev Tools clients."
         }
 
-        clientsModel.replaceAll(state.clients)
-        val selected = state.clients.firstOrNull { it.id == state.activeClientId }
-        if (selected != null) {
+        refreshing = true
+        try {
+            clientsModel.replaceAll(state.clients)
+            val selected = state.clients.firstOrNull { it.id == state.activeClientId }
             clientsList.setSelectedValue(selected, true)
-            detailArea.text = selected.formatClientDetails()
-        } else {
-            detailArea.text = "No runtime clients connected."
+            detailArea.text = selected?.formatClientDetails() ?: "No runtime clients connected."
+        } finally {
+            refreshing = false
         }
     }
 }
 
-private class MetricsTabPanel(
-    private val devToolsService: EffectDevToolsService,
-) {
+internal class MetricsTabPanel {
     private val statusLabel = JBLabel()
     private val treeRoot = DefaultMutableTreeNode("Metrics")
     private val treeModel = DefaultTreeModel(treeRoot)
-    private val tree = JTree(treeModel).apply {
+    internal val tree = JTree(treeModel).apply {
         isRootVisible = false
         expandsSelectedPaths = true
     }
@@ -238,15 +242,17 @@ private class MetricsTabPanel(
     }
 
     init {
-        tree.addTreeSelectionListener(TreeSelectionListener {
+        tree.addTreeSelectionListener {
             val userObject = (tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject
             detailArea.text = when (userObject) {
                 is RuntimeMetricSnapshot -> userObject.formatMetricDetails()
                 is RuntimeDetailEntry -> "${userObject.key}: ${userObject.value}"
                 else -> "Select a metric to inspect its details."
             }
-        })
+        }
     }
+
+    private var contentKey: Any? = null
 
     fun refresh(state: DevToolsRuntimeState) {
         val activeClient = state.clients.firstOrNull { it.id == state.activeClientId }
@@ -257,6 +263,10 @@ private class MetricsTabPanel(
             else -> "Showing metrics for ${activeClient.name}."
         }
 
+        val key = state.activeClientId to activeClient?.metrics
+        if (key == contentKey) return
+        val inspection = RuntimeTreeInspection.capture(tree)
+        contentKey = key
         rebuildTree(treeRoot, treeModel) {
             activeClient?.metrics?.forEach { metric ->
                 val metricNode = DefaultMutableTreeNode(metric)
@@ -267,19 +277,17 @@ private class MetricsTabPanel(
                 treeRoot.add(metricNode)
             }
         }
-        expandAll(tree)
-        selectFirstRowIfAvailable(tree)
+        inspection.restore(tree)
     }
 }
 
-private class TracerTabPanel(
+internal class TracerTabPanel(
     private val project: Project,
-    private val devToolsService: EffectDevToolsService,
 ) {
     private val statusLabel = JBLabel()
     private val treeRoot = DefaultMutableTreeNode("Tracer")
     private val treeModel = DefaultTreeModel(treeRoot)
-    private val tree = JTree(treeModel).apply {
+    internal val tree = JTree(treeModel).apply {
         isRootVisible = false
         expandsSelectedPaths = true
     }
@@ -312,9 +320,9 @@ private class TracerTabPanel(
     }
 
     init {
-        tree.addTreeSelectionListener(TreeSelectionListener {
+        tree.addTreeSelectionListener {
             updateSelectionActions()
-        })
+        }
         copyButton.addActionListener {
             runtimeSelectedText()?.let { CopyPasteManager.getInstance().setContents(StringSelection(it)) }
         }
@@ -324,30 +332,24 @@ private class TracerTabPanel(
         updateSelectionActions()
     }
 
+    private var contentKey: Any? = null
+
     fun refresh(state: DevToolsRuntimeState) {
         val activeClient = state.clients.firstOrNull { it.id == state.activeClientId }
         statusLabel.text = when {
             !state.running -> "Runtime server is stopped."
             activeClient == null -> "No active runtime client selected."
             activeClient.rootSpans.isEmpty() -> "No span activity published yet for ${activeClient.name}."
-            else -> "Showing tracer data for ${activeClient.name}."
+            else -> "Showing tracer data for ${activeClient.name}. Dropped: ${activeClient.droppedSpans} spans, ${activeClient.droppedEvents} events."
         }
 
-        rebuildTree(treeRoot, treeModel) {
-            activeClient?.rootSpans?.forEach { span ->
-                treeRoot.add(buildSpanNode(span))
-            }
-        }
-        expandAll(tree)
-        selectFirstRowIfAvailable(tree)
+        val key = state.activeClientId to activeClient?.rootSpans
+        if (key == contentKey) return
+        val inspection = RuntimeTreeInspection.capture(tree)
+        contentKey = key
+        reconcileSpanNodes(treeRoot, activeClient?.rootSpans.orEmpty(), treeModel)
+        inspection.restore(tree)
         updateSelectionActions()
-    }
-
-    private fun buildSpanNode(span: RuntimeSpanSnapshot): DefaultMutableTreeNode {
-        val node = DefaultMutableTreeNode(span)
-        span.events.forEach { event -> node.add(DefaultMutableTreeNode(event)) }
-        span.children.forEach { child -> node.add(buildSpanNode(child)) }
-        return node
     }
 
     private fun selectedUserObject(): Any? =
@@ -375,21 +377,20 @@ private class TracerTabPanel(
         }
 }
 
-private class DebugTabGroup(
+internal class DebugTabGroup(
     private val project: Project,
     private val debugBridgeService: EffectDebugBridgeService,
 ) {
-    private val contextPanel = DebugTreePanel(project, "Context")
+    internal val contextPanel = DebugTreePanel(project, "Context")
     private val spanStackPanel = DebugTreePanel(
         project,
         "Span Stack",
         extraActionLabel = "Toggle Ignore",
         extraAction = {
-            spanStackIgnoreEnabled = !spanStackIgnoreEnabled
-            refresh(lastState)
+            toggleIgnore()
         },
     )
-    private val fibersPanel = DebugTreePanel(
+    internal val fibersPanel = DebugTreePanel(
         project,
         "Fibers",
         extraActionLabel = "Interrupt Selected",
@@ -410,8 +411,19 @@ private class DebugTabGroup(
 
     fun refresh(state: DebugBridgeState) {
         lastState = state
-        val ignoreList = EffectProjectSettingsService.getInstance(project).currentSettings().spanStackIgnoreList
         contextPanel.refresh(state, EffectDebugTreeModels.contextEntries(state))
+        refreshSpanStack(state)
+        fibersPanel.refresh(state, EffectDebugTreeModels.fiberEntries(state))
+        breakpointsPanel.refresh(state, EffectDebugTreeModels.breakpointEntries(state))
+    }
+
+    internal fun toggleIgnore() {
+        spanStackIgnoreEnabled = !spanStackIgnoreEnabled
+        refreshSpanStack(lastState)
+    }
+
+    private fun refreshSpanStack(state: DebugBridgeState) {
+        val ignoreList = EffectProjectSettingsService.getInstance(project).currentSettings().spanStackIgnoreList
         spanStackPanel.refresh(
             state,
             EffectDebugTreeModels.spanStackEntries(
@@ -421,12 +433,10 @@ private class DebugTabGroup(
             ),
             suffix = if (spanStackIgnoreEnabled) "ignore list enabled" else "ignore list disabled",
         )
-        fibersPanel.refresh(state, EffectDebugTreeModels.fiberEntries(state))
-        breakpointsPanel.refresh(state, EffectDebugTreeModels.breakpointEntries(state))
     }
 }
 
-private class DebugTreePanel(
+internal class DebugTreePanel(
     private val project: Project,
     private val title: String,
     extraActionLabel: String? = null,
@@ -435,7 +445,7 @@ private class DebugTreePanel(
     private val header = JBLabel()
     private val treeRoot = DefaultMutableTreeNode(title)
     private val treeModel = DefaultTreeModel(treeRoot)
-    private val tree = JTree(treeModel).apply {
+    internal val tree = JTree(treeModel).apply {
         isRootVisible = false
         expandsSelectedPaths = true
     }
@@ -469,7 +479,7 @@ private class DebugTreePanel(
     }
 
     init {
-        tree.addTreeSelectionListener(TreeSelectionListener { updateSelectionActions() })
+        tree.addTreeSelectionListener { updateSelectionActions() }
         copyButton.addActionListener {
             selectedEntry()?.let { entry ->
                 CopyPasteManager.getInstance().setContents(StringSelection(entry.copyText))
@@ -493,11 +503,12 @@ private class DebugTreePanel(
             "$title: attached to ${state.attachedSessionName} (${state.attachedSessionType ?: "unknown"})"
         }
         header.text = listOfNotNull(baseHeader, suffix).joinToString(" - ")
+        if (state.refreshInProgress && state.snapshot == null) return
+        val inspection = RuntimeTreeInspection.capture(tree)
         rebuildTree(treeRoot, treeModel) {
             entries.forEach { treeRoot.add(it.toTreeNode()) }
         }
-        expandAll(tree)
-        selectFirstRowIfAvailable(tree)
+        inspection.restore(tree)
         updateSelectionActions(state.error)
     }
 
@@ -525,7 +536,7 @@ private class StartRuntimeAction(private val project: Project) : AnAction(
     AllIcons.Actions.Execute,
 ) {
     override fun actionPerformed(event: AnActionEvent) {
-        project.getService(EffectDevToolsService::class.java).startServer()
+        project.getService(EffectDevToolsService::class.java).requestLifecycle { startServer() }
     }
 }
 
@@ -535,7 +546,7 @@ private class StopRuntimeAction(private val project: Project) : AnAction(
     AllIcons.Run.Stop,
 ) {
     override fun actionPerformed(event: AnActionEvent) {
-        project.getService(EffectDevToolsService::class.java).stopServer()
+        project.getService(EffectDevToolsService::class.java).requestLifecycle { stopServer() }
     }
 }
 
@@ -545,7 +556,7 @@ private class RestartRuntimeAction(private val project: Project) : AnAction(
     AllIcons.Run.Restart,
 ) {
     override fun actionPerformed(event: AnActionEvent) {
-        project.getService(EffectDevToolsService::class.java).restartServer()
+        project.getService(EffectDevToolsService::class.java).requestLifecycle { restartServer() }
     }
 }
 
@@ -558,12 +569,12 @@ private class SelectActiveClientAction(private val project: Project) : AnAction(
         val service = project.getService(EffectDevToolsService::class.java)
         val state = service.currentState()
         if (state.clients.isEmpty()) {
-            service.selectActiveClient(clientId = null)
+            service.requestLifecycle { selectActiveClient(clientId = null) }
             return
         }
         val currentIndex = state.clients.indexOfFirst { it.id == state.activeClientId }
         val nextIndex = if (currentIndex < 0) 0 else (currentIndex + 1) % state.clients.size
-        service.selectActiveClient(clientId = state.clients[nextIndex].id)
+        service.requestLifecycle { selectActiveClient(clientId = state.clients[nextIndex].id) }
     }
 }
 
@@ -583,7 +594,7 @@ private class ResetMetricsAction(private val project: Project) : AnAction(
     AllIcons.Actions.Refresh,
 ) {
     override fun actionPerformed(event: AnActionEvent) {
-        project.getService(EffectDevToolsService::class.java).resetMetrics()
+        project.getService(EffectDevToolsService::class.java).requestLifecycle { resetMetrics() }
     }
 }
 
@@ -593,7 +604,7 @@ private class ResetTracerAction(private val project: Project) : AnAction(
     AllIcons.General.Reset,
 ) {
     override fun actionPerformed(event: AnActionEvent) {
-        project.getService(EffectDevToolsService::class.java).resetTracer()
+        project.getService(EffectDevToolsService::class.java).requestLifecycle { resetTracer() }
     }
 }
 
@@ -735,16 +746,4 @@ private fun rebuildTree(root: DefaultMutableTreeNode, model: DefaultTreeModel, f
     root.removeAllChildren()
     fill()
     model.reload()
-}
-
-private fun expandAll(tree: JTree) {
-    repeat(tree.rowCount) { row -> tree.expandRow(row) }
-}
-
-private fun selectFirstRowIfAvailable(tree: JTree) {
-    if (tree.rowCount > 0) {
-        tree.setSelectionRow(0)
-    } else {
-        tree.clearSelection()
-    }
 }

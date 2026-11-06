@@ -3,7 +3,6 @@ package dev.effect.intellij.lsp.fixall
 import com.intellij.codeInsight.hint.HintManager
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.command.CommandProcessor
 import com.intellij.openapi.components.Service
@@ -11,11 +10,11 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Computable
 import com.intellij.openapi.util.ThrowableComputable
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.lsp.api.LspClient
-import com.intellij.platform.lsp.api.LspServer
-import com.intellij.platform.lsp.api.LspServerManager
+import com.intellij.platform.lsp.api.LspClientManager
 import com.intellij.platform.lsp.api.LspServerState
 import com.intellij.platform.lsp.api.customization.LspIntentionAction
 import com.intellij.psi.PsiDocumentManager
@@ -57,7 +56,7 @@ class EffectFixAllInFileService(private val project: Project) {
 
         val server = findRunningServer(virtualFile)
         if (server == null) {
-            LspServerManager.getInstance(project).startServersIfNeeded(EffectLspServerSupportProvider::class.java)
+            LspClientManager.getInstance(project).startClientsIfNeeded(EffectLspServerSupportProvider::class.java)
             notifications.warning(project, title, EffectBundle.message("fix.all.in.file.server.unavailable"))
             return
         }
@@ -135,8 +134,8 @@ class EffectFixAllInFileService(private val project: Project) {
      * Talks to the server from the progress thread and changes the document on the EDT. Every change runs
      * in a command of one shared group, so the whole run (including rolled-back passes) is one undo step.
      */
-    private inner class EditorFixAllSession(
-        private val server: LspServer,
+    internal inner class EditorFixAllSession(
+        private val server: LspClient,
         private val documentId: TextDocumentIdentifier,
         private val editor: Editor,
         private val psiFile: PsiFile,
@@ -147,7 +146,7 @@ class EffectFixAllInFileService(private val project: Project) {
         private val commandName = EffectBundle.message("intention.fix.all.in.file.text", request.fixTitle)
         private var expectedStamp = document.modificationStamp
 
-        override fun currentText(): String = ReadAction.compute<String, RuntimeException> { document.text }
+        override fun currentText(): String = ApplicationManager.getApplication().runReadAction(Computable { document.text })
 
         override fun pullDiagnostics(): List<Diagnostic> = pullDiagnostics(server, documentId)
 
@@ -164,7 +163,7 @@ class EffectFixAllInFileService(private val project: Project) {
             // The platform intention resolves its URI -> Document map inside isAvailable; invoke() is a
             // silent no-op until that ran (verified against the 262 bytecode), exactly as the IDE's own
             // intention flow calls isAvailable before invoke.
-            val applier = LspIntentionAction(server as LspClient, combined)
+            val applier = LspIntentionAction(server, combined)
             if (!applier.isAvailable(project, editor, psiFile)) {
                 throw EffectFixAllServerException(
                     EffectBundle.message("fix.all.in.file.not.applicable", request.fixTitle, edits.size),
@@ -183,14 +182,22 @@ class EffectFixAllInFileService(private val project: Project) {
 
         /** Refuses to write over edits the user made while the run was in progress. */
         private fun onEdt(action: () -> Unit) {
-            ApplicationManager.getApplication().invokeAndWait({
-                if (document.modificationStamp != expectedStamp) {
-                    throw EffectFixAllServerException(EffectBundle.message("fix.all.in.file.document.changed"))
-                }
-                action()
-                PsiDocumentManager.getInstance(project).commitDocument(document)
-                expectedStamp = document.modificationStamp
-            }, ModalityState.defaultModalityState())
+            // Complete dispatch and stamp bookkeeping even when the progress indicator is cancelled.
+            // Otherwise invokeAndWait may discard a queued rollback (or abandon a queued apply).
+            ProgressManager.getInstance().executeNonCancelableSection {
+                ApplicationManager.getApplication().invokeAndWait({
+                    if (document.modificationStamp != expectedStamp) {
+                        throw EffectFixAllServerException(EffectBundle.message("fix.all.in.file.document.changed"))
+                    }
+                    try {
+                        action()
+                        PsiDocumentManager.getInstance(project).commitDocument(document)
+                    } finally {
+                        // An applier can fail after writing; allow the caller to restore that partial pass.
+                        expectedStamp = document.modificationStamp
+                    }
+                }, ModalityState.defaultModalityState())
+            }
         }
     }
 
@@ -215,7 +222,7 @@ class EffectFixAllInFileService(private val project: Project) {
      * as a `null` response instead of throwing, so `null` is turned into a failure here rather than
      * being mistaken for "no diagnostics" / "no fixes".
      */
-    private fun pullDiagnostics(server: LspServer, documentId: TextDocumentIdentifier): List<Diagnostic> {
+    private fun pullDiagnostics(server: LspClient, documentId: TextDocumentIdentifier): List<Diagnostic> {
         val report = server.sendRequestSync(REQUEST_TIMEOUT_MS) { languageServer ->
             languageServer.textDocumentService.diagnostic(DocumentDiagnosticParams(documentId))
         } ?: throw EffectFixAllServerException(EffectBundle.message("fix.all.in.file.no.response", "textDocument/diagnostic"))
@@ -227,7 +234,7 @@ class EffectFixAllInFileService(private val project: Project) {
     }
 
     private fun requestQuickFixes(
-        server: LspServer,
+        server: LspClient,
         documentId: TextDocumentIdentifier,
         range: Range,
         diagnostics: List<Diagnostic>,
@@ -241,9 +248,9 @@ class EffectFixAllInFileService(private val project: Project) {
         return response.mapNotNull { either -> if (either.isRight) either.right else null }
     }
 
-    private fun findRunningServer(file: VirtualFile): LspServer? =
-        LspServerManager.getInstance(project)
-            .getServersForProvider(EffectLspServerSupportProvider::class.java)
+    private fun findRunningServer(file: VirtualFile): LspClient? =
+        LspClientManager.getInstance(project)
+            .getClients(EffectLspServerSupportProvider::class.java)
             .firstOrNull { server ->
                 server.state == LspServerState.Running && server.descriptor.isSupportedFile(file)
             }

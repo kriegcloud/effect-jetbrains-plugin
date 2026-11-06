@@ -2,7 +2,8 @@ package dev.effect.intellij.lsp.fixall
 
 import com.intellij.openapi.util.TextRange
 import dev.effect.intellij.lsp.EffectDiagnosticDirectiveSeverity
-import dev.effect.intellij.lsp.effectDirectiveSeverityForDiagnostic
+import dev.effect.intellij.lsp.EffectDiagnosticDirectiveSet
+import dev.effect.intellij.lsp.effectDiagnosticRuleName
 import org.eclipse.lsp4j.CodeAction
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.Range
@@ -45,12 +46,14 @@ internal fun selectFixAllDiagnostics(
     diagnostics: List<Diagnostic>,
     sourceText: String,
     ruleKey: String,
-): List<Diagnostic> =
-    diagnostics
+    fileName: String = "",
+): List<Diagnostic> {
+    val directives = EffectDiagnosticDirectiveSet.parse(sourceText, fileName)
+    return diagnostics
         .asSequence()
         .filter { diagnostic -> diagnostic.range != null && diagnostic.effectFixAllRuleKey() == ruleKey }
         .filter { diagnostic ->
-            when (effectDirectiveSeverityForDiagnostic(sourceText, diagnostic.range.start.line, diagnostic)) {
+            when (diagnostic.effectDiagnosticRuleName()?.let { directives.effectiveSeverity(it, diagnostic.range.start.line) }) {
                 EffectDiagnosticDirectiveSeverity.OFF,
                 EffectDiagnosticDirectiveSeverity.SKIP_FILE,
                 -> false
@@ -60,6 +63,7 @@ internal fun selectFixAllDiagnostics(
         .distinctBy { it.fixAllKey() }
         .sortedWith(diagnosticOrder)
         .toList()
+}
 
 /**
  * Chooses one fix per diagnostic and merges their edits.
@@ -100,7 +104,7 @@ internal fun planFixAll(
     for (diagnostic in diagnostics.sortedWith(diagnosticOrder)) {
         val candidates = codemodsByDiagnostic[diagnostic.fixAllKey()].orEmpty()
         val action = candidates.firstOrNull { it.title.trim() == request.fixTitle }
-            ?: candidates.filter { fixTitleShape(it.title) == requestedShape }.singleOrNull()
+            ?: candidates.singleOrNull { fixTitleShape(it.title) == requestedShape }
         if (action == null) {
             unmatched += 1
             continue

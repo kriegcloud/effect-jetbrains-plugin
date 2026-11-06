@@ -1,5 +1,7 @@
 package dev.effect.intellij.settings
 
+import dev.effect.intellij.schema.EffectSchemaService
+import dev.effect.intellij.schema.EffectOptionSchema
 import com.intellij.json.psi.JsonArray
 import com.intellij.json.psi.JsonElementGenerator
 import com.intellij.json.psi.JsonFile
@@ -7,7 +9,6 @@ import com.intellij.json.psi.JsonObject
 import com.intellij.json.psi.JsonProperty
 import com.intellij.json.psi.JsonPsiUtil
 import com.intellij.json.psi.JsonStringLiteral
-import com.intellij.json.psi.JsonValue
 import com.intellij.psi.util.PsiTreeUtil
 import dev.effect.intellij.core.EffectJson
 
@@ -25,6 +26,7 @@ object EffectTsconfigSync {
     data class SyncResult(
         val changed: Boolean,
         val errorMessage: String? = null,
+        val warnings: List<String> = emptyList(),
     )
 
     /**
@@ -73,7 +75,10 @@ object EffectTsconfigSync {
                 }
             }
 
-            SyncResult(changed = editor.changed)
+            val options = EffectOptionSchema.parseOptions(entry.text)
+            val warnings = tsconfigFile.project.getService(EffectSchemaService::class.java)
+                .warnings(options, tsconfigFile.virtualFile?.parent)
+            SyncResult(changed = editor.changed, warnings = warnings)
         } catch (error: InvalidTsconfigStructure) {
             SyncResult(changed = false, errorMessage = error.message)
         }
@@ -105,7 +110,7 @@ object EffectTsconfigSync {
                 (candidate.findProperty("name")?.value as? JsonStringLiteral)?.value == EFFECT_PLUGIN_NAME
             }
 
-    private class PsiEditor(private val root: JsonObject) {
+    private class PsiEditor(root: JsonObject) {
         val generator = JsonElementGenerator(root.project)
         var changed: Boolean = false
             private set
@@ -114,18 +119,14 @@ object EffectTsconfigSync {
 
         fun objectProperty(parent: JsonObject, name: String): JsonObject {
             val existing = parent.findProperty(name)
-            if (existing == null) {
-                return (addProperty(parent, name, "{}").value as JsonObject)
-            }
+                ?: return addProperty(parent, name, "{}").value as JsonObject
             return existing.value as? JsonObject
                 ?: throw InvalidTsconfigStructure("tsconfig.json '$name' must be a JSON object.")
         }
 
         fun arrayProperty(parent: JsonObject, name: String): JsonArray {
             val existing = parent.findProperty(name)
-            if (existing == null) {
-                return (addProperty(parent, name, "[]").value as JsonArray)
-            }
+                ?: return addProperty(parent, name, "[]").value as JsonArray
             return existing.value as? JsonArray
                 ?: throw InvalidTsconfigStructure("tsconfig.json '$name' must be a JSON array.")
         }
@@ -154,7 +155,7 @@ object EffectTsconfigSync {
             if (currentValue?.text == valueText) {
                 return
             }
-            currentValue?.replace(generator.createValue<JsonValue>(valueText))
+            currentValue?.replace(generator.createValue(valueText))
                 ?: existing.replace(createProperty(name, valueText))
             changed = true
         }

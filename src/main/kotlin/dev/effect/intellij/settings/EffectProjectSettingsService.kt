@@ -1,5 +1,6 @@
 package dev.effect.intellij.settings
 
+import dev.effect.intellij.schema.EffectSchemaService
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.RoamingType
 import com.intellij.openapi.components.Service
@@ -64,13 +65,10 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
             return raw
         }
 
-        val root = raw?.deepCopy<ObjectNode>() ?: EffectJson.emptyObject()
+        val root = raw?.deepCopy() ?: EffectJson.emptyObject()
         val currentEffectNode = root.get("effect")
-        val effect = if (currentEffectNode is ObjectNode) {
-            currentEffectNode
-        } else {
-            EffectJson.emptyObject().also { root.set<ObjectNode>("effect", it) }
-        }
+        val effect = currentEffectNode as? ObjectNode
+            ?: EffectJson.emptyObject().also { root.set<ObjectNode>("effect", it) }
 
         settings.lspInlays?.let { effect.put("inlays", it) }
         settings.lspMermaidProvider.trim().takeIf(String::isNotBlank)?.let { effect.put("mermaidProvider", it) }
@@ -134,7 +132,7 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
     private fun parseEnvProblems(extraEnv: Map<String, String>, problems: MutableList<SettingProblem>) {
         extraEnv.keys
             .filter { it.isBlank() }
-            .forEach { problems += SettingProblem("extraEnv", "Environment variable keys must not be blank.") }
+            .forEach { _ -> problems += SettingProblem("extraEnv", "Environment variable keys must not be blank.") }
     }
 
     private fun validateJson(field: String, raw: String, problems: MutableList<SettingProblem>) {
@@ -142,10 +140,15 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
             return
         }
 
-        try {
-            EffectJson.parseObjectOrNull(raw)
+        val root = try {
+            EffectJson.parseObjectOrNull(raw) ?: return
         } catch (error: Exception) {
             problems += SettingProblem(field, "Invalid JSON: ${error.message}")
+            return
+        }
+        val options = if (field == "workspaceConfigurationJson") root.get("effect") ?: return else root.get("effect") ?: root
+        project.getService(EffectSchemaService::class.java).warnings(options).forEach { warning ->
+            problems += SettingProblem(field, warning, SettingSeverity.WARNING)
         }
     }
 
@@ -156,6 +159,9 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
             }
         }
 
+        if (settings.lspDiagnosticSeverity.keys.any(String::isBlank)) {
+            problems += SettingProblem("lspDiagnosticSeverity", "Diagnostic rule names must not be blank.")
+        }
         val invalidSeverity = settings.lspDiagnosticSeverity
             .filterValues { severity -> severity !in EFFECT_LSP_SEVERITIES }
         invalidSeverity.forEach { (rule, severity) ->

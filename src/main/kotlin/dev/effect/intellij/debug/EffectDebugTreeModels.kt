@@ -1,5 +1,7 @@
 package dev.effect.intellij.debug
 
+import java.net.URI
+
 data class EffectSourceLocation(
     val path: String,
     val line: Int = 0,
@@ -12,6 +14,7 @@ data class EffectDebugTreeEntry(
     val location: EffectSourceLocation? = null,
     val fiberId: String? = null,
     val children: List<EffectDebugTreeEntry> = emptyList(),
+    val inspectionKey: String = title,
 ) {
     val copyText: String
         get() = detail.ifBlank { title }
@@ -31,6 +34,7 @@ object EffectDebugTreeModels {
                 add(
                     EffectDebugTreeEntry(
                         title = entry.tag,
+                        inspectionKey = entry.tag,
                         detail = entry.value.formatDebugValue(),
                         children = entry.value.children.map(::valueEntry),
                     ),
@@ -73,6 +77,7 @@ object EffectDebugTreeModels {
                 add(
                     EffectDebugTreeEntry(
                         title = fiber.fiberTitle(),
+                        inspectionKey = fiber.id,
                         detail = fiber.formatDebugFiber(),
                         fiberId = fiber.id.takeIf { fiber.isInterruptible && !fiber.isInterrupted },
                         children = buildList {
@@ -114,14 +119,16 @@ object EffectDebugTreeModels {
     private fun spanEntry(span: EffectDebugSpanEntry): EffectDebugTreeEntry =
         EffectDebugTreeEntry(
             title = span.name,
+            inspectionKey = "${span.traceId}:${span.spanId}",
             detail = span.formatDebugSpan(),
             location = span.toSourceLocation(),
-            children = span.attributes.map { attribute -> EffectDebugTreeEntry(title = attribute, detail = attribute) },
+            children = span.attributes.map(::valueEntry),
         )
 
     private fun valueEntry(value: EffectDebugValueSnapshot): EffectDebugTreeEntry =
         EffectDebugTreeEntry(
             title = value.valueTitle(),
+            inspectionKey = value.label,
             detail = value.formatDebugValue(),
             children = value.children.map(::valueEntry),
         )
@@ -149,7 +156,7 @@ fun EffectDebugSpanEntry.formatDebugSpan(): String = buildString {
         appendLine("source: $path:${line ?: 0}:${column ?: 0}")
     }
     if (attributes.isNotEmpty()) {
-        appendLine("attributes: ${attributes.joinToString()}")
+        appendLine("attributes: ${attributes.joinToString { attribute -> "${attribute.label}=${attribute.summary ?: attribute.type ?: ""}" }}")
     }
 }
 
@@ -196,12 +203,12 @@ private fun EffectDebugValueSnapshot.valueTitle(): String =
     }
 
 private fun EffectDebugSpanEntry.toSourceLocation(): EffectSourceLocation? {
-    val sourcePath = path?.takeIf(String::isNotBlank) ?: return null
+    val sourcePath = path?.let(::localDebugSourcePath) ?: return null
     return EffectSourceLocation(sourcePath, line ?: 0, column ?: 0)
 }
 
 private fun EffectDebugBreakpointLocation.toSourceLocation(): EffectSourceLocation? {
-    val sourcePath = path?.takeIf(String::isNotBlank) ?: return null
+    val sourcePath = path?.let(::localDebugSourcePath) ?: return null
     return EffectSourceLocation(sourcePath, line ?: 0, column ?: 0)
 }
 
@@ -218,4 +225,20 @@ private fun wildcardMatches(value: String, pattern: String): Boolean {
         append('$')
     }.toRegex()
     return regex.matches(value)
+}
+
+/** Convert Node ESM file URLs without depending on the host OS's path parser. */
+internal fun localDebugSourcePath(path: String): String? {
+    if (path.isBlank()) return null
+    if (Regex("^[A-Za-z]:[\\\\/].*").matches(path)) return path
+    if (!Regex("^[A-Za-z][A-Za-z0-9+.-]*:").containsMatchIn(path)) return path
+    return runCatching {
+        val uri = URI(path)
+        if (!uri.scheme.equals("file", ignoreCase = true) ||
+            (!uri.authority.isNullOrEmpty() && !uri.authority.equals("localhost", ignoreCase = true)) ||
+            uri.query != null || uri.fragment != null
+        ) return null
+        val decoded = uri.path?.takeIf { it.startsWith("/") } ?: return null
+        if (Regex("^/[A-Za-z]:/.*").matches(decoded)) decoded.drop(1) else decoded
+    }.getOrNull()
 }

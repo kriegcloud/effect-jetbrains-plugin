@@ -20,6 +20,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EffectFixAllPlannerTest {
+    companion object {
+        @JvmStatic
+        @org.junit.BeforeClass
+        fun initializeLexerPlatform() {
+            // JavaScript token types are provided by the bundled language plugin.
+            com.intellij.testFramework.TestApplicationManager.getInstance()
+        }
+    }
+
     private val uri = "file:///workspace/src/index.ts"
     private val fixTitle = "Replace yield* Effect.fail with yield*"
     private val rule = "unnecessaryFailYieldableError"

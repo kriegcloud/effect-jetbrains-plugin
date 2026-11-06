@@ -108,6 +108,30 @@ intellijPlatform {
 }
 
 intellijPlatformTesting {
+    testIde {
+        register("testIdeVerifierWebStorm") {
+            type = IntelliJPlatformType.WebStorm
+            version = providers.gradleProperty("pluginVerifierWebStormVersion")
+            testFramework(TestFrameworkType.Platform)
+            plugins {
+                bundledPlugins("JavaScript", "NodeJS", "com.intellij.modules.jcef")
+            }
+            task {
+                filter {
+                    includeTestsMatching("dev.effect.intellij.lsp.EffectDiagnosticDirectivesTest")
+                    includeTestsMatching("dev.effect.intellij.lsp.fixall.*")
+                    includeTestsMatching("dev.effect.intellij.lsp.EffectLspStatusOwnershipTest")
+                    includeTestsMatching("dev.effect.intellij.lsp.EffectLspCoreRegressionTest")
+                    includeTestsMatching("dev.effect.intellij.lsp.EffectLspStartupBoundaryTest")
+                    includeTestsMatching("dev.effect.intellij.settings.EffectTypeScriptSettingsDialogTest")
+                    includeTestsMatching("dev.effect.intellij.ui.RuntimeInspectionTest")
+                    includeTestsMatching("dev.effect.intellij.lsp.EffectDiagnosticDirectivePlatformCompletionTest")
+                    includeTestsMatching("dev.effect.intellij.schema.EffectJsonSchemaProviderTest")
+                    includeTestsMatching("dev.effect.intellij.typescript.EffectTsrsTypeScriptTest")
+                }
+            }
+        }
+    }
     runIde {
         // Sandbox launch against the newest verified WebStorm line (currently the 2026.3 EAP), so the
         // plugin can be smoked on the upper edge of the compatibility range without replacing the
@@ -143,6 +167,14 @@ tasks {
     publishPlugin {
         dependsOn(patchChangelog)
     }
+
+    // Ship the license and third-party notices (including Java-WebSocket's MIT notice, which its JAR
+    // does not carry) at the root of the plugin directory inside the distribution ZIP.
+    prepareSandbox {
+        from(layout.projectDirectory.files("LICENSE", "THIRD_PARTY_NOTICES.md")) {
+            into(pluginName)
+        }
+    }
 }
 
 // Sandbox IDE boots (runIde, runIdeVerifierWebStorm) may run inside agent sandboxes whose host
@@ -156,6 +188,7 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask>().config
     doFirst { sandboxXdgConfigHome.get().asFile.mkdirs() }
 }
 
-tasks.named("qodanaScan") {
+tasks.named<org.jetbrains.qodana.tasks.QodanaScanTask>("qodanaScan") {
+    arguments.set(listOf("--fail-threshold", "0"))
     mustRunAfter(tasks.matching { candidate -> candidate.name != name })
 }

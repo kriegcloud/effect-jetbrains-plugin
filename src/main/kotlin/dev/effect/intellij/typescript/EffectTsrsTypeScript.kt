@@ -1,7 +1,6 @@
 package dev.effect.intellij.typescript
 
 import com.intellij.openapi.util.SystemInfo
-import com.intellij.openapi.util.io.FileUtil
 import dev.effect.intellij.core.EffectJson
 import java.nio.file.Files
 import java.nio.file.Path
@@ -103,7 +102,10 @@ object EffectTsrsLocator {
         val prefix = "${platform.os}-${platform.arch}"
         return safeList(scopeRoot)
             .filter { it.isDirectory() && (it.name == prefix || it.name.startsWith("$prefix-")) }
-            // The build matching the host C library first: glibc normally, musl on musl hosts (Alpine).
+            // A binary for the other libc cannot run even when it has executable permissions.
+            .filter { platform.os != "linux" || it.name == prefix ||
+                it.name == "$prefix-${if (platform.musl) "musl" else "gnu"}" }
+            // Prefer the explicitly matching build to a libc-neutral package.
             .sortedBy { if (it.name.contains("musl") == platform.musl) 0 else 1 }
             .mapNotNull { packageRoot ->
                 val tsrsVersion = readVersion(packageRoot.resolve("package.json")) ?: return@mapNotNull null
@@ -178,6 +180,14 @@ object EffectTsrsLocator {
  * idempotent.
  */
 object EffectTsrsTypeScriptPackage {
+    /** Publishes NIO writes to WebStorm's VFS consumer before its package setting is changed. Run off EDT. */
+    fun prepare(cacheRoot: Path, candidate: TsrsCandidate, platform: TsrsPlatform): Path {
+        val directory = create(cacheRoot, candidate, platform)
+        com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshNioFiles(listOf(cacheRoot), false, true, null)
+        com.intellij.lang.typescript.lsp.invalidateTsGoPackageInfo()
+        return directory
+    }
+
     fun packageDirectory(cacheRoot: Path, candidate: TsrsCandidate): Path =
         packageRoot(cacheRoot, candidate).resolve("node_modules").resolve("typescript")
 
@@ -190,20 +200,35 @@ object EffectTsrsTypeScriptPackage {
      */
     fun create(cacheRoot: Path, candidate: TsrsCandidate, platform: TsrsPlatform): Path {
         val activeRoot = packageRoot(cacheRoot, candidate)
-        val stagingRoot = activeRoot.resolveSibling("${activeRoot.fileName}.staging-${System.nanoTime()}")
-        try {
-            writePackage(stagingRoot, candidate, platform)
-            if (Files.exists(activeRoot)) {
-                FileUtil.delete(activeRoot)
-            }
-            Files.move(stagingRoot, activeRoot)
-        } finally {
-            if (Files.exists(stagingRoot)) {
-                FileUtil.delete(stagingRoot)
+        // The Tools action and the settings button, in any open project, may build the same package.
+        synchronized(lockFor(activeRoot)) {
+            val stagingRoot = activeRoot.resolveSibling("${activeRoot.fileName}.staging-${System.nanoTime()}")
+            val backupRoot = activeRoot.resolveSibling("${activeRoot.fileName}.backup-${System.nanoTime()}")
+            try {
+                writePackage(stagingRoot, candidate, platform)
+                val hadActive = Files.exists(activeRoot)
+                if (hadActive) {
+                    Files.move(activeRoot, backupRoot)
+                }
+                try {
+                    Files.move(stagingRoot, activeRoot)
+                } catch (error: Exception) {
+                    // Put the previous package back so WebStorm's configured path keeps working.
+                    if (hadActive && !Files.exists(activeRoot)) {
+                        Files.move(backupRoot, activeRoot)
+                    }
+                    throw error
+                }
+            } finally {
+                listOf(stagingRoot, backupRoot).filter(Files::exists).forEach { it.toFile().deleteRecursively() }
             }
         }
         return packageDirectory(cacheRoot, candidate)
     }
+
+    private val locks = java.util.concurrent.ConcurrentHashMap<Path, Any>()
+
+    private fun lockFor(root: Path): Any = locks.computeIfAbsent(root.toAbsolutePath().normalize()) { Any() }
 
     private fun writePackage(root: Path, candidate: TsrsCandidate, platform: TsrsPlatform) {
         val nodeModules = root.resolve("node_modules")

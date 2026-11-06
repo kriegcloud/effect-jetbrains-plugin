@@ -8,6 +8,36 @@ import java.time.Instant
 
 class EffectTracerExportTest {
     @Test
+    fun tracerExportWorkRunsOffEdtAndWritesValidJson() {
+        val directory = java.nio.file.Files.createTempDirectory("effect-export-test")
+        val client = RuntimeClientSnapshot("id", "client", "local", Instant.EPOCH, Instant.EPOCH)
+        try {
+            val file = EffectTracerExport.write(client, directory)
+            assertEquals("id", EffectJson.mapper.readTree(java.nio.file.Files.readString(file)).path("client").path("id").asText())
+            var refusedEdt = false
+            javax.swing.SwingUtilities.invokeAndWait {
+                try { EffectTracerExport.write(client, directory) }
+                catch (expected: IllegalStateException) { refusedEdt = true }
+            }
+            assertTrue(refusedEdt)
+        } finally { directory.toFile().deleteRecursively() }
+    }
+
+    @Test
+    fun unwritableDestinationReportsWriteFailure() {
+        val file = java.nio.file.Files.createTempFile("effect-export-blocked", ".tmp")
+        try {
+            val client = RuntimeClientSnapshot("id", "client", "local", Instant.EPOCH, Instant.EPOCH)
+            try {
+                EffectTracerExport.write(client, file)
+                throw AssertionError("Expected a write failure when the directory is a regular file")
+            } catch (expected: java.io.IOException) {
+                assertTrue(expected.message.orEmpty().contains(file.fileName.toString()))
+            }
+        } finally { java.nio.file.Files.deleteIfExists(file) }
+    }
+
+    @Test
     fun serializesClientSpanTreeToJson() {
         val child = RuntimeSpanSnapshot(
             spanId = "s2",

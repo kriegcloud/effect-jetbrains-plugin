@@ -59,7 +59,7 @@ internal fun runFixAllPasses(
     maxPasses: Int = DEFAULT_MAX_FIX_ALL_PASSES,
 ): EffectFixAllRunResult {
     var diagnostics = session.pullDiagnostics()
-    val initial = selectFixAllDiagnostics(diagnostics, session.currentText(), request.ruleKey).size
+    val initial = selectFixAllDiagnostics(diagnostics, session.currentText(), request.ruleKey, documentUri).size
     if (initial == 0) {
         return EffectFixAllRunResult(0, 0, 0, 0, null, 0)
     }
@@ -75,7 +75,7 @@ internal fun runFixAllPasses(
         ProgressManager.checkCanceled()
         val text = session.currentText()
         val sites = siteKeys(diagnostics, text)
-        val candidates = selectFixAllDiagnostics(diagnostics, text, request.ruleKey)
+        val candidates = selectFixAllDiagnostics(diagnostics, text, request.ruleKey, documentUri)
             .filter { sites.getValue(it.fixAllKey()) !in skippedSites }
         if (candidates.isEmpty()) {
             break
@@ -94,17 +94,18 @@ internal fun runFixAllPasses(
         }
 
         val errorsBefore = errorSignatures(diagnostics)
-        session.apply(plan.edits)
-        if (session.currentText() == text) {
-            // The fix rewrote the text to itself; repeating it can never make progress.
-            if (!oneAtATime) {
-                break
-            }
-            skippedSites += sites.getValue(batch.single().fixAllKey())
-            continue
-        }
         val after = try {
-            session.pullDiagnostics()
+            session.apply(plan.edits)
+            ProgressManager.checkCanceled()
+            if (session.currentText() == text) {
+                // The fix rewrote the text to itself; repeating it can never make progress.
+                if (!oneAtATime) {
+                    break
+                }
+                skippedSites += sites.getValue(batch.single().fixAllKey())
+                continue
+            }
+            session.pullDiagnostics().also { ProgressManager.checkCanceled() }
         } catch (error: Throwable) {
             // Unvalidated: never leave this pass in the document. Earlier, validated passes stay.
             session.restore(text)
@@ -127,7 +128,7 @@ internal fun runFixAllPasses(
         diagnostics = after
     }
 
-    val remaining = selectFixAllDiagnostics(diagnostics, session.currentText(), request.ruleKey).size
+    val remaining = selectFixAllDiagnostics(diagnostics, session.currentText(), request.ruleKey, documentUri).size
     return EffectFixAllRunResult(initial, applied, remaining, rejectedSites.size, lastEmptyPlan.takeIf { applied == 0 }, passes)
 }
 

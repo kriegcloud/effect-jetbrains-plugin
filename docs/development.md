@@ -44,8 +44,10 @@ The move to `263.4732.x` exposed lsp4j 1.0.0's `Diagnostic.getMessage()` return-
 `String` to `Either<String, MarkupContent>`, which broke 0.1.6 diagnostic highlighting despite the
 existing `263.*` compatibility range. Version 0.1.7 resolves diagnostic message getters/setters
 reflectively, with unit cases for both shapes. Keep the stable compile target and exercise both
-262 and 263 compatibility when changing these accessors. The separate `LspServer*` → `LspClient*`
-migration remains issue #26.
+262 and 263 compatibility when changing these accessors. Version 0.1.11 completed the
+`LspServer*` → `LspClient*` migration (#26): the integration now implements
+`LspIntegrationProvider`, starts an `LspClient`, and uses `ProjectWideLspClientDescriptor`.
+Keep exercising both 262 and 263 when changing this integration.
 
 All sandbox `RunIdeTask` instances use `build/sandbox-xdg/config` as `XDG_CONFIG_HOME`, so the
 platform's `plasmashell --version` desktop probe does not try to write the host Plasma configuration
@@ -129,6 +131,14 @@ rule metadata now marks `genericEffectServices` v3-only and `schemaSyncInEffect`
 preset enables it at warning). Oxlint and tsgolint remain upstream-managed package contents only;
 the IDE does not configure or run them independently.
 
+## Qodana
+
+Run `./gradlew qodanaScan --no-configuration-cache` from a clean git worktree, matching CI, or
+temporarily move the local `.idea/` directory away before scanning and restore it afterward.
+A local IDE `.idea/` directory makes the Qodana container open the project without a Gradle import,
+silently analysing no Kotlin and reporting 0 problems.
+Confirm that `build/qodana/results/log/gradle-import.log` is non-empty before accepting a clean scan.
+
 ## Documentation Maintenance Rules
 
 - Keep the README plugin-description block short and Marketplace-safe.
@@ -139,7 +149,10 @@ the IDE does not configure or run them independently.
   - `Deferred`
   - `Pending evidence`
 - Keep debugger wording as best-effort unless there is recorded paused-session smoke evidence.
-- Keep Mermaid execute-command wording experimental until that bridge is published in `@effect/tsgo`.
+- Document the local Mermaid action's published hover fallback (`noExternal=false`,
+  `mermaidProvider="mermaid.live"`, caret on a Layer declaration). It opens `.mmd` source;
+  rendered preview depends on IDE support and manual IDE smoke remains pending. Qualify only
+  the execute-command transport as requiring an unpublished bridge.
 - Keep support statements aligned with the current target baseline:
   - WebStorm `2026.2` stable and `2026.3` GA / `262.*`–`263.*`
   - IntelliJ IDEA Ultimate `2026.2`–`2026.3` GA / `262.*`–`263.*`
@@ -177,7 +190,8 @@ TypeScript provider metadata; since 0.48.0 each compiler needs the `lib.*.d.ts` 
 beside it, so point `--binary` at the executable inside an intact extracted package rather than a
 lone copied file. This is the route
 for validating the `_effectGetLayerMermaid` execute-command bridge before it exists in a published
-package.
+package. The local action already falls back to decoding the Layer hover's `mermaid.live` `pako:`
+link with published servers; testing that path does not require a custom bridge build.
 
 ## Current Verification Posture
 
@@ -190,6 +204,33 @@ The current repository posture is intentionally honest:
   sandbox limits, and the provisional distribution receipt; build targets alone are not proof of
   a compatible final artifact
 - documentation should not imply a feature is proven beyond the evidence currently in the repo
+
+### Headless diagnostics CLI
+
+Run the published diagnostics CLI fixture check with Node 22+ and network access to npm:
+
+```bash
+node scripts/verify-tsgo-diagnostics-cli.mjs
+```
+
+The script installs exact `@effect/tsgo@0.67.4`, `typescript@7.0.2`, and `effect@4.1.2`
+pins in a temporary workspace, copies all five LSP fixtures, and checks JSON diagnostics against
+their known rule counts. It verifies directive suppression and the one-line `schemaSync` opt-in,
+then compares every fixture's diagnostic occurrences with a fresh LSP diagnostic pull using
+the same installed server. The sorted tuples contain normalized file path, rule name, one-based
+line, and severity, preserving duplicate occurrence counts. Absolute/relative paths, path separators,
+and diagnostic ordering are normalized; a changed file, count, line, or severity fails parity even
+when rule-name sets match. Ordinary TypeScript diagnostics are excluded from this comparison
+because the CLI reports only Effect rules. The healthy fixture must report no findings.
+
+It also checks GitHub annotation output once, using the published `--format github-actions`
+spelling. Expected diagnostic exit codes are validated against the JSON summary; assertion failures,
+invalid output, and process failures fail the check. The temporary workspace is removed on completion.
+The runtime CI job first runs `node scripts/tsgo-diagnostic-parity.test.mjs`, including negative
+controls for file, occurrence-count, line, and severity mismatches, then runs this alongside
+the existing LSP verifier and uploads
+`build/reports/runtime/diagnostics-cli.log` with its other probe reports. This is headless CLI/LSP
+evidence; manual IDE verification remains a separate check.
 
 ## Changelog And Release Notes
 

@@ -32,7 +32,7 @@ The current plugin baseline is:
 | Runtime Dev Tools | Implemented | Runtime server, client selection, metrics polling, tracer streaming, reset flows, and empty/error states are present. |
 | Debugger surfaces | Adapted | The `Debug` tab can attach to the current session, render best-effort Context/Span/Fiber/Breakpoint trees for paused instrumented sessions, reveal source locations, toggle pause-on-defects, interrupt fibers, and inject Node.js instrumentation. |
 | Advanced tracer / JCEF | Adapted | The Swing tracer is the guaranteed baseline; a capability-gated JCEF tracer tab is shown when supported. |
-| Local Mermaid graph action | Experimental | Editor/Tools action is capability-gated and requires a `tsgo` build that advertises the Effect execute-command bridge. |
+| Local Mermaid graph action | Experimental | Editor/Tools action opens local `.mmd` source from a Layer hover link (`noExternal=false`, `mermaidProvider="mermaid.live"`); rendered preview and manual IDE validation remain separate checks. |
 | Supported-IDE manual editor smoke | Pending evidence | WebStorm sandbox boot and Plugin Verifier coverage are in place; recorded manual editor smoke remains follow-up work. |
 
 ## Supported IDEs
@@ -96,6 +96,7 @@ TypeScript binaries.
 - [Publishing guide](docs/publishing.md)
 - [Reference sources](docs/reference-sources.md)
 - [Privacy](PRIVACY.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Verification
 

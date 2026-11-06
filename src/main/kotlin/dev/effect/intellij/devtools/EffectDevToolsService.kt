@@ -60,13 +60,27 @@ class EffectDevToolsService(private val project: Project) : Disposable {
     @Volatile
     private var metricsPollFuture: ScheduledFuture<*>? = null
 
+    private val lifecycleExecutor = AppExecutorUtil.createBoundedApplicationPoolExecutor("Effect runtime lifecycle", 1)
+    @Volatile private var disposed = false
+    private var batching = false
+    private var publicationPending = false
+    internal var schedulePublication: (() -> Unit) -> Unit = { publish ->
+        AppExecutorUtil.getAppScheduledExecutorService().schedule(publish, 50, TimeUnit.MILLISECONDS)
+    }
+    internal var traceSnapshotBuilds = 0
+        private set
+
+    internal var spanSnapshotInvalidationVisits = 0
+        private set
+
+    /** Toolbar lifecycle requests are serialized; socket shutdown never occupies the EDT. */
+    fun requestLifecycle(operation: EffectDevToolsService.() -> Unit) {
+        lifecycleExecutor.execute { if (!disposed && !project.isDisposed) operation() }
+    }
+
     private val metricNumberFormat = DecimalFormat("#,##0.##")
 
     fun currentState(): DevToolsRuntimeState = runtimeState
-
-    fun addListener(listener: EffectDevToolsListener) {
-        dispatcher.addListener(listener)
-    }
 
     fun addListener(listener: EffectDevToolsListener, parentDisposable: Disposable) {
         dispatcher.addListener(listener, parentDisposable)
@@ -159,13 +173,20 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             val client = clients[activeId] ?: return
             client.spans.clear()
             client.pendingEvents.clear()
+            client.children.clear()
+            client.cachedRoots = null
+            client.droppedSpans = 0
+            client.droppedEvents = 0
             publishLocked()
         }
     }
 
     /** Serializes the active client's captured span tree to shareable JSON, or null when there is none. */
     fun exportActiveTracer(): String? {
-        val snapshot = runtimeState
+        val snapshot = synchronized(lock) {
+            if (publicationPending) publishLocked()
+            runtimeState
+        }
         val active = snapshot.clients.firstOrNull { it.id == snapshot.activeClientId } ?: return null
         if (active.rootSpans.isEmpty()) {
             return null
@@ -174,7 +195,9 @@ class EffectDevToolsService(private val project: Project) : Disposable {
     }
 
     override fun dispose() {
-        stopServer()
+        disposed = true
+        lifecycleExecutor.execute { stopServer() }
+        lifecycleExecutor.shutdown()
     }
 
     private fun scheduleMetricsPolling(intervalMs: Int) {
@@ -257,13 +280,34 @@ class EffectDevToolsService(private val project: Project) : Disposable {
     }
 
     private fun onClientMessage(connection: WebSocket, chunk: String) {
-        val clientId = synchronized(lock) { connectionToClientId[connection] } ?: return
-        val lines = synchronized(lock) {
+        synchronized(lock) {
+            val clientId = connectionToClientId[connection] ?: return
             val buffer = messageBuffers.getOrPut(connection) { StringBuilder() }
-            buffer.append(chunk)
-            collectCompleteLines(buffer)
+            batching = true
+            try {
+                // Scan before appending so an unterminated line cannot grow the retained buffer.
+                var offset = 0
+                while (offset < chunk.length) {
+                    val newline = chunk.indexOf('\n', offset).let { if (it < 0) chunk.length else it }
+                    if (buffer.length + newline - offset > MAX_PROTOCOL_LINE_CHARS) {
+                        buffer.setLength(0)
+                        lastError = "Runtime client $clientId exceeded the protocol line limit ($MAX_PROTOCOL_LINE_CHARS characters)."
+                        connection.close(1009, "Protocol line too large")
+                        return
+                    }
+                    buffer.append(chunk, offset, newline)
+                    if (newline < chunk.length) {
+                        val line = buffer.toString().trim()
+                        buffer.setLength(0)
+                        handleProtocolLine(clientId, line)
+                    }
+                    offset = newline + 1
+                }
+            } finally {
+                batching = false
+                schedulePublicationLocked()
+            }
         }
-        lines.forEach { line -> handleProtocolLine(clientId, line) }
     }
 
     private fun handleProtocolLine(clientId: String, line: String) {
@@ -321,6 +365,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             val attributes = parseEntries(root.path("attributes"), prefix = "attr.")
             val parentNode = root.path("parent")
             val parentValue = if (parentNode.path("_tag").asText() == "Some") parentNode.path("value") else null
+            val previousParent = state.parentSpanId
             state.parentSpanId = parentValue
                 ?.takeIf { it.path("_tag").asText() == "Span" }
                 ?.path("spanId")
@@ -341,7 +386,13 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             }
 
             client.pendingEvents.remove(spanId)?.let(state.events::addAll)
-            rebuildChildLinks(client)
+            trimEvents(client, state.events)
+            if (previousParent != state.parentSpanId) {
+                previousParent?.let { removeChildLink(client, it, spanId) }
+                state.parentSpanId?.let { client.children.getOrPut(it) { linkedSetOf() }.add(spanId) }
+            }
+            invalidateSpanSnapshot(client, spanId)
+            enforceRetention(client)
             publishLocked()
         }
     }
@@ -356,12 +407,17 @@ class EffectDevToolsService(private val project: Project) : Disposable {
                 startTime = root.path("startTime").asText(),
                 details = parseEntries(root.path("attributes"), prefix = "attr."),
             )
+            invalidateSpanSnapshot(client, spanId)
             val span = client.spans[spanId]
             if (span != null) {
                 span.events += event
+                trimEvents(client, span.events)
             } else {
-                client.pendingEvents.getOrPut(spanId) { mutableListOf() } += event
+                val events = client.pendingEvents.getOrPut(spanId) { mutableListOf() }
+                events += event
+                trimEvents(client, events)
             }
+            enforceRetention(client)
             publishLocked()
         }
     }
@@ -386,11 +442,8 @@ class EffectDevToolsService(private val project: Project) : Disposable {
 
             "Histogram" -> {
                 val state = node.path("state")
-                details += RuntimeDetailEntry("Count", formattedScalar(state.path("count")))
-                details += RuntimeDetailEntry("Sum", "${formattedScalar(state.path("sum"))}$unitSuffix")
-                details += RuntimeDetailEntry("Min", "${formattedScalar(state.path("min"))}$unitSuffix")
-                details += RuntimeDetailEntry("Max", "${formattedScalar(state.path("max"))}$unitSuffix")
-                histogramMeanSummary(state.path("buckets"), state.path("count"), unitSuffix)
+                details += metricAggregateDetails(state, unitSuffix)
+                histogramMeanSummary(state.path("buckets"), state.path("count"), state.path("sum"), unitSuffix)
             }
 
             "Summary" -> {
@@ -401,10 +454,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
                         details += RuntimeDetailEntry(quantileKey, "${optionScalarText(quantile.path(1))}$unitSuffix")
                     }
                 }
-                details += RuntimeDetailEntry("Count", formattedScalar(state.path("count")))
-                details += RuntimeDetailEntry("Sum", "${formattedScalar(state.path("sum"))}$unitSuffix")
-                details += RuntimeDetailEntry("Min", "${formattedScalar(state.path("min"))}$unitSuffix")
-                details += RuntimeDetailEntry("Max", "${formattedScalar(state.path("max"))}$unitSuffix")
+                details += metricAggregateDetails(state, unitSuffix)
                 summaryQuantileDescription(state.path("quantiles"), unitSuffix)
             }
 
@@ -468,6 +518,13 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         }
     }
 
+    private fun metricAggregateDetails(state: JsonNode, unitSuffix: String): List<RuntimeDetailEntry> = listOf(
+        RuntimeDetailEntry("Count", formattedScalar(state.path("count"))),
+        RuntimeDetailEntry("Sum", "${formattedScalar(state.path("sum"))}$unitSuffix"),
+        RuntimeDetailEntry("Min", "${formattedScalar(state.path("min"))}$unitSuffix"),
+        RuntimeDetailEntry("Max", "${formattedScalar(state.path("max"))}$unitSuffix"),
+    )
+
     private fun unitSuffix(tags: List<RuntimeMetricTagSnapshot>): String =
         tags.firstOrNull { it.key == "unit" || it.key == "time_unit" }?.value?.let { " $it" }.orEmpty()
 
@@ -483,8 +540,10 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         return "${optionScalarText(middleEntry.path(1))}$unitSuffix ($label)"
     }
 
-    private fun histogramMeanSummary(buckets: JsonNode, countNode: JsonNode, unitSuffix: String): String {
+    private fun histogramMeanSummary(buckets: JsonNode, countNode: JsonNode, sumNode: JsonNode, unitSuffix: String): String {
         val totalCount = countNode.asDouble(0.0)
+        val sum = sumNode.doubleValueOrNull()
+        if (sum != null && totalCount > 0) return "${formatNumber(sum / totalCount)}$unitSuffix (mean)"
         if (totalCount <= 0 || !buckets.isArray) {
             return "0$unitSuffix (mean)"
         }
@@ -508,7 +567,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         }
 
         val mean = if (multiplied == 0.0) 0.0 else multiplied / totalCount
-        return "${formatNumber(mean)}$unitSuffix (mean)"
+        return "${formatNumber(mean)}$unitSuffix (estimated mean)"
     }
 
     private fun parseSpanStatus(node: JsonNode): String =
@@ -626,23 +685,57 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             value.toString()
         }
 
-    private fun rebuildChildLinks(client: RuntimeClientState) {
-        client.spans.values.forEach { it.children.clear() }
-        client.spans.values.forEach { span ->
-            val parentId = span.parentSpanId ?: return@forEach
-            client.spans[parentId]?.children?.add(span.spanId)
+    /** Evict whole traces, preferring completed traces; fall back to oldest live trace at capacity.
+     * Events retain the newest entries; orphan IDs evict oldest first. Counters reset with capture.
+     */
+    private fun enforceRetention(client: RuntimeClientState) {
+        while (client.spans.size > MAX_RETAINED_SPANS) {
+            val traces = client.spans.values.groupBy { it.traceId }
+            val oldest = traces.values.firstOrNull { trace -> trace.all { it.status.startsWith("Ended") } }
+                ?.first() ?: client.spans.values.first()
+            val ids = client.spans.values.filter { it.traceId == oldest.traceId }.map { it.spanId }.toSet()
+            ids.forEach { id ->
+                client.spans.remove(id)?.let { span ->
+                    client.droppedSpans++
+                    client.droppedEvents += span.events.size
+                    span.parentSpanId?.let { removeChildLink(client, it, id) }
+                }
+            }
+        }
+        while (client.pendingEvents.size > MAX_PENDING_EVENT_IDS) {
+            val id = client.pendingEvents.keys.first()
+            client.droppedEvents += client.pendingEvents.remove(id).orEmpty().size
         }
     }
 
-    private fun collectCompleteLines(buffer: StringBuilder): List<String> {
-        val lines = mutableListOf<String>()
-        var newlineIndex = buffer.indexOf("\n")
-        while (newlineIndex >= 0) {
-            lines += buffer.substring(0, newlineIndex).trim()
-            buffer.delete(0, newlineIndex + 1)
-            newlineIndex = buffer.indexOf("\n")
+    // Immutable publications share unaffected branches. Walk even through uncached spans: a
+    // newly attached child or a parent-link change can still invalidate a cached ancestor.
+    private fun invalidateSpanSnapshot(client: RuntimeClientState, spanId: String) {
+        client.cachedRoots = null
+        val visited = hashSetOf<String>()
+        var currentId: String? = spanId
+        while (currentId != null && visited.add(currentId)) {
+            val span = client.spans[currentId] ?: break
+            spanSnapshotInvalidationVisits++
+            span.cachedSnapshot = null
+            currentId = span.parentSpanId
         }
-        return lines
+    }
+
+    private fun removeChildLink(client: RuntimeClientState, parentId: String, childId: String) {
+        invalidateSpanSnapshot(client, parentId)
+        client.children[parentId]?.let { children ->
+            children.remove(childId)
+            if (children.isEmpty()) client.children.remove(parentId)
+        }
+    }
+
+    private fun trimEvents(client: RuntimeClientState, events: MutableList<RuntimeSpanEventSnapshot>) {
+        val excess = events.size - MAX_EVENTS_PER_SPAN
+        if (excess > 0) {
+            events.subList(0, excess).clear()
+            client.droppedEvents += excess
+        }
     }
 
     private fun setRuntimeError(message: String, shutdown: Boolean) {
@@ -676,7 +769,17 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         }
     }
 
+    private fun schedulePublicationLocked() {
+        if (publicationPending || disposed) return
+        publicationPending = true
+        schedulePublication {
+            synchronized(lock) { if (publicationPending && !disposed) publishLocked() }
+        }
+    }
+
     private fun publishLocked() {
+        if (batching) return
+        publicationPending = false
         val snapshots = clients.values.map { it.toSnapshot() }.sortedBy { it.name }
         val activeId = activeClientId.takeIf { id -> snapshots.any { it.id == id } } ?: snapshots.firstOrNull()?.id
         activeClientId = activeId
@@ -698,14 +801,18 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             connectedAt = connectedAt,
             lastSeenAt = lastSeenAt,
             metrics = metrics,
-            rootSpans = buildRootSpans(this),
+            rootSpans = cachedRoots ?: buildRootSpans(this).also { cachedRoots = it },
+            droppedSpans = droppedSpans,
+            droppedEvents = droppedEvents,
         )
 
-    private fun buildRootSpans(client: RuntimeClientState): List<RuntimeSpanSnapshot> =
-        client.spans.values
+    private fun buildRootSpans(client: RuntimeClientState): List<RuntimeSpanSnapshot> {
+        traceSnapshotBuilds++
+        return client.spans.values
             .filter { it.parentSpanId == null || !client.spans.containsKey(it.parentSpanId) }
             .map { buildSpanSnapshot(client, it.spanId, linkedSetOf()) }
             .sortedBy { it.name }
+    }
 
     private fun buildSpanSnapshot(
         client: RuntimeClientState,
@@ -723,6 +830,8 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             children = emptyList(),
         )
 
+        state.cachedSnapshot?.let { return it }
+
         if (!visited.add(spanId)) {
             return RuntimeSpanSnapshot(
                 spanId = state.spanId,
@@ -736,10 +845,11 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             )
         }
 
-        val children = state.children
-            .map { childId -> buildSpanSnapshot(client, childId, LinkedHashSet(visited)) }
+        val children = client.children[spanId].orEmpty()
+            .map { childId -> buildSpanSnapshot(client, childId, visited) }
             .sortedBy { it.name }
 
+        visited.remove(spanId)
         return RuntimeSpanSnapshot(
             spanId = state.spanId,
             traceId = state.traceId,
@@ -749,7 +859,14 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             details = state.details,
             events = state.events.toList(),
             children = children,
-        )
+        ).also { state.cachedSnapshot = it }
+    }
+
+    companion object {
+        internal const val MAX_RETAINED_SPANS = 2_000
+        internal const val MAX_EVENTS_PER_SPAN = 100
+        internal const val MAX_PENDING_EVENT_IDS = 128
+        internal const val MAX_PROTOCOL_LINE_CHARS = 1_048_576
     }
 
     private inner class RuntimeWebSocketServer(address: InetSocketAddress) : WebSocketServer(address) {
@@ -783,6 +900,10 @@ private data class RuntimeClientState(
     val connectedAt: Instant,
     var lastSeenAt: Instant,
     var metrics: List<RuntimeMetricSnapshot> = emptyList(),
+    var cachedRoots: List<RuntimeSpanSnapshot>? = null,
+    var droppedSpans: Int = 0,
+    var droppedEvents: Int = 0,
+    val children: MutableMap<String, LinkedHashSet<String>> = linkedMapOf(),
     val spans: LinkedHashMap<String, MutableSpanState> = linkedMapOf(),
     val pendingEvents: LinkedHashMap<String, MutableList<RuntimeSpanEventSnapshot>> = linkedMapOf(),
 )
@@ -796,5 +917,5 @@ private data class MutableSpanState(
     var parentSpanId: String? = null,
     var details: List<RuntimeDetailEntry> = emptyList(),
     val events: MutableList<RuntimeSpanEventSnapshot> = mutableListOf(),
-    val children: LinkedHashSet<String> = linkedSetOf(),
+    var cachedSnapshot: RuntimeSpanSnapshot? = null,
 )

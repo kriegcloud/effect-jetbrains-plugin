@@ -3,9 +3,12 @@ package dev.effect.intellij.typescript
 import com.intellij.lang.typescript.compiler.TypeScriptCompilerSettings
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.ActionUiKind
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.progress.ProgressIndicator
@@ -42,21 +45,31 @@ class EffectWebStormTypeScriptService(private val project: Project) {
             ?.takeIf { settings.versionType == TypeScriptCompilerSettings.TypeScriptCompilerVersionType.SERVICE_DIRECTORY }
         val usesTsrs = serviceDirectory != null && platform != null &&
             runCatching { Path.of(FileUtil.toSystemDependentName(serviceDirectory)) }.getOrNull()
-                ?.startsWith(packageCacheRoot()) == true
+                ?.startsWith(Path.of(com.intellij.openapi.application.PathManager.getSystemPath(), TYPESCRIPT_PACKAGE_CACHE_DIR)) == true
         return CurrentState(serviceDirectory, usesTsrs, candidates)
     }
 
     /** Finds tsrs, builds the WebStorm-shaped package, and switches the TypeScript setting, off the EDT. */
-    fun useTsrsForWebStormTypeScript(onDone: (Result<TsrsCandidate>) -> Unit = {}) {
+    fun useTsrsForWebStormTypeScript(beforeApply: () -> Unit = {}, onDone: (Result<TsrsCandidate>) -> Unit = {}) {
+        switchToTsrs(beforeApply = beforeApply, onDone = onDone)
+    }
+
+    internal fun switchToTsrs(
+        preparePackage: () -> Pair<TsrsCandidate, Path> = ::prepare,
+        reportResult: (Result<TsrsCandidate>) -> Unit = ::report,
+        beforeApply: () -> Unit = {},
+        onDone: (Result<TsrsCandidate>) -> Unit = {},
+    ) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Pointing WebStorm TypeScript at tsrs", false) {
             override fun run(indicator: ProgressIndicator) {
-                val result = runCatching { prepare() }
+                val result = runCatching { preparePackage() }
                 ApplicationManager.getApplication().invokeLater({
                     val applied = result.mapCatching { (candidate, packageDirectory) ->
+                        beforeApply()
                         apply(packageDirectory)
                         candidate
                     }
-                    report(applied)
+                    reportResult(applied)
                     onDone(applied)
                 }, project.disposed)
             }
@@ -75,7 +88,7 @@ class EffectWebStormTypeScriptService(private val project: Project) {
         check(platform.isWindows || Files.isExecutable(candidate.executable)) {
             "${candidate.executable} is not executable and its permissions could not be changed."
         }
-        val packageDirectory = EffectTsrsTypeScriptPackage.create(packageCacheRoot(), candidate, platform)
+        val packageDirectory = EffectTsrsTypeScriptPackage.prepare(packageCacheRoot(), candidate, platform)
         return candidate to packageDirectory
     }
 
@@ -92,9 +105,20 @@ class EffectWebStormTypeScriptService(private val project: Project) {
      * it is experimental API, the action id is stable across 2026.2 and 2026.3.
      */
     private fun restartWebStormTypeScriptService() {
-        val action = ActionManager.getInstance().getAction(TYPESCRIPT_RESTART_ACTION_ID) ?: return
-        val context = SimpleDataContext.getProjectContext(project)
-        ActionUtil.invokeAction(action, context, ActionPlaces.UNKNOWN, null, null)
+        // When this runs from the Settings dialog, restart once the dialog has closed: a restart
+        // inside it would run before the dialog's own Apply/OK and could start the old package.
+        ApplicationManager.getApplication().invokeLater({
+            val action = ActionManager.getInstance().getAction(TYPESCRIPT_RESTART_ACTION_ID) ?: return@invokeLater
+            val event = AnActionEvent.createEvent(
+                action,
+                SimpleDataContext.getProjectContext(project),
+                action.templatePresentation.clone(),
+                ActionPlaces.UNKNOWN,
+                ActionUiKind.NONE,
+                null,
+            )
+            ActionUtil.performAction(action, event)
+        }, ModalityState.nonModal(), project.disposed)
     }
 
     private fun report(result: Result<TsrsCandidate>) {
@@ -141,6 +165,9 @@ class EffectWebStormTypeScriptService(private val project: Project) {
 
     companion object {
         const val TYPESCRIPT_PACKAGE_CACHE_DIR = "effect-tsgo/webstorm-typescript"
+
+        /** `Languages & Frameworks | TypeScript` (`TypeScriptConfigurable`), stable across 2026.2 and 2026.3. */
+        const val TYPESCRIPT_CONFIGURABLE_ID = "settings.typescriptcompiler"
         private const val TYPESCRIPT_RESTART_ACTION_ID = "TypeScript.Restart.Service"
 
         fun getInstance(project: Project): EffectWebStormTypeScriptService = project.service()

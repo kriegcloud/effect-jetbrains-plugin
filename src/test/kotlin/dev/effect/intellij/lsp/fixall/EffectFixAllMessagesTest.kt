@@ -10,7 +10,7 @@ class EffectFixAllMessagesTest : BasePlatformTestCase() {
             "Fix all 'Replace with Effect.map' problems in file",
             EffectBundle.message("intention.fix.all.in.file.text", "Replace with Effect.map"),
         )
-        assertEquals("Fixing all 'X' problems in file\u2026", EffectBundle.message("fix.all.in.file.progress", "X"))
+        assertEquals("Fixing All 'X' Problems in File\u2026", EffectBundle.message("fix.all.in.file.progress", "X"))
         assertEquals("Applied 'X' to 1 problem", EffectBundle.message("fix.all.in.file.applied", "X", 1))
         assertEquals("Applied 'X' to 3 problems", EffectBundle.message("fix.all.in.file.applied", "X", 3))
         assertEquals(

@@ -37,25 +37,40 @@ fun interface EffectDebugBridgeListener : EventListener {
 }
 
 @Service(Service.Level.PROJECT)
-class EffectDebugBridgeService {
+class EffectDebugBridgeService : Disposable {
     private val log = logger<EffectDebugBridgeService>()
     private val dispatcher = EventDispatcher.create(EffectDebugBridgeListener::class.java)
 
     @Volatile
     private var state = DebugBridgeState()
     private var sessionDisposable: Disposable? = null
+    private var attachedSession: XDebugSession? = null
+    private data class CaptureRequest(
+        val project: Project,
+        val session: XDebugSession,
+        val frame: com.intellij.xdebugger.frame.XStackFrame?,
+        val expression: String? = null,
+    )
+    private val requests = EffectDebugRequests<CaptureRequest>()
+    private val preparation = EffectDebugPreparation(
+        background = { ApplicationManager.getApplication().executeOnPooledThread(it) },
+        foreground = { ApplicationManager.getApplication().invokeLater(it) },
+    )
+    private var worker: java.util.concurrent.Future<*>? = null
+    @Volatile private var disposed = false
 
     fun currentState(): DebugBridgeState = state
-
-    fun addListener(listener: EffectDebugBridgeListener) {
-        dispatcher.addListener(listener)
-    }
 
     fun addListener(listener: EffectDebugBridgeListener, parentDisposable: Disposable) {
         dispatcher.addListener(listener, parentDisposable)
     }
 
     fun attachToSession(project: Project, sessionId: String) {
+        if (disposed || project.isDisposed) return
+        requests.invalidate()
+        preparation.invalidate()
+        disposeSessionListener()
+        attachedSession = null
         val session = XDebuggerManager.getInstance(project).currentSession
         if (session == null || session.sessionName != sessionId) {
             updateState(
@@ -66,22 +81,15 @@ class EffectDebugBridgeService {
             return
         }
 
-        disposeSessionListener()
-        val instrumentationPath = EffectInstrumentationService.getInstance().ensureInstrumentationScript().toString()
-        val baseState = DebugBridgeState(
+        attachedSession = session
+        updateState(DebugBridgeState(
             attachedSessionName = session.sessionName,
             attachedSessionType = session.debugProcess.javaClass.simpleName,
-            instrumentationPath = instrumentationPath,
-            guidance = buildString {
-                appendLine("Attached to the active JetBrains debug session.")
-                appendLine("Effect instrumentation is available at:")
-                appendLine(instrumentationPath)
-                append("Pause the session to refresh Effect runtime snapshots.")
-            },
-        )
-        updateState(baseState)
+            guidance = "Preparing Effect instrumentation for the active debug session.",
+        ))
 
         val listenerDisposable = Disposer.newDisposable("Effect debug bridge session listener")
+        Disposer.register(this, listenerDisposable)
         session.addSessionListener(
             object : XDebugSessionListener {
                 override fun sessionPaused() {
@@ -93,7 +101,8 @@ class EffectDebugBridgeService {
                 }
 
                 override fun sessionResumed() {
-                    updateState(currentState().copy(refreshInProgress = false))
+                    requests.invalidate()
+                    updateState(currentState().copy(snapshot = null, refreshInProgress = false))
                 }
 
                 override fun sessionStopped() {
@@ -104,49 +113,68 @@ class EffectDebugBridgeService {
         )
         sessionDisposable = listenerDisposable
 
-        refreshSnapshots(project)
+        preparation.start({ EffectInstrumentationService.getInstance().ensureInstrumentationScript().toString() }) { result ->
+            if (!disposed && !project.isDisposed && attachedSession === session) {
+                result.fold(
+                    onSuccess = { path ->
+                        updateState(state.copy(
+                            instrumentationPath = path,
+                            guidance = "Effect instrumentation is available at:\n$path\nPause the session to refresh Effect runtime snapshots.",
+                        ))
+                        refreshSnapshots(project)
+                    },
+                    onFailure = { updateState(state.copy(error = it.message ?: it.javaClass.simpleName)) },
+                )
+            }
+        }
     }
 
     fun detach(project: Project) {
+        preparation.invalidate()
+        requests.invalidate()
+        attachedSession = null
         disposeSessionListener()
         updateState(DebugBridgeState())
     }
 
     fun refreshSnapshots(project: Project) {
-        val attachedSessionName = state.attachedSessionName ?: return
-        val session = XDebuggerManager.getInstance(project).currentSession
-        if (session == null || session.sessionName != attachedSessionName) {
-            updateState(
-                state.copy(
-                    error = "The attached debug session is no longer active.",
-                    refreshInProgress = false,
-                ),
-            )
-            return
-        }
+        val session = currentAttachedSession(project) ?: return
+        enqueueCapture(CaptureRequest(project, session, session.currentStackFrame))
+    }
 
-        updateState(state.copy(refreshInProgress = true, error = null))
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val nextState = runCatching {
-                captureSnapshot(project, session)
-            }.fold(
-                onSuccess = { snapshot ->
-                    currentState().copy(
-                        snapshot = snapshot,
-                        error = null,
-                        refreshInProgress = false,
-                    )
-                },
-                onFailure = { error ->
-                    log.debug("Effect debug snapshot refresh failed", error)
-                    currentState().copy(
-                        error = error.message ?: error.javaClass.simpleName,
-                        refreshInProgress = false,
-                    )
-                },
-            )
-            updateState(nextState)
+    private fun enqueueCapture(request: CaptureRequest) {
+        if (disposed || request.project.isDisposed) return
+        updateState(state.copy(snapshot = null, refreshInProgress = true, error = null))
+        if (!requests.enqueue(request)) return
+        worker = ApplicationManager.getApplication().executeOnPooledThread {
+            while (!disposed) {
+                val work = requests.poll() ?: break
+                val result = runCatching {
+                    work.value.expression?.let { expression ->
+                        ensureInstrumentationInstalled(work.value.session, work.token, work.value.frame)
+                        evaluateExpression(work.value.session, expression, work.token, work.value.frame)
+                    }
+                    captureSnapshot(work.value, work.token)
+                }
+                ApplicationManager.getApplication().invokeLater {
+                    requests.ifCurrent(work.token) {
+                        val request = work.value
+                        if (!request.project.isDisposed && attachedSession === request.session &&
+                            request.session.currentStackFrame === request.frame
+                        ) {
+                            result.fold(
+                                onSuccess = { updateState(state.copy(snapshot = it, error = null, refreshInProgress = false)) },
+                                onFailure = {
+                                    log.debug("Effect debug request failed", it)
+                                    updateState(state.copy(error = it.message ?: it.javaClass.simpleName, refreshInProgress = false))
+                                },
+                            )
+                        }
+                    }
+                }
+            }
         }
+        if (disposed) worker?.cancel(true)
     }
 
     fun togglePauseOnDefects(project: Project) {
@@ -188,34 +216,27 @@ class EffectDebugBridgeService {
 
     private fun evaluateControlExpression(project: Project, operation: String, expression: () -> String) {
         val session = currentAttachedSession(project) ?: return
-        updateState(state.copy(refreshInProgress = true, error = null))
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val nextState = runCatching {
-                ensureInstrumentationInstalled(session)
-                evaluateExpression(session, expression())
-                captureSnapshot(project, session)
-            }.fold(
-                onSuccess = { snapshot -> currentState().copy(snapshot = snapshot, error = null, refreshInProgress = false) },
-                onFailure = { error ->
-                    log.debug("Effect debug $operation failed", error)
-                    currentState().copy(error = error.message ?: error.javaClass.simpleName, refreshInProgress = false)
-                },
-            )
-            updateState(nextState)
+        if (!session.isSuspended) {
+            updateState(state.copy(error = "Pause the debug session before $operation."))
+            return
         }
+        enqueueCapture(CaptureRequest(project, session, session.currentStackFrame, expression()))
     }
 
-    private fun captureSnapshot(project: Project, session: XDebugSession): EffectDebugSnapshot {
-        if (!session.isSuspended) {
-            return currentState().snapshot?.copy(message = "Debug session is running. Pause it to refresh Effect snapshots.")
-                ?: EffectDebugSnapshot(message = "Debug session is running. Pause it to refresh Effect snapshots.")
+    private fun captureSnapshot(request: CaptureRequest, token: EffectDebugRequests.Token): EffectDebugSnapshot {
+        if (!request.session.isSuspended) {
+            return EffectDebugSnapshot(message = "Debug session is running. Pause it to refresh Effect snapshots.")
         }
-        ensureInstrumentationInstalled(session)
-        val raw = evaluateExpression(session, SNAPSHOT_EXPRESSION)
+        ensureInstrumentationInstalled(request.session, token, request.frame)
+        val raw = evaluateExpression(request.session, SNAPSHOT_EXPRESSION, token, request.frame)
         return EffectDebugSnapshot.parse(decodeDebuggerString(raw))
     }
 
-    private fun ensureInstrumentationInstalled(session: XDebugSession) {
+    private fun ensureInstrumentationInstalled(
+        session: XDebugSession,
+        token: EffectDebugRequests.Token,
+        frame: com.intellij.xdebugger.frame.XStackFrame?,
+    ) {
         val source = EffectInstrumentationService.getInstance().instrumentationSource()
         evaluateExpression(
             session,
@@ -227,24 +248,39 @@ class EffectDebugBridgeService {
               return JSON.stringify({ success: !!globalThis["effect/devtools/instrumentation"] });
             })()
             """.trimIndent(),
+            token,
+            frame,
         )
     }
 
     private fun currentAttachedSession(project: Project): XDebugSession? {
-        val attachedSessionName = state.attachedSessionName
+        if (disposed || project.isDisposed) return null
+        val attachedSessionName = state.attachedSessionName ?: return null
         val session = XDebuggerManager.getInstance(project).currentSession
-        if (session == null || session.sessionName != attachedSessionName) {
+        if (session == null || session !== attachedSession || session.sessionName != attachedSessionName) {
+            requests.invalidate()
             updateState(state.copy(error = "The attached debug session is no longer active."))
             return null
         }
         return session
     }
 
-    private fun evaluateExpression(session: XDebugSession, expression: String): String {
-        val future = CompletableFuture<String>()
+    private fun evaluateExpression(
+        session: XDebugSession,
+        expression: String,
+        token: EffectDebugRequests.Token,
+        frame: com.intellij.xdebugger.frame.XStackFrame?,
+    ): String {
+        val evaluation = EffectDebugEvaluation(token)
+        val future = evaluation.future
         ApplicationManager.getApplication().invokeLater {
             try {
-                val frame = session.currentStackFrame
+                if (!evaluation.canEvaluate() || disposed || session.project.isDisposed ||
+                    attachedSession !== session || !session.isSuspended || session.currentStackFrame !== frame
+                ) {
+                    future.cancel(false)
+                    return@invokeLater
+                }
                 val evaluator = frame?.evaluator
                 if (evaluator == null) {
                     future.completeExceptionally(IllegalStateException("The current stack frame does not support expression evaluation."))
@@ -254,7 +290,7 @@ class EffectDebugBridgeService {
                     expression,
                     object : XDebuggerEvaluator.XEvaluationCallback {
                         override fun evaluated(value: XValue) {
-                            value.computePresentation(CapturingValueNode(future), XValuePlace.TREE)
+                            if (evaluation.canEvaluate()) value.computePresentation(CapturingValueNode(future), XValuePlace.TREE)
                         }
 
                         override fun errorOccurred(errorMessage: String) {
@@ -267,7 +303,7 @@ class EffectDebugBridgeService {
                 future.completeExceptionally(error)
             }
         }
-        return future.get(5, TimeUnit.SECONDS)
+        return evaluation.use { future.get(5, TimeUnit.SECONDS) }
     }
 
     private fun decodeDebuggerString(raw: String): String {
@@ -279,6 +315,7 @@ class EffectDebugBridgeService {
     }
 
     private fun updateState(nextState: DebugBridgeState) {
+        if (disposed) return
         state = nextState
         dispatcher.multicaster.stateChanged(nextState)
     }
@@ -286,6 +323,15 @@ class EffectDebugBridgeService {
     private fun disposeSessionListener() {
         sessionDisposable?.let(Disposer::dispose)
         sessionDisposable = null
+    }
+
+    override fun dispose() {
+        preparation.invalidate()
+        disposed = true
+        requests.dispose()
+        worker?.cancel(true)
+        attachedSession = null
+        disposeSessionListener()
     }
 
     private class CapturingValueNode(

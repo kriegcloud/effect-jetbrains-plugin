@@ -35,7 +35,7 @@ TypeScript and JavaScript files.
 | Inlay hints | Implemented | Available on the `262.*`/`263.*` platform baseline |
 | Document and workspace symbols | Implemented | Expected on the `262.*`/`263.*` platform baseline |
 | Hover-based layer graph links | Implemented | This is the supported layer-graph path today |
-| Local Mermaid graph action | Experimental | Editor/Tools action opens Mermaid source when the LSP advertises the Effect execute-command bridge |
+| Local Mermaid graph action | Experimental | Editor/Tools action decodes a Layer hover link into local `.mmd` source; requires `noExternal=false` and `mermaidProvider="mermaid.live"`; rendered preview depends on IDE support |
 
 The table above describes the shipped surface area. Recorded real-binary LSP smoke exists for the
 fixtures below; full manual IDE/editor smoke and broader semantic coverage remain follow-up validation
@@ -168,7 +168,69 @@ workspace configuration only when explicitly set, and they override duplicate ra
 > `workspace/configuration`. The plugin still sends the typed values over LSP for forward
 > compatibility, but to change server behavior today, set them in the workspace `tsconfig.json`.
 
-Equivalent raw JSON example:
+### Effect option schema and warnings
+
+For files named exactly `tsconfig.json` or `jsconfig.json`, the plugin supplies JSON-schema
+completion and validation, including the `@effect/language-service` entry. Each config uses the
+nearest ancestor directory containing `node_modules/@effect/tsgo/schema.json`; if none is found,
+it uses the bundled **0.67.4** schema. An older installed workspace package can therefore change
+which options completion and validation recognize. Explicit `$schema` declarations still follow
+the IDE's normal schema-selection rules.
+
+Settings validation checks Effect options in the raw initialization/workspace JSON fields, and
+`Sync to tsconfig.json` checks the resulting Effect plugin entry. These schema findings are
+advisory warnings: they do not block Apply or a sync write. Settings validation selects the schema
+from the project directory's ancestors; sync selects it from the target config's directory.
+Schema loading happens in the background. If a warning says the schema is loading, validate again
+after loading finishes to see option warnings. A schema-load warning asks you to check the
+workspace package installation.
+
+### Sync typed options to tsconfig.json
+
+1. Create a `tsconfig.json` in the IDE project root if one does not exist. Sync looks only for
+   that file; it does not search nested packages, follow `extends`, or update other tsconfigs.
+2. Set the typed language-server controls in `Settings | Tools | Effect`, then click
+   `Sync to tsconfig.json`. This writes the currently visible form values, even before Apply,
+   without applying the rest of the Settings page. Apply/OK separately saves the plugin settings;
+   Apply alone does not write tsconfig options.
+3. Alternatively, after applying settings, run
+   `Tools | Effect: Sync Language-Service Options To tsconfig.json` to write the saved typed values.
+4. Review the saved `compilerOptions.plugins` entry and restart the Effect LSP using the widget's
+   `Restart` action.
+
+Sync creates missing `compilerOptions`, `plugins`, and `@effect/language-service` structures and
+adds or updates only explicitly configured typed keys. It merges individual `diagnosticSeverity`
+entries and preserves other rules, manually managed Effect keys, other plugins, and JSONC comments.
+Explicitly configured keys replace matching keys even if those were edited manually. Invalid JSON
+or incompatible structures are reported without changing the file. Raw initialization/workspace
+JSON is excluded from sync.
+
+Sync is additive: clearing a control or choosing `Server default` does not delete a previously
+written key. For example, sync `inlays=false`, then choose `Server default` and sync again:
+`"inlays": false` remains in tsconfig. Removing a severity row likewise leaves its old override.
+To restore the server default, manually remove the corresponding key from the
+`@effect/language-service` entry (or its `diagnosticSeverity` object), save, and restart the Effect
+LSP. With no typed options set, sync makes no changes.
+
+A minimal tsconfig example for inlays and hover Mermaid links is:
+
+```json
+{
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "inlays": true,
+        "mermaidProvider": "mermaid.live",
+        "noExternal": false
+      }
+    ]
+  }
+}
+```
+
+The following is the equivalent LSP workspace configuration payload, not a tsconfig entry.
+Current servers require the tsconfig options above:
 
 ```json
 {
@@ -248,7 +310,8 @@ Observed through LSP:
   The next-line `schemaSync:warning` directive enabled exactly one warning and did not affect the
   default-off examples before or after it.
 - The published `0.67.4` compilers advertise inlay hints, semantic tokens, and pull diagnostics,
-  with no `executeCommandProvider`, so the local Mermaid graph action remains experimental; hover Mermaid links are the supported path.
+  with no `executeCommandProvider`. The local Mermaid action uses the encoded Layer hover link
+  when no command bridge is advertised; manual IDE/editor validation remains follow-up work.
 
 ### Runtime Instrumentation Smoke
 
@@ -267,6 +330,46 @@ also supplies a DevTools client, metrics, nested spans, a defect loop, an `Effec
 and `example.ts` for the human editor pass. Follow its
 [`SMOKE_CHECKLIST.md`](../src/test/testData/fixtures/runtime/smoke-app/SMOKE_CHECKLIST.md) for setup
 and paused-session checks; automated Node results do not establish manual IDE parity.
+
+### Open a local Layer Mermaid graph
+
+Set `noExternal=false` and `mermaidProvider="mermaid.live"` in the tsconfig
+`@effect/language-service` entry, then restart the Effect LSP. With the server running, place the
+caret on a Layer declaration name and invoke `Effect Dev Tools: Show Layer Mermaid Graph` from the editor
+context menu or Tools menu. The action decodes the hover's `mermaid.live` `pako:` link and opens
+local `.mmd` source under `<IDE system path>/effect-tsgo/mermaid/`. A rendered preview depends on
+the IDE's Mermaid support; opening source does not guarantee a preview. Copy source elsewhere to
+keep it beyond cache cleanup.
+
+If a server advertises `typescript.tsserverRequest` or `_effectGetLayerMermaid`, the action prefers
+that execute-command transport. A custom server build is needed to test that unpublished bridge;
+the hover fallback is available with the published server. Manual IDE/editor smoke remains pending.
+
+## Editor Affordances
+
+### Live templates
+
+In a supported editor context, type a template abbreviation and use the IDE's live-template
+expansion shortcut (check `Settings | Editor | Live Templates` for your configured key). Fill the template fields and body:
+
+| Abbreviation | Expansion | Context / prerequisites |
+| --- | --- | --- |
+| `egen` | `Effect.gen(function*() { … })` | JavaScript or TypeScript; `Effect` in scope |
+| `eservice` | Class extending `Effect.Service` | TypeScript; `Effect` in scope |
+| `elayer` | `Layer.effect` with an `Effect.gen` body | JavaScript or TypeScript; `Layer`, `Effect`, and a service tag in scope |
+| `eschema` | Class extending `Schema.Class` | TypeScript; `Schema` in scope |
+
+Templates insert literal namespace references and do not add imports. Import the required
+namespaces yourself. Check the generated APIs against your installed Effect version, especially
+`Effect.Service`, which is a version-specific API; the templates do not adapt to every Effect release.
+
+### Gutter markers
+
+Open TypeScript or JavaScript source containing namespace references such as `Effect.gen`,
+`Effect.fn`, `Effect.Service`, `Layer.effect`, or `Schema.Class`. Look for the gutter icon and hover
+it to see the construct label. These are visual scanning aids with no navigation action. Matching
+uses literal namespace/member text and PSI structure, not symbol resolution: renamed aliases may
+be missed and unrelated objects with the same namespace text may receive markers.
 
 ## LSP Widget
 
@@ -321,6 +424,28 @@ settings.
 | `Tracer Web` | Adapted | Browser-backed tracer view when JCEF is available |
 | `Debug` | Adapted | Best-effort Context, Span Stack, Fibers, and Breakpoints snapshots from the active JetBrains debug session |
 
+### Export a tracer snapshot
+
+Connect an instrumented app, select its client in the Dev Tools toolbar, and capture spans in
+`Tracer`. Run `Tools | Effect: Export Tracer Snapshot` to export that active client's captured span
+tree as JSON. With no active client or captured root spans, the action shows a warning instead.
+It writes `<IDE system path>/effect-tsgo/tracer/effect-tracer-<timestamp>.json` and opens the file
+in the editor. Copy it to a project or another durable location before sharing or clearing caches;
+the export destination is in the IDE system cache.
+
+### Tracer history limits
+
+Each runtime client retains at most **2,000 spans**, the newest **100 events per span**, and
+pending events for at most **128 span IDs** whose spans have not arrived yet. When the span limit
+is exceeded, the plugin evicts whole traces, preferring the oldest completed trace and falling
+back to the oldest live trace. Excess per-span events are removed oldest first; pending event
+IDs are also evicted oldest first.
+
+The `Tracer` status shows dropped span and event counts when displaying retained spans. A JSON
+export contains only the currently retained span tree and client metadata; it does not include
+those dropped counts or recover evicted history. Export while the history you need is still
+retained, and record the displayed dropped counts alongside a shared capture when relevant.
+
 ### Runtime model
 
 - The runtime server listens locally inside the IDE.
@@ -348,7 +473,7 @@ Runtime clients and paused debug-session inspection intentionally remain separat
 | Live debugger snapshots | Adapted; interactive trees are available while the attached session is paused and instrumentation is installed |
 | Automatic Node.js run/debug instrumentation injection | Adapted; opt-in with a JetBrains run/debug allowlist and wildcard support |
 | Optional advanced tracer / JCEF panel | Adapted |
-| Local Mermaid graph action | Experimental; requires an Effect `tsgo` build with `_effectGetLayerMermaid` execute-command support |
+| Local Mermaid graph action | Experimental IDE workflow; opens local `.mmd` source via Layer hover (`noExternal=false`, `mermaidProvider="mermaid.live"`); rendered preview requires suitable IDE support |
 | Literal VS Code layout parity | Not a goal; JetBrains-native adapted UX is the current direction |
 
 For the detailed parity inventory, see [VS Code and Zed parity matrix](parity-matrix.md).
