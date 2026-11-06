@@ -26,9 +26,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-private const val CURRENT_TSGO_VERSION = "0.54.1"
+private const val CURRENT_TSGO_VERSION = "0.67.4"
 private const val STABLE_TYPESCRIPT_HEAD = "2bd066d87f5bafd315be9f40889d0a60b9e58e0b"
 private const val NEXT_TYPESCRIPT_HEAD = "5237fd46890956e4bb8177a1a05dcd69e4166560"
+private const val BETA_TYPESCRIPT_HEAD = "3e9236361fa97a9e6c685f4833ac457ae2d8c50a"
 
 class EffectBinaryServiceTest : BasePlatformTestCase() {
     private lateinit var server: HttpServer
@@ -354,6 +355,40 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         }
     }
 
+    fun testLatestModeSelectsBetaArtifactFromManifestWithTsrsComponent() {
+        writeWorkspacePackage("typescript", "7.1.0-beta", BETA_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(
+            CURRENT_TSGO_VERSION,
+            includeLatestArtifact = false,
+            schemaVersion = 5,
+            includeProviders = true,
+            includeBetaAndTsrs = true,
+        )
+
+        val resolution = resolveLatest()
+
+        assertEquals(
+            listOf("artifacts", "typescript", "7.1.0-beta", stableBinaryName),
+            packageRelativeSegments(resolution),
+        )
+        assertEquals("beta-lib", Files.readString(resolution.binaryPath.resolveSibling("lib.d.ts")))
+    }
+
+    fun testLatestModeKeepsStableCompilerWhenManifestHasTsrsComponent() {
+        writeWorkspacePackage("typescript", "7.0.2", STABLE_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(
+            CURRENT_TSGO_VERSION,
+            includeLatestArtifact = false,
+            schemaVersion = 5,
+            includeProviders = true,
+            includeBetaAndTsrs = true,
+        )
+
+        val resolution = resolveLatest()
+
+        assertEquals(listOf("lib", stableBinaryName), packageRelativeSegments(resolution))
+    }
+
     fun testLatestModeParsesSchemaFiveComponentProviderShape() {
         val metadataRequests = AtomicInteger(0)
         val tarballRequests = AtomicInteger(0)
@@ -490,6 +525,29 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         assertEquals(EffectBinaryMode.PINNED, resolution.mode)
         assertEquals("9.9.9", resolution.version)
         assertTrue(Files.exists(resolution.binaryPath))
+    }
+
+    fun testPinnedModeRejectsNonVersionBeforeContactingRegistry() {
+        val metadataRequests = AtomicInteger(0)
+        writeWorkspacePackage("typescript", "7.0.2", STABLE_TYPESCRIPT_HEAD)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, metadataRequests = metadataRequests)
+        val binaryService = EffectBinaryService.getInstance()
+        binaryService.registryBaseUrl = "http://127.0.0.1:${server.address.port}"
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(
+                binaryMode = EffectBinaryMode.PINNED,
+                pinnedVersion = workspaceRoot().resolve("node_modules/@effect/tsgo-linux-x64/lib/tsc").toString(),
+            ),
+        )
+
+        try {
+            binaryService.ensureAvailable(project)
+            fail("Expected a pinned path to be rejected")
+        } catch (error: EffectBinaryException) {
+            assertTrue(error.message, error.message!!.contains("not an exact npm version"))
+            assertTrue(error.message, error.message!!.contains("Manual mode"))
+        }
+        assertEquals(0, metadataRequests.get())
     }
 
     fun testManagedDownloadRejectsIntegrityMismatch() {
@@ -773,6 +831,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         includeNextArtifact: Boolean = true,
         schemaVersion: Int = 4,
         includeProviders: Boolean = false,
+        includeBetaAndTsrs: Boolean = false,
         metadataRequests: AtomicInteger? = null,
         tarballRequests: AtomicInteger? = null,
     ) {
@@ -781,7 +840,9 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         }
         registerPackageEndpoint(
             version,
-            { path -> writeComponentsTarball(path, includeLatestArtifact, includeNextArtifact, schemaVersion, includeProviders) },
+            { path ->
+                writeComponentsTarball(path, includeLatestArtifact, includeNextArtifact, schemaVersion, includeProviders, includeBetaAndTsrs)
+            },
             metadataRequests,
             tarballRequests,
         )
@@ -875,20 +936,36 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         includeNextArtifact: Boolean = true,
         schemaVersion: Int = 4,
         includeProviders: Boolean = false,
+        includeBetaAndTsrs: Boolean = false,
     ) {
         val latestProvider = if (includeProviders) ",\"provider\":\"typescript-go\"" else ""
         val nextProvider = if (includeProviders) ",\"provider\":\"typescript\"" else ""
+        // Since 0.67.0 the manifest adds a `beta` TypeScript tag and a `tsrs` component (a Rust port
+        // of the compiler pinned to the beta's git head) under `artifacts/tsrs/<version>/tsrs`.
+        val betaTag = if (includeBetaAndTsrs) ",\"beta\":\"7.1.0-beta\"" else ""
+        val tsrsTag = if (includeBetaAndTsrs) ",\"tsrs\":{\"latest\":\"0.22.0-ts7.1.0-beta\"}" else ""
+        val betaComponent = if (includeBetaAndTsrs) {
+            "\n\"7.1.0-beta\":{\"gitHead\":\"$BETA_TYPESCRIPT_HEAD\"$nextProvider},"
+        } else {
+            ""
+        }
+        val tsrsComponent = if (includeBetaAndTsrs) {
+            ",\n\"tsrs\":{\"0.22.0-ts7.1.0-beta\":{\"gitHead\":\"tsrs-head\"," +
+                "\"typescript\":{\"version\":\"7.1.0-beta\",\"gitHead\":\"$BETA_TYPESCRIPT_HEAD\"}}}"
+        } else {
+            ""
+        }
         val entries = mutableMapOf(
             "package/lib/upstream.json" to
                 """
                 {"schemaVersion":$schemaVersion,
-                 "tags":{"typescript":{"latest":"7.0.2","next":"7.1.0-dev.20261019.1"},"oxlint":{"latest":"1.77.0"},"oxlint-tsgolint":{"latest":"7.0.2001"}},
+                 "tags":{"typescript":{"latest":"7.0.2"$betaTag,"next":"7.1.0-dev.20261019.1"},"oxlint":{"latest":"1.77.0"},"oxlint-tsgolint":{"latest":"7.0.2001"}$tsrsTag},
                  "components":{
                    "typescript":{
-                     "7.0.2":{"gitHead":"$STABLE_TYPESCRIPT_HEAD"$latestProvider},
+                     "7.0.2":{"gitHead":"$STABLE_TYPESCRIPT_HEAD"$latestProvider},$betaComponent
                      "7.1.0-dev.20261019.1":{"gitHead":"$NEXT_TYPESCRIPT_HEAD"$nextProvider}
                    },
-                   "oxlint":{"1.77.0":{"gitHead":"oxlint-head"}}
+                   "oxlint":{"1.77.0":{"gitHead":"oxlint-head"}}$tsrsComponent
                  },
                  "profiles":[{"name":"vite-plus","description":"Vite+ compatibility runtime","dependencies":{"oxlint":"1.77.0"}}]}
                 """.trimIndent(),
@@ -904,6 +981,12 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         if (includeNextArtifact) {
             entries["package/artifacts/typescript/7.1.0-dev.20261019.1/$stableBinaryName"] = "next-binary"
             entries["package/artifacts/typescript/7.1.0-dev.20261019.1/lib.d.ts"] = "next-lib"
+        }
+        if (includeBetaAndTsrs) {
+            entries["package/artifacts/typescript/7.1.0-beta/$stableBinaryName"] = "beta-binary"
+            entries["package/artifacts/typescript/7.1.0-beta/lib.d.ts"] = "beta-lib"
+            entries["package/artifacts/tsrs/0.22.0-ts7.1.0-beta/${if (SystemInfo.isWindows) "tsrs.exe" else "tsrs"}"] = "tsrs-binary"
+            entries["package/artifacts/tsrs/0.22.0-ts7.1.0-beta/lib.d.ts"] = "tsrs-lib"
         }
         writeTarball(path, entries)
     }

@@ -769,9 +769,24 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       diagnosticsForRule(diagnostics, "effectSleepZeroToYieldNow")[0], "Replace with Effect.yieldNow")
     const tapEdits = await quickFixForDiagnostic(client, uri,
       diagnosticsForRule(diagnostics, "flatMapToTap")[0], "Replace with Effect.tap")
+    // Published between 0.55.0 and 0.67.4: default-on suggestions with rewrites.
+    for (const rule of ["mapConstToAs", "flatMapIdentityToFlatten"]) {
+      const found = diagnosticsForRule(diagnostics, rule)
+      assert(found.length === 1 && found[0].severity === 4,
+        `Expected one ${rule} suggestion (published since @effect/tsgo 0.55.0–0.67.4): ${JSON.stringify(found)}`)
+    }
+    const asEdits = await quickFixForDiagnostic(client, uri,
+      diagnosticsForRule(diagnostics, "mapConstToAs")[0], "Replace with Effect.as")
+    const flattenEdits = await quickFixForDiagnostic(client, uri,
+      diagnosticsForRule(diagnostics, "flatMapIdentityToFlatten")[0], "Replace with Effect.flatten")
     const fixedText = applyTextEdits(text, [
       ...someEdits, ...noneEdits, ...mappingEdits, ...catchTagEdits, ...andThenEdits, ...yieldNowEdits, ...tapEdits,
+      ...asEdits, ...flattenEdits,
     ])
+    assert(/constantResult = Effect\.succeed\(1\)\.pipe\(Effect\.as\("done"\)\)/.test(fixedText),
+      "Expected constant mapping to become Effect.as after fix (published since @effect/tsgo 0.55.0–0.67.4)")
+    assert(/flattenedResult = Effect\.succeed\(Effect\.succeed\(1\)\)\.pipe\(Effect\.flatten\)/.test(fixedText),
+      "Expected identity flatMap to become Effect.flatten after fix (published since @effect/tsgo 0.55.0–0.67.4)")
     assert(fixedText.includes("export const cooperativeYield = Effect.yieldNow"), "Expected scheduler yield after fix (published since @effect/tsgo 0.52.0)")
     assert(/Effect\.tap\(\(value\) => audit\(value\)\)/.test(fixedText), "Expected tap observation after fix (published since @effect/tsgo 0.52.0)")
     assert(/Effect\.catchTag\(\s*"NotFound"/.test(fixedText), "Expected tagged recovery after fix")
@@ -789,7 +804,9 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       diagnosticsForRule(candidate, "catchIfTagToCatchTag").length === 0 &&
       diagnosticsForRule(candidate, "flatMapIgnoredParamToAndThen").length === 0 &&
       diagnosticsForRule(candidate, "effectSleepZeroToYieldNow").length === 0 &&
-      diagnosticsForRule(candidate, "flatMapToTap").length === 0)
+      diagnosticsForRule(candidate, "flatMapToTap").length === 0 &&
+      diagnosticsForRule(candidate, "mapConstToAs").length === 0 &&
+      diagnosticsForRule(candidate, "flatMapIdentityToFlatten").length === 0)
     // This workspace deliberately includes invalid examples for other diagnostics. Preserve
     // those baseline errors while proving the new rewrites introduce none of their own.
     const errorSignatures = (items) => items.filter((diagnostic) => diagnostic.severity === 1)
@@ -801,7 +818,7 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       diagnostics: messages,
       codeActionTitles,
       obsoleteSchemaImport: { severity: obsolete[0].severity, suppressionOnly: true },
-      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach", "Effect.catchTag", "Effect.andThen", "Effect.yieldNow", "Effect.tap"],
+      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach", "Effect.catchTag", "Effect.andThen", "Effect.yieldNow", "Effect.tap", "Effect.as", "Effect.flatten"],
       optInSuppressionOnly: ["preferEffectArray", "preferEffectRecord", "preferSchemaTaggedError", "apiStabilityLeak"],
       quickFixBaselineErrorCount: errorSignatures(diagnostics).length,
       executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],
@@ -1109,10 +1126,10 @@ async function main() {
   }
 
   // typescript@7.0.2 has gitHead 2bd066d87f5bafd315be9f40889d0a60b9e58e0b,
-  // matching the native backend used for the recorded @effect/tsgo@0.54.1 smoke.
+  // matching the native backend used for the recorded @effect/tsgo@0.67.4 smoke.
   // effect is pinned to the exact release current at refresh kickoff so the verifier does not drift
   // when the dist-tag advances.
-  const workspaceDependencies = ["typescript@7.0.2", "effect@4.0.5"]
+  const workspaceDependencies = ["typescript@7.0.2", "effect@4.1.2"]
   const result = {}
 
   if (only === "all" || only === "healthy") {

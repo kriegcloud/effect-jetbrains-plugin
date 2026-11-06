@@ -2,6 +2,10 @@ package dev.effect.intellij.lsp.fixall
 
 import com.intellij.codeInsight.hint.HintManager
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.WriteAction
+import com.intellij.openapi.command.CommandProcessor
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.progress.ProcessCanceledException
@@ -14,6 +18,7 @@ import com.intellij.platform.lsp.api.LspServer
 import com.intellij.platform.lsp.api.LspServerManager
 import com.intellij.platform.lsp.api.LspServerState
 import com.intellij.platform.lsp.api.customization.LspIntentionAction
+import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiFile
 import dev.effect.intellij.EffectBundle
 import dev.effect.intellij.core.logger
@@ -29,20 +34,17 @@ import org.eclipse.lsp4j.DocumentDiagnosticParams
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.TextDocumentIdentifier
+import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.WorkspaceEdit
 
 /**
  * Applies one Effect quick fix to every diagnostic of its rule in a file.
  *
- * Flow (on the EDT, inside the intention command so the whole run is one undo step):
- * 1. pull the file's current diagnostics from the Effect language server (`textDocument/diagnostic`),
- * 2. keep the ones of the same rule that no `@effect-diagnostics` directive silences,
- * 3. ask for their quick fixes in a single `textDocument/codeAction` request,
- * 4. merge the matching, non-overlapping edits ([planFixAll]) and
- * 5. write them through the platform's own LSP edit application ([LspIntentionAction]).
- *
- * Steps 1–4 run under a cancellable modal progress; the write happens only if the document did not
- * change meanwhile.
+ * [runFixAllPasses] repeats, under a cancellable modal progress: pull the file's diagnostics
+ * (`textDocument/diagnostic`), keep the rule's sites that no `@effect-diagnostics` directive silences,
+ * request their quick fixes in one `textDocument/codeAction` call, merge the matching non-overlapping
+ * edits ([planFixAll]), write them through the platform's own LSP edit application
+ * ([LspIntentionAction]), and pull again to undo any pass that introduced new errors.
  */
 @Service(Service.Level.PROJECT)
 class EffectFixAllInFileService(private val project: Project) {
@@ -50,7 +52,6 @@ class EffectFixAllInFileService(private val project: Project) {
 
     internal fun fixAllInFile(editor: Editor, psiFile: PsiFile, request: EffectFixAllRequest) {
         val virtualFile = psiFile.virtualFile ?: return
-        val document = editor.document
         val notifications = ApplicationManager.getApplication().getService(EffectNotificationService::class.java)
         val title = EffectBundle.message("fix.all.in.file.notification.title")
 
@@ -66,21 +67,19 @@ class EffectFixAllInFileService(private val project: Project) {
         }
 
         val documentId = server.getDocumentIdentifier(virtualFile)
-        val sourceText = document.text
-        val modificationStampBefore = document.modificationStamp
-        val lineIndex = EffectTextLineIndex(sourceText)
-        val fullRange = fullDocumentRange(sourceText)
+        val session = EditorFixAllSession(server, documentId, editor, psiFile, request)
 
-        val outcome = try {
+        val result = try {
             ProgressManager.getInstance().runProcessWithProgressSynchronously(
-                ThrowableComputable<Outcome, RuntimeException> {
-                    computeOutcome(server, documentId, request, sourceText, fullRange, lineIndex)
+                ThrowableComputable<EffectFixAllRunResult, RuntimeException> {
+                    runFixAllPasses(request, documentId.uri, session)
                 },
                 EffectBundle.message("fix.all.in.file.progress", request.fixTitle),
                 true,
                 project,
             )
         } catch (_: ProcessCanceledException) {
+            // Passes already applied stay; they are one undo step.
             return
         } catch (error: Exception) {
             log.warn("Effect fix-all failed for ${virtualFile.path}", error)
@@ -88,68 +87,112 @@ class EffectFixAllInFileService(private val project: Project) {
             return
         }
 
-        if (outcome.selectedDiagnostics == 0) {
-            HintManager.getInstance().showInformationHint(
-                editor,
-                EffectBundle.message("fix.all.in.file.nothing.to.fix", request.ruleDisplayName),
-            )
-            return
-        }
-
-        val plan = outcome.plan
-        if (plan.fixedDiagnostics == 0 || plan.edits.isEmpty()) {
-            notifications.warning(project, title, nothingAppliedMessage(request, outcome.selectedDiagnostics, plan))
-            return
-        }
-
-        if (document.modificationStamp != modificationStampBefore) {
-            notifications.warning(project, title, EffectBundle.message("fix.all.in.file.document.changed"))
-            return
-        }
-
-        val combined = CodeAction(EffectBundle.message("intention.fix.all.in.file.text", request.fixTitle)).also { action ->
-            action.kind = CodeActionKind.QuickFix
-            action.edit = WorkspaceEdit(mapOf(documentId.uri to plan.edits))
-        }
-        // The platform intention resolves its URI -> Document map inside isAvailable; invoke() is a
-        // silent no-op until that ran (verified against the 262 bytecode), exactly as the IDE's own
-        // intention flow calls isAvailable before invoke.
-        val applier = LspIntentionAction(server as LspClient, combined)
-        if (!applier.isAvailable(project, editor, psiFile)) {
-            notifications.warning(project, title, EffectBundle.message("fix.all.in.file.not.applicable", request.fixTitle, outcome.selectedDiagnostics))
-            return
-        }
-        applier.invoke(project, editor, psiFile)
-
         log.info(
-            "Effect fix-all applied '${request.fixTitle}' to ${plan.fixedDiagnostics} of ${outcome.selectedDiagnostics} " +
-                "'${request.ruleDisplayName}' diagnostics in ${virtualFile.name} " +
-                "(unmatched=${plan.unmatchedDiagnostics}, overlapping=${plan.overlappingDiagnostics}, unsupported=${plan.unsupportedDiagnostics})",
+            "Effect fix-all '${request.fixTitle}' on '${request.ruleDisplayName}' in ${virtualFile.name}: " +
+                "initial=${result.initialDiagnostics}, applied=${result.appliedFixes}, remaining=${result.remainingDiagnostics}, " +
+                "rejected=${result.rejectedFixes}, passes=${result.passes}",
         )
 
-        if (plan.skippedDiagnostics > 0) {
-            notifications.info(
-                project,
-                title,
-                EffectBundle.message(
-                    "fix.all.in.file.partial",
-                    request.fixTitle,
-                    plan.fixedDiagnostics,
-                    outcome.selectedDiagnostics,
-                    plan.overlappingDiagnostics,
-                    plan.unmatchedDiagnostics,
-                    plan.unsupportedDiagnostics,
-                ),
-            )
-        } else {
-            HintManager.getInstance().showInformationHint(
-                editor,
-                EffectBundle.message("fix.all.in.file.applied", request.fixTitle, plan.fixedDiagnostics),
-            )
+        when {
+            result.initialDiagnostics == 0 ->
+                HintManager.getInstance().showInformationHint(
+                    editor,
+                    EffectBundle.message("fix.all.in.file.nothing.to.fix", request.ruleDisplayName),
+                )
+            result.appliedFixes == 0 && result.rejectedFixes > 0 ->
+                notifications.warning(
+                    project,
+                    title,
+                    EffectBundle.message("fix.all.in.file.all.rejected", request.fixTitle, result.rejectedFixes),
+                )
+            result.appliedFixes == 0 ->
+                notifications.warning(
+                    project,
+                    title,
+                    nothingAppliedMessage(request, result.initialDiagnostics, result.lastEmptyPlan ?: EffectFixAllPlan.EMPTY),
+                )
+            result.remainingDiagnostics > 0 || result.rejectedFixes > 0 ->
+                notifications.info(
+                    project,
+                    title,
+                    EffectBundle.message(
+                        "fix.all.in.file.partial",
+                        request.fixTitle,
+                        result.appliedFixes,
+                        result.remainingDiagnostics,
+                        result.rejectedFixes,
+                    ),
+                )
+            else ->
+                HintManager.getInstance().showInformationHint(
+                    editor,
+                    EffectBundle.message("fix.all.in.file.applied", request.fixTitle, result.appliedFixes),
+                )
         }
     }
 
-    private class Outcome(val selectedDiagnostics: Int, val plan: EffectFixAllPlan)
+    /**
+     * Talks to the server from the progress thread and changes the document on the EDT. Every change runs
+     * in a command of one shared group, so the whole run (including rolled-back passes) is one undo step.
+     */
+    private inner class EditorFixAllSession(
+        private val server: LspServer,
+        private val documentId: TextDocumentIdentifier,
+        private val editor: Editor,
+        private val psiFile: PsiFile,
+        private val request: EffectFixAllRequest,
+    ) : EffectFixAllSession {
+        private val document = editor.document
+        private val commandGroup = Any()
+        private val commandName = EffectBundle.message("intention.fix.all.in.file.text", request.fixTitle)
+        private var expectedStamp = document.modificationStamp
+
+        override fun currentText(): String = ReadAction.compute<String, RuntimeException> { document.text }
+
+        override fun pullDiagnostics(): List<Diagnostic> = pullDiagnostics(server, documentId)
+
+        override fun requestQuickFixes(diagnostics: List<Diagnostic>): List<CodeAction> {
+            val text = currentText()
+            return requestQuickFixes(server, documentId, fullDocumentRange(text), diagnostics)
+        }
+
+        override fun apply(edits: List<TextEdit>) = onEdt {
+            val combined = CodeAction(commandName).also { action ->
+                action.kind = CodeActionKind.QuickFix
+                action.edit = WorkspaceEdit(mapOf(documentId.uri to edits))
+            }
+            // The platform intention resolves its URI -> Document map inside isAvailable; invoke() is a
+            // silent no-op until that ran (verified against the 262 bytecode), exactly as the IDE's own
+            // intention flow calls isAvailable before invoke.
+            val applier = LspIntentionAction(server as LspClient, combined)
+            if (!applier.isAvailable(project, editor, psiFile)) {
+                throw EffectFixAllServerException(
+                    EffectBundle.message("fix.all.in.file.not.applicable", request.fixTitle, edits.size),
+                )
+            }
+            command { applier.invoke(project, editor, psiFile) }
+        }
+
+        override fun restore(text: String) = onEdt {
+            command { WriteAction.run<RuntimeException> { document.setText(text) } }
+        }
+
+        private fun command(action: () -> Unit) {
+            CommandProcessor.getInstance().executeCommand(project, action, commandName, commandGroup)
+        }
+
+        /** Refuses to write over edits the user made while the run was in progress. */
+        private fun onEdt(action: () -> Unit) {
+            ApplicationManager.getApplication().invokeAndWait({
+                if (document.modificationStamp != expectedStamp) {
+                    throw EffectFixAllServerException(EffectBundle.message("fix.all.in.file.document.changed"))
+                }
+                action()
+                PsiDocumentManager.getInstance(project).commitDocument(document)
+                expectedStamp = document.modificationStamp
+            }, ModalityState.defaultModalityState())
+        }
+    }
 
     private fun nothingAppliedMessage(request: EffectFixAllRequest, selected: Int, plan: EffectFixAllPlan): String =
         when {
@@ -166,26 +209,6 @@ class EffectFixAllInFileService(private val project: Project) {
                     plan.overlappingDiagnostics,
                 )
         }
-
-    private fun computeOutcome(
-        server: LspServer,
-        documentId: TextDocumentIdentifier,
-        request: EffectFixAllRequest,
-        sourceText: String,
-        fullRange: Range,
-        lineIndex: EffectTextLineIndex,
-    ): Outcome {
-        val published = pullDiagnostics(server, documentId)
-        val selected = selectFixAllDiagnostics(published, sourceText, request.ruleKey)
-        if (selected.isEmpty()) {
-            return Outcome(0, EffectFixAllPlan.EMPTY)
-        }
-
-        ProgressManager.checkCanceled()
-        val codeActions = requestQuickFixes(server, documentId, fullRange, selected)
-        val plan = planFixAll(request, documentId.uri, selected, codeActions, lineIndex::rangeOf)
-        return Outcome(selected.size, plan)
-    }
 
     /**
      * The platform's synchronous request helper reports timeouts, server errors, and a stopped server

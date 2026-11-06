@@ -78,13 +78,42 @@ class EffectFixAllCapableQuickFixTest : BasePlatformTestCase() {
         val effectByCodeOnly = Diagnostic(range(), "no rule suffix").also { it.code = Either.forRight(377100) }
 
         val wrapped = EffectLspDiagnosticsSupport.withFixAllOptions(effectDiagnostic(), effectFixes)
-        assertEquals(2, wrapped.size)
-        assertTrue(wrapped.all { it is EffectFixAllCapableQuickFix })
-        assertEquals(listOf("a", "b"), wrapped.map { it.text })
+        assertEquals(4, wrapped.size)
+        assertEquals(
+            listOf(EffectFixAllCapableQuickFix::class, EffectFixAllInFileQuickFix::class, EffectFixAllCapableQuickFix::class, EffectFixAllInFileQuickFix::class),
+            wrapped.map { it::class },
+        )
+        assertEquals(
+            listOf("a", "Fix all 'a' problems in file", "b", "Fix all 'b' problems in file"),
+            wrapped.map { it.text },
+        )
 
-        assertTrue(EffectLspDiagnosticsSupport.withFixAllOptions(effectByCodeOnly, effectFixes).all { it is EffectFixAllCapableQuickFix })
+        val byCode = EffectLspDiagnosticsSupport.withFixAllOptions(effectByCodeOnly, effectFixes)
+        assertTrue(byCode.all { it is EffectFixAllCapableQuickFix || it is EffectFixAllInFileQuickFix })
         assertSame(typeScriptFixes, EffectLspDiagnosticsSupport.withFixAllOptions(typeScriptDiagnostic, typeScriptFixes))
         assertEmpty(EffectLspDiagnosticsSupport.withFixAllOptions(effectDiagnostic(), emptyList()))
+    }
+
+    fun testTopLevelFixAllEntryResolvesFromThePairedFixAndSkipsDirectiveFixes() {
+        val paired = FakeQuickFix("")
+        val entry = EffectFixAllInFileQuickFix(paired, effectDiagnostic())
+        val editor = myFixture.configureByText("index.ts", "export const x = 1\n").let { myFixture.editor }
+        val file = myFixture.file
+
+        // An unresolved lazy placeholder offers nothing yet.
+        assertFalse(entry.isAvailable(project, editor, file))
+        assertEquals("Fix all Effect problems in file", entry.text)
+
+        paired.title = "Replace with Effect.as"
+        assertTrue(entry.isAvailable(project, editor, file))
+        assertEquals("Fix all 'Replace with Effect.as' problems in file", entry.text)
+        assertFalse(entry.startInWriteAction())
+        // Asking the entry resolves the paired placeholder first.
+        assertTrue(paired.availabilityChecks > 0)
+
+        paired.title = "Disable mapConstToAs for this line"
+        assertFalse(entry.isAvailable(project, editor, file))
+        assertFalse(entry.isAvailable(project, null, file))
     }
 
     private fun effectDiagnostic(): Diagnostic =
@@ -114,12 +143,16 @@ class EffectFixAllCapableQuickFixTest : BasePlatformTestCase() {
 
     private class FakeQuickFix(var title: String) : IntentionAction {
         var invocations = 0
+        var availabilityChecks = 0
 
         override fun getText(): String = title
 
         override fun getFamilyName(): String = "family"
 
-        override fun isAvailable(project: Project, editor: Editor?, file: PsiFile?): Boolean = true
+        override fun isAvailable(project: Project, editor: Editor?, file: PsiFile?): Boolean {
+            availabilityChecks += 1
+            return true
+        }
 
         override fun invoke(project: Project, editor: Editor?, file: PsiFile?) {
             invocations += 1

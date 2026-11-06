@@ -112,7 +112,7 @@ async function main() {
     return
   }
   assert.ok(args.length === 0 || (args.length === 2 && args[0] === "--effect"), "Usage: node scripts/verify-instrumentation.mjs [--effect 4.0.0-rc.112,4.0.5]")
-  const versions = args.length ? args[1].split(",") : ["4.0.0-rc.112", "4.0.0-rc.115", "4.0.1", "4.0.5"]
+  const versions = args.length ? args[1].split(",") : ["4.0.0-rc.112", "4.0.0-rc.115", "4.0.1", "4.0.5", "4.1.2"]
   assert.ok(versions.every((version) => /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(version)), "Use exact Effect versions")
   const results = []
   for (const version of versions) {

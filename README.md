@@ -2,7 +2,7 @@
 
 <!-- Plugin description -->
 JetBrains plugin for `@effect/tsgo` language-server support and Effect runtime Dev Tools.
-It targets the WebStorm `2026.2` stable and `2026.3` EAP platform lines, launches `@effect/tsgo` directly with `--lsp --stdio`,
+It targets the WebStorm `2026.2` stable and `2026.3` (GA) platform lines, launches `@effect/tsgo` directly with `--lsp --stdio`,
 and ships core LSP integration plus local runtime Dev Tools. First-run binary setup is manual by default;
 managed npm downloads are available when explicitly configured. Debugger surfaces include attach/setup
 guidance, best-effort snapshot trees for paused instrumented sessions, and opt-in Node.js instrumentation
@@ -39,14 +39,14 @@ The current plugin baseline is:
 
 | IDE | Status | Notes |
 | --- | --- | --- |
-| WebStorm `2026.2` (stable) | Primary target | The compile target is the pinned `262.10968.77` stable build; `runIde` and verifier coverage run against it. |
-| WebStorm `2026.3` EAP | Primary target | Plugin Verifier and the `runIdeVerifierWebStorm` sandbox target the pinned `263.7031.26` EAP build. |
-| IntelliJ IDEA Ultimate `2026.3` EAP | Secondary target | Plugin Verifier targets the pinned `263.7031.23` IDEA EAP build. |
+| WebStorm `2026.2` (stable) | Primary target | The compile target is the pinned `262.11879.105` stable build; `runIde` and verifier coverage run against it. |
+| WebStorm `2026.3` (GA) | Primary target | Plugin Verifier and the `runIdeVerifierWebStorm` sandbox target the pinned `263.7307.202` GA build. |
+| IntelliJ IDEA Ultimate `2026.3` (GA) | Secondary target | Plugin Verifier targets the pinned `263.7307.200` IDEA GA build. |
 | Unified PyCharm `2025.1+` | Later target | Not a current compatibility promise. |
 | IntelliJ IDEA Community Edition | Unsupported | JetBrains public LSP support is out of scope here. |
 | Android Studio | Unsupported | Not a supported target for this plugin. |
 
-EAP verifier pins must track the newest build because bundled libraries can change within a platform
+Verifier pins must track the current release because bundled libraries can change within a platform
 line. WebStorm `263.4732.34` changed the lsp4j diagnostic-message API and exposed a highlighting
 failure in 0.1.6; 0.1.7 adds a reflection-based accessor for both library versions. The
 [refresh report](UPSTREAM_REFRESH_REPORT.md) records the actual verification results and remaining
@@ -116,11 +116,12 @@ The shipped artifact is intended for the WebStorm/IntelliJ Platform `262.*` and 
 real-binary LSP smoke exists for the checked-in fixtures; full manual IDE/editor smoke and broader
 semantic coverage remain follow-up validation items.
 
-The recorded native LSP smoke uses `@effect/tsgo@0.54.1`, `typescript@7.0.2`, and
-`effect@4.0.5`. New cases apply the `effectSleepZeroToYieldNow` / `flatMapToTap` fixes, check the
-default-on `schemaClassMissingBrand`, `schemaClassObjectLiteral`, and `errorPayloadShadowsName`
-findings, and enable the opt-in `preferEffectArray`, `preferEffectRecord`, `preferSchemaTaggedError`,
-and `apiStabilityLeak` rules. Directive completion covers all 129 published rules.
+The recorded native LSP smoke uses `@effect/tsgo@0.67.4`, `typescript@7.0.2`, and
+`effect@4.1.2`. New cases apply the `Replace with Effect.as` (`mapConstToAs`) and
+`Replace with Effect.flatten` (`flatMapIdentityToFlatten`) fixes. All five lanes pass against the
+packaged stable and beta TypeScript compilers and the Effect-patched Rust TypeScript port, tsrs.
+tsrs can be tried through `MANUAL` mode; it is not a managed selection. Directive completion covers
+all 147 published rules, including `preferEffectString`.
 
 The instrumentation verifier reuses the repository's
 [`runtime smoke app`](src/test/testData/fixtures/runtime/smoke-app/) to check real Effect runtimes

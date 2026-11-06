@@ -100,6 +100,11 @@ export const observed = Effect.succeed(1).pipe(
   Effect.flatMap((value) => audit(value).pipe(Effect.as(value)))
 )
 
+// 0.55.0–0.67.x default-on suggestions with quick fixes.
+export const constantResult = Effect.succeed(1).pipe(Effect.map(() => "done"))
+
+export const flattenedResult = Effect.succeed(Effect.succeed(1)).pipe(Effect.flatMap((inner) => inner))
+
 // 0.52.0 schemaClassMissingBrand fires on `Point` above; a branded class is the control, and the
 // 0.54.0 schemaClassObjectLiteral warning fires on the spread copy.
 export class BrandedPoint extends Schema.Class<BrandedPoint, { readonly brand: unique symbol }>("BrandedPoint")({
