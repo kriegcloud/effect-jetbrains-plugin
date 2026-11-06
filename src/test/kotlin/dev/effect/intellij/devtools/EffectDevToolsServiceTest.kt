@@ -242,14 +242,68 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         assertEquals(listOf("9 (mean)", "504.5 (mean)"), service.currentState().clients.first().metrics.map { it.summary })
     }
 
+    fun testSeparateMessagesCoalesceBeforeTraceSnapshotConstructionAndExportFlushes() = withRuntime { service, client ->
+        val queue = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+        val originalScheduler = service.schedulePublication
+        service.schedulePublication = { queue += it }
+        val baseline = service.traceSnapshotBuilds
+        // Reuse the connection's response barrier: a Ping after the events is processed last.
+        val received = CountDownLatch(1)
+        val port = service.currentState().port
+        val second = createClient(port, CountDownLatch(1)) { message ->
+            if (message.contains("Pong")) received.countDown()
+        }
+        assertTrue(second.connectBlocking(5, TimeUnit.SECONDS))
+        try {
+            waitForCondition { service.currentState().clients.size == 2 }
+            val secondId = service.currentState().clients.last().id
+            service.selectActiveClient(clientId = secondId)
+            val before = service.traceSnapshotBuilds
+            repeat(100) { id ->
+                second.send("""{"_tag":"SpanEvent","spanId":"target","name":"event$id","startTime":"$id"}""" + "\n")
+            }
+            second.send("""{"_tag":"Span","spanId":"target","traceId":"t","name":"target"}""" + "\n")
+            second.send("""{"_tag":"Ping"}""" + "\n")
+            assertTrue(received.await(5, TimeUnit.SECONDS))
+            assertEquals(1, queue.size)
+            assertEquals(before, service.traceSnapshotBuilds)
+            assertNotNull(service.exportActiveTracer()) // Explicitly flushes ingestion before serialization.
+            assertEquals(before + 1, service.traceSnapshotBuilds)
+            val events = service.currentState().clients.first { it.id == secondId }.rootSpans.single().events
+            assertEquals(100, events.size)
+            assertEquals("event99", events.last().name)
+            queue.single()()
+            assertEquals(before + 1, service.traceSnapshotBuilds)
+        } finally {
+            service.schedulePublication = originalScheduler
+            second.closeBlocking()
+        }
+        assertTrue(service.traceSnapshotBuilds >= baseline)
+    }
+
     fun testTraceRetentionIsBoundedAndMetricsReuseTraceSnapshot() = withRuntime { service, client ->
         val publications = java.util.concurrent.atomic.AtomicInteger()
-        service.addListener({ publications.incrementAndGet() }, testRootDisposable)
+        val callbackEntered = CountDownLatch(1)
+        val releaseCallback = CountDownLatch(1)
+        val callbackCompleted = CountDownLatch(1)
         val count = 10_000
+        service.addListener({ state ->
+            if (state.clients.firstOrNull()?.droppedSpans == count - EffectDevToolsService.MAX_RETAINED_SPANS) {
+                callbackEntered.countDown()
+                releaseCallback.await(5, TimeUnit.SECONDS)
+                publications.incrementAndGet()
+                callbackCompleted.countDown()
+            }
+        }, testRootDisposable)
         client.send((0 until count).joinToString("\n", postfix = "\n") { id ->
             """{"_tag":"Span","spanId":"s$id","traceId":"t$id","name":"span$id","status":{"_tag":"Ended","endTime":"1"}}"""
         })
         waitForCondition { service.currentState().clients.firstOrNull()?.droppedSpans == count - EffectDevToolsService.MAX_RETAINED_SPANS }
+        try {
+            assertTrue(callbackEntered.await(5, TimeUnit.SECONDS))
+            assertEquals(0, publications.get()) // State is visible while the callback is blocked.
+        } finally { releaseCallback.countDown() }
+        assertTrue(callbackCompleted.await(5, TimeUnit.SECONDS))
         val retained = service.currentState().clients.first()
         assertEquals(EffectDevToolsService.MAX_RETAINED_SPANS, retained.rootSpans.size)
         assertEquals(1, publications.get())
@@ -287,9 +341,13 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         )
         val service = project.getService(EffectDevToolsService::class.java)
         service.startServer()
+        val connectedPublication = CountDownLatch(1)
+        service.addListener({ if (it.clients.size == 1) connectedPublication.countDown() }, testRootDisposable)
         val client = createConnectedClient(port)
         try {
-            waitForCondition { service.currentState().clients.size == 1 }
+            assertTrue(connectedPublication.await(5, TimeUnit.SECONDS))
+            // Acquiring the publication lock also waits for the entire connection callback to return.
+            service.selectActiveClient(clientId = service.currentState().clients.single().id)
             test(service, client)
         } finally {
             client.closeBlocking()

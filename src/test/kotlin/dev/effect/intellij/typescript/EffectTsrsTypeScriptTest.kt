@@ -62,7 +62,6 @@ class EffectTsrsTypeScriptTest : BasePlatformTestCase() {
         assertEquals(
             listOf(
                 "@tsrs/linux-x64-gnu" to TsrsSource.WORKSPACE_TSRS_PACKAGE,
-                "@tsrs/linux-x64-musl" to TsrsSource.WORKSPACE_TSRS_PACKAGE,
                 "tsgo-linux-x64" to TsrsSource.WORKSPACE_EFFECT_TSGO_PACKAGE,
                 "0.67.4" to TsrsSource.MANAGED_EFFECT_TSGO_CACHE,
                 "0.9.0" to TsrsSource.MANAGED_EFFECT_TSGO_CACHE,
@@ -84,6 +83,17 @@ class EffectTsrsTypeScriptTest : BasePlatformTestCase() {
         val candidate = EffectTsrsLocator.find(workspace, null, TsrsPlatform("linux", "x64", musl = true)).first()
 
         assertTrue(candidate.executable.toString().replace('\\', '/').contains("@tsrs/linux-x64-musl"))
+    }
+
+    fun testIncompatibleLibcFallsBackToEffectArtifact() {
+        for (musl in listOf(false, true)) {
+            val workspace = root.resolve("fallback-$musl")
+            tsrsPackage(workspace.resolve("node_modules/@tsrs/linux-x64-${if (musl) "gnu" else "musl"}"))
+            val fallback = artifact(workspace.resolve("node_modules/@effect/tsgo-linux-x64/artifacts/tsrs/0.22.0-ts7.1.0-beta"))
+            val candidates = EffectTsrsLocator.find(workspace, null, TsrsPlatform("linux", "x64", musl))
+            assertEquals(1, candidates.size)
+            assertEquals(fallback.resolve("tsrs"), candidates.first().executable)
+        }
     }
 
     fun testRebuildingReplacesThePackageWithoutLeavingStagingDirectories() {
@@ -172,7 +182,10 @@ class EffectTsrsTypeScriptTest : BasePlatformTestCase() {
         var restarts = 0
         if (previousAction != null) manager.unregisterAction(actionId)
         manager.registerAction(actionId, object : com.intellij.openapi.actionSystem.AnAction() {
-            override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) { restarts++ }
+            override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
+                assertSame(project, e.project)
+                restarts++
+            }
         })
         try {
             val install = artifact(root.resolve("tsrs-switch"))
@@ -197,12 +210,62 @@ class EffectTsrsTypeScriptTest : BasePlatformTestCase() {
             assertEquals(com.intellij.lang.typescript.compiler.TypeScriptCompilerSettings.TypeScriptCompilerVersionType.SERVICE_DIRECTORY, settings.versionType)
             assertTrue(settings.useService)
             assertEquals(1, restarts)
+            result = null
+            service.switchToTsrs(
+                preparePackage = { candidate to root.resolve("should-not-activate") },
+                beforeApply = { throw com.intellij.openapi.options.ConfigurationException("Pending TypeScript settings are invalid") },
+                reportResult = {}, onDone = { result = it },
+            )
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Validation failure", { result != null }, 20)
+            assertTrue(result!!.isFailure)
+            assertEquals(FileUtil.toSystemIndependentName(expected.toString()), settings.typeScriptServiceDirectory)
+            assertEquals(1, restarts)
         } finally {
             manager.unregisterAction(actionId)
             if (previousAction != null) manager.registerAction(actionId, previousAction)
             settings.versionType = previousType
             settings.typeScriptServiceDirectory = previousDirectory
             settings.useService = previousUseService
+        }
+    }
+
+    fun testTypeScriptRestartUsesOriginatingProjectAfterFocusChanges() {
+        val settings = com.intellij.lang.typescript.compiler.TypeScriptCompilerSettings.getSettings(project)
+        val oldDirectory = settings.typeScriptServiceDirectory
+        val oldType = settings.versionType
+        val oldUse = settings.useService
+        val manager = com.intellij.openapi.actionSystem.ActionManager.getInstance()
+        val actionId = "TypeScript.Restart.Service"
+        val previous = manager.getAction(actionId)
+        if (previous != null) manager.unregisterAction(actionId)
+        var restarts = 0
+        manager.registerAction(actionId, object : com.intellij.openapi.actionSystem.AnAction() {
+            override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
+                assertSame(project, e.project)
+                restarts++
+            }
+        })
+        val ambient = com.intellij.ide.DataManager.getInstance() as com.intellij.ide.impl.HeadlessDataManager
+        val otherProject = com.intellij.openapi.project.ProjectManager.getInstance().defaultProject
+        assertNotSame(project, otherProject)
+        val candidate = TsrsCandidate(root.resolve("tsrs"), "7.1.0", "0.30.0-ts7.1.0", TsrsSource.WORKSPACE_TSRS_PACKAGE, false)
+        try {
+            for ((index, focused) in listOf(otherProject, null).withIndex()) {
+                ambient.setTestDataProvider({ id -> if (com.intellij.openapi.actionSystem.CommonDataKeys.PROJECT.`is`(id)) focused else null }, testRootDisposable)
+                assertSame(focused, com.intellij.openapi.actionSystem.CommonDataKeys.PROJECT.getData(ambient.dataContext))
+                var done = false
+                EffectWebStormTypeScriptService(project).switchToTsrs(
+                    preparePackage = { candidate to root.resolve("package-$index") }, reportResult = {},
+                    onDone = { assertTrue(it.isSuccess); done = true },
+                )
+                com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Originating project restart", { done && restarts == index + 1 }, 20)
+            }
+        } finally {
+            manager.unregisterAction(actionId)
+            if (previous != null) manager.registerAction(actionId, previous)
+            settings.typeScriptServiceDirectory = oldDirectory
+            settings.versionType = oldType
+            settings.useService = oldUse
         }
     }
 

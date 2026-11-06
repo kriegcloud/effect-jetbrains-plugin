@@ -120,6 +120,11 @@ intellijPlatformTesting {
                 filter {
                     includeTestsMatching("dev.effect.intellij.lsp.EffectDiagnosticDirectivesTest")
                     includeTestsMatching("dev.effect.intellij.lsp.fixall.*")
+                    includeTestsMatching("dev.effect.intellij.lsp.EffectLspStatusOwnershipTest")
+                    includeTestsMatching("dev.effect.intellij.lsp.EffectLspCoreRegressionTest")
+                    includeTestsMatching("dev.effect.intellij.lsp.EffectDiagnosticDirectivePlatformCompletionTest")
+                    includeTestsMatching("dev.effect.intellij.schema.EffectJsonSchemaProviderTest")
+                    includeTestsMatching("dev.effect.intellij.typescript.EffectTsrsTypeScriptTest")
                 }
             }
         }

@@ -89,6 +89,9 @@ internal class EffectProjectSettingsComponent(
     private val discoverTypeScript: () -> EffectWebStormTypeScriptService.CurrentState = {
         EffectWebStormTypeScriptService.getInstance(project).currentState()
     },
+    private val switchTypeScript: (() -> Unit, (Result<dev.effect.intellij.typescript.TsrsCandidate>) -> Unit) -> Unit = { before, done ->
+        EffectWebStormTypeScriptService.getInstance(project).useTsrsForWebStormTypeScript(before, done)
+    },
     private val choosePackage: (FileChooserDescriptor) -> com.intellij.openapi.vfs.VirtualFile? = {
         FileChooser.chooseFile(it, project, null)
     },
@@ -164,18 +167,23 @@ internal class EffectProjectSettingsComponent(
     }
 
     private fun useTsrsForWebStormTypeScript() {
+        val typeScriptPage = Settings.KEY.getData(DataManager.getInstance().getDataContext(panel))
+            ?.find(EffectWebStormTypeScriptService.TYPESCRIPT_CONFIGURABLE_ID)
         webStormTypeScriptStatus.text = "Looking for tsrs…"
-        EffectWebStormTypeScriptService.getInstance(project).useTsrsForWebStormTypeScript { result ->
-            if (disposed || project.isDisposed) return@useTsrsForWebStormTypeScript
+        switchTypeScript({
+            // Apply pending controls immediately before activation on the EDT. Validation failure
+            // aborts activation, and reset below retains all unrelated edits in the dialog.
+            if (disposed || project.isDisposed) throw ConfigurationException("Settings page was closed.")
+            if (typeScriptPage?.isModified == true) typeScriptPage.apply()
+        }, done@{ result ->
+            if (disposed || project.isDisposed) return@done
             refreshWebStormTypeScriptStatus()
             if (result.isSuccess) {
                 // The TypeScript page of this Settings dialog still shows the old package; OK or Apply
                 // would write that stale value back. Reload it from the settings just changed.
-                Settings.KEY.getData(DataManager.getInstance().getDataContext(panel))
-                    ?.find(EffectWebStormTypeScriptService.TYPESCRIPT_CONFIGURABLE_ID)
-                    ?.reset()
+                typeScriptPage?.reset()
             }
-        }
+        })
     }
 
     fun dispose() {

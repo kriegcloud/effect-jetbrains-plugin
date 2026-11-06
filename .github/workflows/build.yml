@@ -139,7 +139,11 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: qodana-reports
-          path: build/reports/qodana
+          # The Gradle Qodana task writes its SARIF and HTML report here, not under build/reports.
+          path: |
+            build/qodana/results/qodana.sarif.json
+            build/qodana/results/report
+          if-no-files-found: warn
 
   workflowTests:
     name: Release workflow regression tests
@@ -190,7 +194,7 @@ jobs:
           path: build/reports/runtime
 
   compatibility:
-    name: WebStorm 263 diagnostic compatibility
+    name: WebStorm 263 platform compatibility
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

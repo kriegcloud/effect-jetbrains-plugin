@@ -102,7 +102,10 @@ object EffectTsrsLocator {
         val prefix = "${platform.os}-${platform.arch}"
         return safeList(scopeRoot)
             .filter { it.isDirectory() && (it.name == prefix || it.name.startsWith("$prefix-")) }
-            // The build matching the host C library first: glibc normally, musl on musl hosts (Alpine).
+            // A binary for the other libc cannot run even when it has executable permissions.
+            .filter { platform.os != "linux" || it.name == prefix ||
+                it.name == "$prefix-${if (platform.musl) "musl" else "gnu"}" }
+            // Prefer the explicitly matching build to a libc-neutral package.
             .sortedBy { if (it.name.contains("musl") == platform.musl) 0 else 1 }
             .mapNotNull { packageRoot ->
                 val tsrsVersion = readVersion(packageRoot.resolve("package.json")) ?: return@mapNotNull null

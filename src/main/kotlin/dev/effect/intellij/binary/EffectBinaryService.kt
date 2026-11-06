@@ -252,7 +252,8 @@ class EffectBinaryService {
         val libRoot = packageRoot.resolve("lib")
         val marker = EffectJson.mapper.createObjectNode()
         marker.put("version", version)
-        marker.put("schemaVersion", 2)
+        // Schema 3 also inventories tsrs and its libraries; older markers require one reinstall.
+        marker.put("schemaVersion", 3)
         val files = marker.putObject("files")
         platform.packagedFileNames.forEach { fileName ->
             val file = libRoot.resolve(fileName)
@@ -260,12 +261,14 @@ class EffectBinaryService {
                 files.put(fileName, Files.size(file))
             }
         }
-        findArtifactTypeScriptBinaries(packageRoot, platform).forEach { file ->
+        val artifactBinaries = findArtifactTypeScriptBinaries(packageRoot, platform) +
+            findArtifactBinaries(packageRoot, platform, "tsrs", "tsrs")
+        artifactBinaries.forEach { file ->
             val key = packageRoot.relativize(file).joinToString("/")
             files.put(key, Files.size(file))
         }
         val compilerDirectories = (platform.packagedBinaryNames.map(libRoot::resolve).filter(Files::isRegularFile) +
-            findArtifactTypeScriptBinaries(packageRoot, platform)).map { it.parent }.distinct()
+            artifactBinaries).map { it.parent }.distinct()
         compilerDirectories.forEach { directory ->
             Files.newDirectoryStream(directory, "*.d.ts").use { libraries ->
                 libraries.filter(Files::isRegularFile).forEach { file ->
@@ -277,15 +280,23 @@ class EffectBinaryService {
         Files.writeString(versionRoot.resolve(INSTALL_COMPLETE_MARKER), EffectJson.mapper.writeValueAsString(marker))
     }
 
-    private fun findArtifactTypeScriptBinaries(packageRoot: Path, platform: PlatformPackage): List<Path> {
-        val typescriptArtifacts = packageRoot.resolve("artifacts").resolve("typescript")
-        if (!Files.isDirectory(typescriptArtifacts)) {
+    private fun findArtifactTypeScriptBinaries(packageRoot: Path, platform: PlatformPackage): List<Path> =
+        findArtifactBinaries(packageRoot, platform, "typescript", "tsc")
+
+    private fun findArtifactBinaries(
+        packageRoot: Path,
+        platform: PlatformPackage,
+        component: String,
+        binaryName: String,
+    ): List<Path> {
+        val artifacts = packageRoot.resolve("artifacts").resolve(component)
+        if (!Files.isDirectory(artifacts)) {
             return emptyList()
         }
-        return Files.newDirectoryStream(typescriptArtifacts).use { versions ->
+        return Files.newDirectoryStream(artifacts).use { versions ->
             versions
                 .filter { Files.isDirectory(it) }
-                .map { it.resolve(platform.executableName("tsc")) }
+                .map { it.resolve(platform.executableName(binaryName)) }
                 .filter { Files.isRegularFile(it) }
                 .sortedBy(Path::toString)
         }
@@ -303,13 +314,16 @@ class EffectBinaryService {
 
         val marker = EffectJson.mapper.readTree(Files.readString(markerPath))
         val files = marker.path("files")
-        if (marker.path("schemaVersion").asInt() != 2 || marker.path("version").asText() != version || !files.isObject) {
+        if (marker.path("schemaVersion").asInt() != 3 || marker.path("version").asText() != version || !files.isObject) {
             return@runCatching false
         }
 
         val installedFileNames = files.properties().asSequence().map { it.key }.toSet()
         if (installedFileNames.isEmpty() ||
-            installedFileNames.any { it !in platform.packagedFileNames && !platform.isArtifactTypeScriptKey(it) && !isDeclarationLibraryKey(it) }
+            installedFileNames.any {
+                it !in platform.packagedFileNames && !platform.isArtifactTypeScriptKey(it) &&
+                    !platform.isArtifactTsrsKey(it) && !isDeclarationLibraryKey(it)
+            }
         ) {
             return@runCatching false
         }
@@ -708,7 +722,7 @@ class EffectBinaryService {
         val segments = key.split('/')
         return segments.none { it == "." || it == ".." || it.isBlank() || '\\' in it } &&
             segments.last().endsWith(".d.ts") &&
-            (segments.size == 1 || (segments.size == 4 && segments[0] == "artifacts" && segments[1] == "typescript"))
+            (segments.size == 1 || (segments.size == 4 && segments[0] == "artifacts" && segments[1] in setOf("typescript", "tsrs")))
     }
 
     private fun <T> Lock.withCancellableLock(action: () -> T): T {
@@ -846,13 +860,17 @@ private data class PlatformPackage(
             .toSet()
 
     /** Install-marker key for a component-manifest executable: `artifacts/typescript/<version>/tsc`. */
-    fun isArtifactTypeScriptKey(key: String): Boolean {
+    fun isArtifactTypeScriptKey(key: String): Boolean = isArtifactKey(key, "typescript", "tsc")
+
+    fun isArtifactTsrsKey(key: String): Boolean = isArtifactKey(key, "tsrs", "tsrs")
+
+    private fun isArtifactKey(key: String, component: String, binaryName: String): Boolean {
         val segments = key.split('/')
         return segments.size == 4 &&
+            segments.none { it == "." || it == ".." || it.isBlank() || '\\' in it } &&
             segments[0] == "artifacts" &&
-            segments[1] == "typescript" &&
-            segments[2].isNotBlank() &&
-            segments[3] == executableName("tsc")
+            segments[1] == component &&
+            segments[3] == executableName(binaryName)
     }
 }
 

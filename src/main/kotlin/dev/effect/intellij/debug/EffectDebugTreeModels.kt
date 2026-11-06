@@ -14,6 +14,7 @@ data class EffectDebugTreeEntry(
     val location: EffectSourceLocation? = null,
     val fiberId: String? = null,
     val children: List<EffectDebugTreeEntry> = emptyList(),
+    val inspectionKey: String = title,
 ) {
     val copyText: String
         get() = detail.ifBlank { title }
@@ -33,6 +34,7 @@ object EffectDebugTreeModels {
                 add(
                     EffectDebugTreeEntry(
                         title = entry.tag,
+                        inspectionKey = entry.tag,
                         detail = entry.value.formatDebugValue(),
                         children = entry.value.children.map(::valueEntry),
                     ),
@@ -75,6 +77,7 @@ object EffectDebugTreeModels {
                 add(
                     EffectDebugTreeEntry(
                         title = fiber.fiberTitle(),
+                        inspectionKey = fiber.id,
                         detail = fiber.formatDebugFiber(),
                         fiberId = fiber.id.takeIf { fiber.isInterruptible && !fiber.isInterrupted },
                         children = buildList {
@@ -116,6 +119,7 @@ object EffectDebugTreeModels {
     private fun spanEntry(span: EffectDebugSpanEntry): EffectDebugTreeEntry =
         EffectDebugTreeEntry(
             title = span.name,
+            inspectionKey = "${span.traceId}:${span.spanId}",
             detail = span.formatDebugSpan(),
             location = span.toSourceLocation(),
             children = span.attributes.map { attribute -> EffectDebugTreeEntry(title = attribute, detail = attribute) },
@@ -124,6 +128,7 @@ object EffectDebugTreeModels {
     private fun valueEntry(value: EffectDebugValueSnapshot): EffectDebugTreeEntry =
         EffectDebugTreeEntry(
             title = value.valueTitle(),
+            inspectionKey = value.label,
             detail = value.formatDebugValue(),
             children = value.children.map(::valueEntry),
         )

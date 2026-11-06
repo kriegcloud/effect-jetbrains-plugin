@@ -21,9 +21,10 @@ class EffectJsonSchemaProviderFactory : JsonSchemaProviderFactory {
             FilenameIndex.getVirtualFilesByName("jsconfig.json", scope) +
             listOfNotNull(project.guessProjectDir()?.findChild("tsconfig.json"), project.guessProjectDir()?.findChild("jsconfig.json")))
             .distinct()
+        project.getService(EffectSchemaService::class.java).observeConfigs(files)
         return files.map { config ->
             object : JsonSchemaFileProvider {
-                override fun isAvailable(file: VirtualFile): Boolean = file == config
+                override fun isAvailable(file: VirtualFile): Boolean = file == config && file.isValid && EffectSchemaFiles.isConfig(file)
                 override fun getName(): String = "Effect tsgo (${config.presentableUrl})"
                 override fun getSchemaFile(): VirtualFile? = EffectSchemaFiles.nearest(config.parent)
                     ?: JsonSchemaProviderFactory.getResourceFile(EffectJsonSchemaProviderFactory::class.java, EffectOptionSchema.RESOURCE)

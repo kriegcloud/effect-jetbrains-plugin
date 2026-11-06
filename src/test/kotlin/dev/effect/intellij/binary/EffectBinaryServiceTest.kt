@@ -256,14 +256,16 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         assertEquals("latest-lib", Files.readString(resolution.binaryPath.resolveSibling("lib.d.ts")))
     }
 
-    fun testManagedLibrariesAreRepairedAfterDeletionAndTruncation() {
+    fun testManagedLibrariesAndTsrsAreRepairedAfterDeletionAndTruncation() {
         writeWorkspacePackage("typescript", "7.0.2", STABLE_TYPESCRIPT_HEAD)
         val downloads = AtomicInteger()
-        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, tarballRequests = downloads)
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, tarballRequests = downloads, includeBetaAndTsrs = true)
         val initial = resolveLatest()
         val packageRoot = requireNotNull(initial.cacheDirectory).resolve("package")
         val libraries = listOf(
             packageRoot.resolve("lib/lib.d.ts"),
+            packageRoot.resolve("artifacts/tsrs/0.22.0-ts7.1.0-beta/${if (SystemInfo.isWindows) "tsrs.exe" else "tsrs"}"),
+            packageRoot.resolve("artifacts/tsrs/0.22.0-ts7.1.0-beta/lib.d.ts"),
             initial.binaryPath.resolveSibling("lib.d.ts"),
             initial.binaryPath.resolveSibling("lib.es5.d.ts"),
         )
@@ -297,6 +299,29 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         resolveLatest()
         resolveLatest()
         assertEquals(2, downloads.get())
+    }
+
+    fun testManagedTsrsMarkerUpgradeReinstallsOnlyOnce() {
+        val downloads = AtomicInteger()
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, tarballRequests = downloads, includeBetaAndTsrs = true)
+        writeWorkspacePackage("typescript", "7.0.2", STABLE_TYPESCRIPT_HEAD)
+        val initial = resolveLatest()
+        val versionRoot = requireNotNull(initial.cacheDirectory)
+        val markerPath = versionRoot.resolve(".install-complete")
+        val marker = ObjectMapper().readTree(Files.readString(markerPath)) as ObjectNode
+        marker.put("schemaVersion", 2)
+        val files = marker.path("files") as ObjectNode
+        files.properties().map { it.key }.filter { it.startsWith("artifacts/tsrs/") }.forEach(files::remove)
+        Files.writeString(markerPath, marker.toString())
+        // An old inventory must be migrated even if the entire untracked tsrs tree is already gone.
+        versionRoot.resolve("package/artifacts/tsrs").toFile().deleteRecursively()
+
+        resolveLatest()
+        resolveLatest()
+
+        assertEquals(2, downloads.get())
+        assertEquals(3, ObjectMapper().readTree(Files.readString(markerPath)).path("schemaVersion").asInt())
+        assertEquals("tsrs-lib", Files.readString(versionRoot.resolve("package/artifacts/tsrs/0.22.0-ts7.1.0-beta/lib.d.ts")))
     }
 
     fun testManagedMetadataHeaderDeadlineReleasesLocks() = checkFailedTransfer("headers")

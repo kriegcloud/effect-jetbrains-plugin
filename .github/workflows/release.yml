@@ -40,6 +40,11 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
 
+      - name: Validate release tag against plugin version
+        env:
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+        run: python3 .github/scripts/release-version.py "$RELEASE_VERSION"
+
       - name: Setup Java
         uses: actions/setup-java@v6
         with:
@@ -135,25 +140,5 @@ jobs:
         if: ${{ github.event.release.body != '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          BRANCH="changelog-update-$VERSION"
-          LABEL="release changelog"
-
-          git config user.email "action@github.com"
-          git config user.name "GitHub Action"
-
-          git checkout -b "$BRANCH"
-          git commit -am "Changelog update - $VERSION"
-          git push --set-upstream origin "$BRANCH"
-
-          gh label create "$LABEL" \
-            --description "Pull requests with release changelog update" \
-            --force \
-            || true
-
-          gh pr create \
-            --title "Changelog update - \`$VERSION\`" \
-            --body "Current pull request contains patched \`CHANGELOG.md\` file for the \`$VERSION\` version." \
-            --label "$LABEL" \
-            --head "$BRANCH"
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+        run: python3 .github/scripts/release-changelog.py "$RELEASE_VERSION"

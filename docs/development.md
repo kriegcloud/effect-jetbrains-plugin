@@ -44,8 +44,10 @@ The move to `263.4732.x` exposed lsp4j 1.0.0's `Diagnostic.getMessage()` return-
 `String` to `Either<String, MarkupContent>`, which broke 0.1.6 diagnostic highlighting despite the
 existing `263.*` compatibility range. Version 0.1.7 resolves diagnostic message getters/setters
 reflectively, with unit cases for both shapes. Keep the stable compile target and exercise both
-262 and 263 compatibility when changing these accessors. The separate `LspServer*` → `LspClient*`
-migration remains issue #26.
+262 and 263 compatibility when changing these accessors. Version 0.1.11 completed the
+`LspServer*` → `LspClient*` migration (#26): the integration now implements
+`LspIntegrationProvider`, starts an `LspClient`, and uses `ProjectWideLspClientDescriptor`.
+Keep exercising both 262 and 263 when changing this integration.
 
 All sandbox `RunIdeTask` instances use `build/sandbox-xdg/config` as `XDG_CONFIG_HOME`, so the
 platform's `plasmashell --version` desktop probe does not try to write the host Plasma configuration

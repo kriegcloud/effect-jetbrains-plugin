@@ -182,14 +182,22 @@ class EffectFixAllInFileService(private val project: Project) {
 
         /** Refuses to write over edits the user made while the run was in progress. */
         private fun onEdt(action: () -> Unit) {
-            ApplicationManager.getApplication().invokeAndWait({
-                if (document.modificationStamp != expectedStamp) {
-                    throw EffectFixAllServerException(EffectBundle.message("fix.all.in.file.document.changed"))
-                }
-                action()
-                PsiDocumentManager.getInstance(project).commitDocument(document)
-                expectedStamp = document.modificationStamp
-            }, ModalityState.defaultModalityState())
+            // Complete dispatch and stamp bookkeeping even when the progress indicator is cancelled.
+            // Otherwise invokeAndWait may discard a queued rollback (or abandon a queued apply).
+            ProgressManager.getInstance().executeNonCancelableSection {
+                ApplicationManager.getApplication().invokeAndWait({
+                    if (document.modificationStamp != expectedStamp) {
+                        throw EffectFixAllServerException(EffectBundle.message("fix.all.in.file.document.changed"))
+                    }
+                    try {
+                        action()
+                        PsiDocumentManager.getInstance(project).commitDocument(document)
+                    } finally {
+                        // An applier can fail after writing; allow the caller to restore that partial pass.
+                        expectedStamp = document.modificationStamp
+                    }
+                }, ModalityState.defaultModalityState())
+            }
         }
     }
 

@@ -63,6 +63,12 @@ class EffectDevToolsService(private val project: Project) : Disposable {
     private val lifecycleExecutor = AppExecutorUtil.createBoundedApplicationPoolExecutor("Effect runtime lifecycle", 1)
     @Volatile private var disposed = false
     private var batching = false
+    private var publicationPending = false
+    internal var schedulePublication: (() -> Unit) -> Unit = { publish ->
+        AppExecutorUtil.getAppScheduledExecutorService().schedule(publish, 50, TimeUnit.MILLISECONDS)
+    }
+    internal var traceSnapshotBuilds = 0
+        private set
 
     /** Toolbar lifecycle requests are serialized; socket shutdown never occupies the EDT. */
     fun requestLifecycle(operation: EffectDevToolsService.() -> Unit) {
@@ -178,7 +184,10 @@ class EffectDevToolsService(private val project: Project) : Disposable {
 
     /** Serializes the active client's captured span tree to shareable JSON, or null when there is none. */
     fun exportActiveTracer(): String? {
-        val snapshot = runtimeState
+        val snapshot = synchronized(lock) {
+            if (publicationPending) publishLocked()
+            runtimeState
+        }
         val active = snapshot.clients.firstOrNull { it.id == snapshot.activeClientId } ?: return null
         if (active.rootSpans.isEmpty()) {
             return null
@@ -297,7 +306,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
                 }
             } finally {
                 batching = false
-                publishLocked()
+                schedulePublicationLocked()
             }
         }
     }
@@ -743,8 +752,17 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         }
     }
 
+    private fun schedulePublicationLocked() {
+        if (publicationPending || disposed) return
+        publicationPending = true
+        schedulePublication {
+            synchronized(lock) { if (publicationPending && !disposed) publishLocked() }
+        }
+    }
+
     private fun publishLocked() {
         if (batching) return
+        publicationPending = false
         val snapshots = clients.values.map { it.toSnapshot() }.sortedBy { it.name }
         val activeId = activeClientId.takeIf { id -> snapshots.any { it.id == id } } ?: snapshots.firstOrNull()?.id
         activeClientId = activeId
@@ -771,11 +789,13 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             droppedEvents = droppedEvents,
         )
 
-    private fun buildRootSpans(client: RuntimeClientState): List<RuntimeSpanSnapshot> =
-        client.spans.values
+    private fun buildRootSpans(client: RuntimeClientState): List<RuntimeSpanSnapshot> {
+        traceSnapshotBuilds++
+        return client.spans.values
             .filter { it.parentSpanId == null || !client.spans.containsKey(it.parentSpanId) }
             .map { buildSpanSnapshot(client, it.spanId, linkedSetOf()) }
             .sortedBy { it.name }
+    }
 
     private fun buildSpanSnapshot(
         client: RuntimeClientState,

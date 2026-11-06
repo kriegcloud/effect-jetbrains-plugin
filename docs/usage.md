@@ -168,6 +168,23 @@ workspace configuration only when explicitly set, and they override duplicate ra
 > `workspace/configuration`. The plugin still sends the typed values over LSP for forward
 > compatibility, but to change server behavior today, set them in the workspace `tsconfig.json`.
 
+### Effect option schema and warnings
+
+For files named exactly `tsconfig.json` or `jsconfig.json`, the plugin supplies JSON-schema
+completion and validation, including the `@effect/language-service` entry. Each config uses the
+nearest ancestor directory containing `node_modules/@effect/tsgo/schema.json`; if none is found,
+it uses the bundled **0.67.4** schema. An older installed workspace package can therefore change
+which options completion and validation recognize. Explicit `$schema` declarations still follow
+the IDE's normal schema-selection rules.
+
+Settings validation checks Effect options in the raw initialization/workspace JSON fields, and
+`Sync to tsconfig.json` checks the resulting Effect plugin entry. These schema findings are
+advisory warnings: they do not block Apply or a sync write. Settings validation selects the schema
+from the project directory's ancestors; sync selects it from the target config's directory.
+Schema loading happens in the background. If a warning says the schema is loading, validate again
+after loading finishes to see option warnings. A schema-load warning asks you to check the
+workspace package installation.
+
 ### Sync typed options to tsconfig.json
 
 1. Create a `tsconfig.json` in the IDE project root if one does not exist. Sync looks only for
@@ -415,6 +432,19 @@ tree as JSON. With no active client or captured root spans, the action shows a w
 It writes `<IDE system path>/effect-tsgo/tracer/effect-tracer-<timestamp>.json` and opens the file
 in the editor. Copy it to a project or another durable location before sharing or clearing caches;
 the export destination is in the IDE system cache.
+
+### Tracer history limits
+
+Each runtime client retains at most **2,000 spans**, the newest **100 events per span**, and
+pending events for at most **128 span IDs** whose spans have not arrived yet. When the span limit
+is exceeded, the plugin evicts whole traces, preferring the oldest completed trace and falling
+back to the oldest live trace. Excess per-span events are removed oldest first; pending event
+IDs are also evicted oldest first.
+
+The `Tracer` status shows dropped span and event counts when displaying retained spans. A JSON
+export contains only the currently retained span tree and client metadata; it does not include
+those dropped counts or recover evicted history. Export while the history you need is still
+retained, and record the displayed dropped counts alongside a shared capture when relevant.
 
 ### Runtime model
 

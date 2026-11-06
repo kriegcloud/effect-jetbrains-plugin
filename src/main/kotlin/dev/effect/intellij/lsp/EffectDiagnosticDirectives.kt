@@ -55,8 +55,8 @@ internal class EffectDiagnosticDirectiveSet private constructor(
     companion object {
         private val empty = EffectDiagnosticDirectiveSet(emptyMap(), emptyList(), emptyList())
 
-        fun parse(sourceText: String): EffectDiagnosticDirectiveSet {
-            val directives = collectDirectives(sourceText)
+        fun parse(sourceText: String, fileName: String = ""): EffectDiagnosticDirectiveSet {
+            val directives = collectDirectives(sourceText, fileName)
             if (directives.isEmpty()) {
                 return empty
             }
@@ -80,9 +80,9 @@ internal class EffectDiagnosticDirectiveSet private constructor(
             return EffectDiagnosticDirectiveSet(byLine, fileLevel, sectionDirectives)
         }
 
-        private fun collectDirectives(sourceText: String): List<EffectDiagnosticDirective> {
+        private fun collectDirectives(sourceText: String, fileName: String): List<EffectDiagnosticDirective> {
             if (!sourceText.contains("@effect-diagnostics")) return emptyList()
-            val lexer = JSFlexAdapter(DialectOptionHolder.TS)
+            val lexer = JSFlexAdapter(if (fileName.substringAfterLast('.').lowercase() in setOf("tsx", "jsx")) DialectOptionHolder.TSX else DialectOptionHolder.TS)
             lexer.start(sourceText)
             val directives = mutableListOf<EffectDiagnosticDirective>()
             var lineNumber = 0
@@ -108,15 +108,15 @@ internal class EffectDiagnosticDirectiveSet private constructor(
     }
 }
 
-private data class CachedEffectDirectives(val stamp: Long, val directives: EffectDiagnosticDirectiveSet)
+private data class CachedEffectDirectives(val stamp: Long, val fileName: String, val directives: EffectDiagnosticDirectiveSet)
 private val directiveCacheKey = Key.create<CachedEffectDirectives>("effect.diagnostic.directives")
 
 /** Call under read access, so the stamp and text belong to the same document snapshot. */
-internal fun effectDiagnosticDirectives(document: Document): EffectDiagnosticDirectiveSet = synchronized(document) {
+internal fun effectDiagnosticDirectives(document: Document, fileName: String = ""): EffectDiagnosticDirectiveSet = synchronized(document) {
     val stamp = document.modificationStamp
-    document.getUserData(directiveCacheKey)?.takeIf { it.stamp == stamp }?.directives
-        ?: EffectDiagnosticDirectiveSet.parse(document.text).also {
-            document.putUserData(directiveCacheKey, CachedEffectDirectives(stamp, it))
+    document.getUserData(directiveCacheKey)?.takeIf { it.stamp == stamp && it.fileName == fileName }?.directives
+        ?: EffectDiagnosticDirectiveSet.parse(document.text, fileName).also {
+            document.putUserData(directiveCacheKey, CachedEffectDirectives(stamp, fileName, it))
         }
 }
 
@@ -124,9 +124,10 @@ internal fun effectDirectiveSeverityForDiagnostic(
     sourceText: String,
     diagnosticLine: Int,
     diagnostic: Diagnostic,
+    fileName: String = "",
 ): EffectDiagnosticDirectiveSeverity? =
     diagnostic.effectDiagnosticRuleName()
-        ?.let { ruleName -> EffectDiagnosticDirectiveSet.parse(sourceText).effectiveSeverity(ruleName, diagnosticLine) }
+        ?.let { ruleName -> EffectDiagnosticDirectiveSet.parse(sourceText, fileName).effectiveSeverity(ruleName, diagnosticLine) }
 
 internal fun Diagnostic.effectDiagnosticRuleName(): String? =
     EffectLsp4jDiagnosticMessage.text(this)

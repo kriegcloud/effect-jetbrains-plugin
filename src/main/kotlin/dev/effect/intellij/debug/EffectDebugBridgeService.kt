@@ -52,6 +52,10 @@ class EffectDebugBridgeService : Disposable {
         val expression: String? = null,
     )
     private val requests = EffectDebugRequests<CaptureRequest>()
+    private val preparation = EffectDebugPreparation(
+        background = { ApplicationManager.getApplication().executeOnPooledThread(it) },
+        foreground = { ApplicationManager.getApplication().invokeLater(it) },
+    )
     private var worker: java.util.concurrent.Future<*>? = null
     @Volatile private var disposed = false
 
@@ -68,6 +72,7 @@ class EffectDebugBridgeService : Disposable {
     fun attachToSession(project: Project, sessionId: String) {
         if (disposed || project.isDisposed) return
         requests.invalidate()
+        preparation.invalidate()
         disposeSessionListener()
         attachedSession = null
         val session = XDebuggerManager.getInstance(project).currentSession
@@ -81,19 +86,11 @@ class EffectDebugBridgeService : Disposable {
         }
 
         attachedSession = session
-        val instrumentationPath = EffectInstrumentationService.getInstance().ensureInstrumentationScript().toString()
-        val baseState = DebugBridgeState(
+        updateState(DebugBridgeState(
             attachedSessionName = session.sessionName,
             attachedSessionType = session.debugProcess.javaClass.simpleName,
-            instrumentationPath = instrumentationPath,
-            guidance = buildString {
-                appendLine("Attached to the active JetBrains debug session.")
-                appendLine("Effect instrumentation is available at:")
-                appendLine(instrumentationPath)
-                append("Pause the session to refresh Effect runtime snapshots.")
-            },
-        )
-        updateState(baseState)
+            guidance = "Preparing Effect instrumentation for the active debug session.",
+        ))
 
         val listenerDisposable = Disposer.newDisposable("Effect debug bridge session listener")
         Disposer.register(this, listenerDisposable)
@@ -120,10 +117,24 @@ class EffectDebugBridgeService : Disposable {
         )
         sessionDisposable = listenerDisposable
 
-        refreshSnapshots(project)
+        preparation.start({ EffectInstrumentationService.getInstance().ensureInstrumentationScript().toString() }) { result ->
+            if (!disposed && !project.isDisposed && attachedSession === session) {
+                result.fold(
+                    onSuccess = { path ->
+                        updateState(state.copy(
+                            instrumentationPath = path,
+                            guidance = "Effect instrumentation is available at:\n$path\nPause the session to refresh Effect runtime snapshots.",
+                        ))
+                        refreshSnapshots(project)
+                    },
+                    onFailure = { updateState(state.copy(error = it.message ?: it.javaClass.simpleName)) },
+                )
+            }
+        }
     }
 
     fun detach(project: Project) {
+        preparation.invalidate()
         requests.invalidate()
         attachedSession = null
         disposeSessionListener()
@@ -323,6 +334,7 @@ class EffectDebugBridgeService : Disposable {
     }
 
     override fun dispose() {
+        preparation.invalidate()
         disposed = true
         requests.dispose()
         worker?.cancel(true)

@@ -160,6 +160,95 @@ class EffectFixAllApplyPathTest : BasePlatformTestCase() {
         }
     }
 
+    fun testCancelledValidationRestoresOriginalAfterDelayedEdtDispatch() = checkCancelledRewrite(0, false)
+
+    fun testCancelledValidationRetainsEarlierPassesInOneUndoStep() = checkCancelledRewrite(2, false)
+
+    fun testCancellationImmediatelyAfterApplyRestoresValidatedSnapshot() = checkCancelledRewrite(2, true)
+
+    private fun checkCancelledRewrite(retainedPasses: Int, cancelAfterApply: Boolean) {
+        val original = "const value = 0\n"
+        val file = myFixture.configureByText("index.ts", original)
+        val uri = "file:///fake/index.ts"
+        val request = EffectFixAllRequest("rule:test", "test", "Fix it")
+        val diagnostic = org.eclipse.lsp4j.Diagnostic().also {
+            it.range = Range(Position(0, 14), Position(0, 15))
+            it.message = "Fix value. effect(test)"
+        }
+        val indicator = com.intellij.openapi.progress.EmptyProgressIndicator()
+        val restoring = java.util.concurrent.CountDownLatch(1)
+        var pulls = 0
+        var fixes = 0
+        fun cancelWithDelayedEdt() {
+            // Queue an EDT blocker ahead of rollback, then keep it blocked beyond invokeAndWait's
+            // cancellation polling interval. The rollback must survive this cancelled indicator.
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                check(restoring.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                Thread.sleep(80)
+            }
+            indicator.cancel()
+        }
+        val client = FakeLspClient(project, FakeDescriptor(project, uri, file.virtualFile)) {
+            // Requests alternate between diagnostics and code actions.
+            if (pulls == fixes) {
+                pulls++
+                if (fixes > retainedPasses) {
+                    cancelWithDelayedEdt()
+                    com.intellij.openapi.progress.ProgressManager.checkCanceled()
+                }
+                org.eclipse.lsp4j.DocumentDiagnosticReport(
+                    org.eclipse.lsp4j.RelatedFullDocumentDiagnosticReport(listOf(diagnostic)),
+                )
+            } else {
+                fixes++
+                listOf(org.eclipse.lsp4j.jsonrpc.messages.Either.forRight<org.eclipse.lsp4j.Command, CodeAction>(
+                    CodeAction(request.fixTitle).also {
+                        it.diagnostics = listOf(diagnostic)
+                        it.edit = WorkspaceEdit(mapOf(uri to listOf(TextEdit(diagnostic.range, fixes.toString()))))
+                    },
+                ))
+            }
+        }
+        val production = EffectFixAllInFileService(project).EditorFixAllSession(
+            client, TextDocumentIdentifier(uri), myFixture.editor, file, request,
+        )
+        val session = object : EffectFixAllSession by production {
+            override fun apply(edits: List<TextEdit>) {
+                production.apply(edits)
+                if (cancelAfterApply && fixes > retainedPasses) cancelWithDelayedEdt()
+            }
+
+            override fun restore(text: String) {
+                restoring.countDown()
+                production.restore(text)
+            }
+        }
+        val future = com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(
+            java.util.concurrent.Callable {
+                var cancelled = false
+                com.intellij.openapi.progress.ProgressManager.getInstance().runProcess({
+                    try {
+                        runFixAllPasses(request, uri, session)
+                    } catch (_: com.intellij.openapi.progress.ProcessCanceledException) {
+                        cancelled = true
+                    }
+                }, indicator)
+                cancelled
+            },
+        )
+        assertTrue("Cancellation must propagate after rollback", com.intellij.testFramework.PlatformTestUtil.waitForFuture(future, 10_000))
+        assertEquals("const value = $retainedPasses\n", production.currentText())
+        if (retainedPasses > 0) {
+            val undo = com.intellij.openapi.command.undo.UndoManager.getInstance(project)
+            val editor = com.intellij.openapi.fileEditor.impl.text.TextEditorProvider.getInstance().getTextEditor(myFixture.editor)
+            assertTrue(undo.isUndoAvailable(editor))
+            undo.undo(editor)
+            assertEquals(original, production.currentText())
+            undo.redo(editor)
+            assertEquals("const value = $retainedPasses\n", production.currentText())
+        }
+    }
+
     private class FakeDescriptor(
         project: Project,
         private val fakeUri: String,

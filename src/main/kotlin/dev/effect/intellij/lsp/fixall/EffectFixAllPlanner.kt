@@ -46,8 +46,9 @@ internal fun selectFixAllDiagnostics(
     diagnostics: List<Diagnostic>,
     sourceText: String,
     ruleKey: String,
+    fileName: String = "",
 ): List<Diagnostic> {
-    val directives = EffectDiagnosticDirectiveSet.parse(sourceText)
+    val directives = EffectDiagnosticDirectiveSet.parse(sourceText, fileName)
     return diagnostics
         .asSequence()
         .filter { diagnostic -> diagnostic.range != null && diagnostic.effectFixAllRuleKey() == ruleKey }

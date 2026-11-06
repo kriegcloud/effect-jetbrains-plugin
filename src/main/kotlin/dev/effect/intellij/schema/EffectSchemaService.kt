@@ -9,6 +9,11 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
+import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
+import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
+import com.intellij.util.Alarm
+import java.nio.file.Path
 import com.jetbrains.jsonSchema.ide.JsonSchemaService
 import dev.effect.intellij.core.EffectJson
 import java.util.concurrent.CompletableFuture
@@ -22,6 +27,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 class EffectSchemaService(private val project: Project) : Disposable {
     private val schemas = ConcurrentHashMap<String, CompletableFuture<EffectOptionSchema>>()
     private val watching = AtomicBoolean()
+    private val resetPending = AtomicBoolean()
+    @Volatile private var configPaths: List<String> = emptyList()
+    private val resetAlarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, this)
+    @Volatile private var schemaRoots: List<String> = project.basePath?.let { base ->
+        generateSequence(Path.of(base).toAbsolutePath().normalize()) { it.parent }
+            .map { it.resolve("node_modules/@effect/tsgo").toString().replace('\\', '/') }.toList()
+    }.orEmpty()
 
     init {
         request(null)
@@ -31,16 +43,48 @@ class EffectSchemaService(private val project: Project) : Disposable {
         if (!watching.compareAndSet(false, true)) return
         project.messageBus.connect(this).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
-                if (events.any { it.path.endsWith("/schema.json") || it.path.endsWith("/tsconfig.json") ||
-                        it.path.endsWith("/jsconfig.json") || it.file?.isDirectory == true }) {
-                    schemas.keys.removeIf { it != BUNDLED }
-                    // Run outside VFS event delivery / write actions. The JSON service caches factories.
-                    ApplicationManager.getApplication().executeOnPooledThread {
+                if (events.none(::affectsAssociations)) return
+                schemas.keys.removeIf { it != BUNDLED }
+                // Merge VFS deliveries from package installation; never reset under the write action.
+                if (resetPending.compareAndSet(false, true)) {
+                    resetAlarm.addRequest(Runnable {
+                        resetPending.set(false)
                         if (!project.isDisposed) JsonSchemaService.Impl.get(project).reset()
-                    }
+                    }, 100)
                 }
             }
         })
+    }
+
+    internal fun observeConfigs(files: List<VirtualFile>) {
+        configPaths = files.map { it.path }
+        schemaRoots = (schemaRoots + files.flatMap { config ->
+            generateSequence(config.parent) { it.parent }
+                .map { "${it.path}/node_modules/@effect/tsgo" }.toList()
+        }).distinct()
+    }
+
+    internal fun affectsAssociations(event: VFileEvent): Boolean {
+        val paths = buildList {
+            add(event.path)
+            if (event is VFilePropertyChangeEvent && event.isRename) add(event.oldPath)
+            if (event is VFileMoveEvent) add("${event.oldParent.path}/${event.file.name}")
+        }
+        val projectRoots = com.intellij.openapi.roots.ProjectRootManager.getInstance(project).contentRoots.map { it.path } +
+            listOfNotNull(project.basePath?.replace('\\', '/'))
+        return paths.any { path ->
+            val inProject = projectRoots.any { path == it || path.startsWith("$it/") }
+            // Config contents do not change the provider list. Directory moves/removals do.
+            val configChange = event !is VFileContentChangeEvent &&
+                inProject &&
+                (path.endsWith("/tsconfig.json") || path.endsWith("/jsconfig.json") ||
+                    (event.file?.isDirectory == true && configPaths.any { it.startsWith("$path/") }))
+            val schemaChange = schemaRoots.any { root ->
+                path == "$root/schema.json" ||
+                    (event !is VFileContentChangeEvent && (root == path || root.startsWith("$path/")))
+            } || (inProject && path.endsWith("/node_modules/@effect/tsgo/schema.json"))
+            configChange || schemaChange
+        }
     }
 
     fun warnings(value: com.fasterxml.jackson.databind.JsonNode, directory: VirtualFile? = project.guessProjectDir()): List<String> {

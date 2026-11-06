@@ -12,6 +12,7 @@ import dev.effect.intellij.core.EffectJson
 import dev.effect.intellij.status.EffectStatusService
 import org.eclipse.lsp4j.ConfigurationItem
 import org.eclipse.lsp4j.InitializeResult
+import java.util.concurrent.CancellationException
 
 class EffectLspServerDescriptor(project: Project) : ProjectWideLspClientDescriptor(project, "Effect Tsgo") {
     override fun isSupportedFile(file: VirtualFile): Boolean =
@@ -30,15 +31,18 @@ class EffectLspServerDescriptor(project: Project) : ProjectWideLspClientDescript
                     project.getService(EffectStatusService::class.java).markStarting(launch.resolution.binaryPath.toString())
                 }
                 .commandLine
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Exception) {
             project.getService(EffectStatusService::class.java).markError(error.message ?: "Failed to start Effect LSP")
             throw ExecutionException(error.message, error)
         }
 
-    override fun createInitializationOptions() =
+    override fun createInitializationOptions(): Any? =
         project.getService(EffectLspProjectService::class.java)
             .activeLaunchConfiguration()
             .initializationOptions
+            ?.let { LspInitializationOptions(it.toString()) }
 
     override fun getWorkspaceConfiguration(item: ConfigurationItem): Any? {
         val workspaceConfiguration = project.getService(EffectLspProjectService::class.java)

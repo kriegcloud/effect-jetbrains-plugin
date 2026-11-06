@@ -27,6 +27,30 @@ class EffectDiagnosticDirectivesTest : BasePlatformTestCase() {
         }
     }
 
+    fun testJsxTextDoesNotSuppressDiagnostics() {
+        listOf("tsx", "jsx").forEach { extension ->
+            val source = "const view = <div>\n// @effect-diagnostics *:off\n</div>;\nconst following = 1;"
+            val file = myFixture.configureByText("index.$extension", source)
+            val diagnostic = effectDiagnostic("effect(floatingEffect)").also {
+                it.range = Range(Position(3, 0), Position(3, 5))
+            }
+            assertNull(effectDiagnosticDirectives(file.viewProvider.document!!, file.name).effectiveSeverity("floatingEffect", 3))
+            assertNull(effectDirectiveSeverityForDiagnostic(source, 3, diagnostic, file.name))
+            assertEquals(listOf(diagnostic), dev.effect.intellij.lsp.fixall.selectFixAllDiagnostics(
+                listOf(diagnostic), source, "rule:floatingEffect", file.name,
+            ))
+            val comment = "const view = <div>{/* @effect-diagnostics-next-line floatingEffect:off */}\n{value}</div>;"
+            assertEquals(EffectDiagnosticDirectiveSeverity.OFF,
+                EffectDiagnosticDirectiveSet.parse(comment, file.name).effectiveSeverity("floatingEffect", 1))
+        }
+    }
+
+    fun testTypeScriptAngleBracketAssertionKeepsCommentDirectives() {
+        val source = "const value = <number>input;\n// @effect-diagnostics-next-line floatingEffect:off\nconst following = 1;"
+        assertEquals(EffectDiagnosticDirectiveSeverity.OFF,
+            EffectDiagnosticDirectiveSet.parse(source, "index.ts").effectiveSeverity("floatingEffect", 2))
+    }
+
     fun testMixedSkipFileAndSectionRulesBothApply() {
         val directives = EffectDiagnosticDirectiveSet.parse("before\n// @effect-diagnostics floatingEffect:skip-file strictEffectProvide:off\nafter")
         assertEquals(EffectDiagnosticDirectiveSeverity.SKIP_FILE, directives.effectiveSeverity("floatingEffect", 0))

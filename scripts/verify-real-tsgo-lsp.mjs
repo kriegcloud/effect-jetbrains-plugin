@@ -1132,6 +1132,167 @@ async function verifyFixAllWorkspace(workspacePath) {
   }
 }
 
+// Native counterpart of EffectFixAllPasses: deliberately separate from the one-pass smoke above.
+// The owned verifier surface cannot call the Kotlin runner; keep its pull/apply/validate/restore
+// protocol visible here, and assert the failure paths actually occur with the published binary.
+function errorSignatures(diagnostics) {
+  const signatures = new Map()
+  for (const diagnostic of diagnostics.filter((entry) => entry.severity === 1)) {
+    const signature = JSON.stringify([diagnostic.code, diagnostic.message])
+    signatures.set(signature, (signatures.get(signature) ?? 0) + 1)
+  }
+  return signatures
+}
+
+function addsErrors(before, after) {
+  const baseline = errorSignatures(before)
+  return [...errorSignatures(after)].some(([signature, count]) => count > (baseline.get(signature) ?? 0))
+}
+
+async function verifyFixAllSafetyCases(workspacePath) {
+  const workspaceUri = pathToFileURL(workspacePath).href
+  const client = new LspClient(binary, ["--lsp", "--stdio"], workspacePath)
+  const cases = [
+    { file: "nested.ts", rule: "unnecessaryPipeChain", outcome: "converged" },
+    { file: "collision.ts", rule: "yieldInCallArgument", outcome: "recovered" },
+    { file: "harmful.ts", rule: "catchAllToMapError", outcome: "rejected" },
+  ]
+  const results = []
+  try {
+    await client.request("initialize", {
+      processId: process.pid, rootUri: workspaceUri,
+      workspaceFolders: [{ uri: workspaceUri, name: path.basename(workspacePath) }],
+      capabilities: { textDocument: { codeAction: { codeActionLiteralSupport: {
+        codeActionKind: { valueSet: ["quickfix"] },
+      } } } },
+    })
+    client.notify("initialized", {})
+    for (const testCase of cases) {
+      const uri = pathToFileURL(path.join(workspacePath, "src", testCase.file)).href
+      const original = await readFile(fileURLToPath(uri), "utf8")
+      let text = original
+      let version = 1
+      let pulls = 0
+      let rollbacks = 0
+      let passes = 0
+      let applied = 0
+      let rejected = 0
+      const rejectedErrors = new Set()
+      let sequential = false
+      const skipped = new Set()
+      const change = (next) => {
+        text = next
+        client.notify("textDocument/didChange", {
+          textDocument: { uri, version: ++version }, contentChanges: [{ text }],
+        })
+      }
+      // No previousResultId: validation must be a full pull, including an empty error-free report.
+      const pull = async () => {
+        pulls += 1
+        const report = await client.request("textDocument/diagnostic", { textDocument: { uri } })
+        assert(report?.kind === "full" && Array.isArray(report.items), "Expected full validation diagnostics")
+        return report.items
+      }
+      client.notify("textDocument/didOpen", {
+        textDocument: { uri, languageId: "typescript", version, text },
+      })
+      let diagnostics = await pullDiagnosticsWithRetries(client, uri,
+        (entries) => diagnosticsForRule(entries, testCase.rule).length > 0)
+      const baseline = diagnostics
+      assert(errorSignatures(baseline).size === 0, `${testCase.file}: fixture must start without errors: ${JSON.stringify(baseline)}`)
+      const initial = diagnosticsForRule(diagnostics, testCase.rule).length
+      let fixTitle
+      while (passes < 64) {
+        // Match production's position-independent skipped-site identity as earlier edits move sites.
+        const occurrences = new Map()
+        const candidates = diagnosticsForRule(diagnostics, testCase.rule).map((diagnostic) => {
+          const lines = text.split("\n")
+          const offset = (position) => lines.slice(0, position.line).reduce((n, line) => n + line.length + 1, 0) + position.character
+          const covered = text.slice(offset(diagnostic.range.start), offset(diagnostic.range.end))
+          const base = JSON.stringify([diagnostic.message, covered])
+          const occurrence = (occurrences.get(base) ?? 0) + 1
+          occurrences.set(base, occurrence)
+          return { diagnostic, key: `${base}:${occurrence}` }
+        }).filter(({ key }) => !skipped.has(key))
+        if (candidates.length === 0) break
+        passes += 1
+        const batch = sequential ? candidates.slice(0, 1) : candidates
+        const actions = await client.request("textDocument/codeAction", {
+          textDocument: { uri }, range: fullDocumentRange(text),
+          context: { diagnostics: batch.map(({ diagnostic }) => diagnostic), only: ["quickfix"] },
+        })
+        const fixes = (actions ?? []).filter((action) => !action.disabled &&
+          (!action.kind || action.kind === "quickfix" || action.kind.startsWith("quickfix.")) &&
+          !DISABLE_DIRECTIVE_FIX_TITLE.test(String(action.title ?? "").trim()))
+        fixTitle ??= fixes[0]?.title
+        const chosen = []
+        let next = text
+        // Retain only non-overlapping actions, as the production planner does for nested sites.
+        for (const { diagnostic } of batch) {
+          const action = fixes.find((candidate) => candidate.title === fixTitle &&
+            candidate.diagnostics?.some((entry) => diagnosticKey(entry) === diagnosticKey(diagnostic)))
+          if (!action) continue
+          const edits = action.edit?.changes?.[uri] ?? action.edit?.documentChanges
+            ?.filter((entry) => entry.textDocument?.uri === uri).flatMap((entry) => entry.edits) ?? []
+          if (edits.length === 0) continue
+          try {
+            next = applyTextEdits(text, [...chosen.flat(), ...edits])
+            chosen.push(edits)
+          } catch (error) {
+            if (error.message !== "Quick-fix edits must not overlap") throw error
+          }
+        }
+        assert(chosen.length > 0 && next !== text, `${testCase.file}: no progress for ${fixTitle}`)
+        const before = text
+        change(next)
+        let after
+        try {
+          after = await pull()
+        } catch (error) {
+          change(before)
+          throw error
+        }
+        if (addsErrors(diagnostics, after)) {
+          for (const signature of errorSignatures(after).keys()) rejectedErrors.add(signature)
+          change(before)
+          rollbacks += 1
+          // Verify the actual server state after rollback, not just the local text variable.
+          const restored = await pull()
+          assert(!addsErrors(diagnostics, restored), `${testCase.file}: rollback left new errors`)
+          assert(diagnosticsForRule(restored, testCase.rule).length === diagnosticsForRule(diagnostics, testCase.rule).length,
+            `${testCase.file}: rollback did not restore rule diagnostics`)
+          if (sequential) {
+            skipped.add(batch[0].key)
+            rejected += 1
+          }
+          sequential = true
+        } else {
+          applied += chosen.length
+          diagnostics = after
+        }
+      }
+      const finalDiagnostics = await pull()
+      const remaining = diagnosticsForRule(finalDiagnostics, testCase.rule).length
+      assert(!addsErrors(baseline, finalDiagnostics), `${testCase.file}: fix-all introduced errors`)
+      assert(passes < 64, `${testCase.file}: fix-all did not reach a stopping point`)
+      if (testCase.outcome === "converged") {
+        assert(passes >= 2 && remaining === 0 && rollbacks === 0, "Nested rewrites must converge over multiple validated passes")
+      } else if (testCase.outcome === "recovered") {
+        assert(rollbacks >= 1 && applied >= 2 && remaining === 0, "Name collision must roll back the batch and converge sequentially")
+      } else {
+        assert(rollbacks >= 2 && rejected === 1 && applied === 0 && remaining === initial && text === original,
+          "Harmful standalone fix must be retried alone, rejected, and fully restored")
+      }
+      assert(pulls > passes, `${testCase.file}: expected repeated validation pulls`)
+      results.push({ ...testCase, initial, remaining, passes, applied, rejected, rollbacks, validationPulls: pulls, rejectedErrors: [...rejectedErrors].map(JSON.parse), fixTitle })
+      client.notify("textDocument/didClose", { textDocument: { uri } })
+    }
+    return results
+  } finally {
+    await client.shutdown()
+  }
+}
+
 async function main() {
   await chmod(binary, 0o755).catch(() => {})
   const validOnlyValues = new Set(["all", "healthy", "failing", "new-diagnostics", "diagnostic-directives", "fix-all"])
@@ -1174,6 +1335,7 @@ async function main() {
     const fixAllWorkspace = await copyFixtureWorkspace("fix-all-workspace")
     await runCommand("npm", ["install", "--no-fund", "--no-audit", ...workspaceDependencies], fixAllWorkspace)
     result.fixAll = await verifyFixAllWorkspace(fixAllWorkspace)
+    result.fixAllSafety = await verifyFixAllSafetyCases(fixAllWorkspace)
   }
 
   console.log(JSON.stringify(result, null, 2))
@@ -1196,7 +1358,12 @@ function verifyHelpers() {
   }
   nodeAssert.equal(hoverText(null), "")
   nodeAssert.equal(hoverText({ contents: [] }), "")
-  console.log("Verifier helper regressions passed (decoded fixture path and hover response forms)")
+  const error = { severity: 1, code: 2451, message: "Duplicate variable", range: fullDocumentRange("x") }
+  nodeAssert.equal(addsErrors([error], [{ ...error, range: fullDocumentRange("shifted\ntext") }]), false)
+  nodeAssert.equal(addsErrors([error], [error, error]), true, "Count repeated error signatures")
+  nodeAssert.equal(addsErrors([], [{ ...error, severity: 2 }]), false, "Warnings do not reject a pass")
+  nodeAssert.equal(addsErrors([], [error]), true)
+  console.log("Verifier helper regressions passed (fixture path, hover forms, error signature multiset)")
 }
 
 Promise.resolve().then(() => selfTest ? verifyHelpers() : main()).catch((error) => {

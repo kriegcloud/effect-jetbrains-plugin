@@ -3,6 +3,10 @@ package dev.effect.intellij.typescript
 import com.intellij.lang.typescript.compiler.TypeScriptCompilerSettings
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.ActionUiKind
+import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
@@ -46,13 +50,14 @@ class EffectWebStormTypeScriptService(private val project: Project) {
     }
 
     /** Finds tsrs, builds the WebStorm-shaped package, and switches the TypeScript setting, off the EDT. */
-    fun useTsrsForWebStormTypeScript(onDone: (Result<TsrsCandidate>) -> Unit = {}) {
-        switchToTsrs(onDone = onDone)
+    fun useTsrsForWebStormTypeScript(beforeApply: () -> Unit = {}, onDone: (Result<TsrsCandidate>) -> Unit = {}) {
+        switchToTsrs(beforeApply = beforeApply, onDone = onDone)
     }
 
     internal fun switchToTsrs(
         preparePackage: () -> Pair<TsrsCandidate, Path> = ::prepare,
         reportResult: (Result<TsrsCandidate>) -> Unit = ::report,
+        beforeApply: () -> Unit = {},
         onDone: (Result<TsrsCandidate>) -> Unit = {},
     ) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Pointing WebStorm TypeScript at tsrs", false) {
@@ -60,6 +65,7 @@ class EffectWebStormTypeScriptService(private val project: Project) {
                 val result = runCatching { preparePackage() }
                 ApplicationManager.getApplication().invokeLater({
                     val applied = result.mapCatching { (candidate, packageDirectory) ->
+                        beforeApply()
                         apply(packageDirectory)
                         candidate
                     }
@@ -103,7 +109,15 @@ class EffectWebStormTypeScriptService(private val project: Project) {
         // inside it would run before the dialog's own Apply/OK and could start the old package.
         ApplicationManager.getApplication().invokeLater({
             val action = ActionManager.getInstance().getAction(TYPESCRIPT_RESTART_ACTION_ID) ?: return@invokeLater
-            ActionManager.getInstance().tryToExecute(action, null, null, ActionPlaces.UNKNOWN, true)
+            val event = AnActionEvent.createEvent(
+                action,
+                SimpleDataContext.getProjectContext(project),
+                action.templatePresentation.clone(),
+                ActionPlaces.UNKNOWN,
+                ActionUiKind.NONE,
+                null,
+            )
+            ActionUtil.performAction(action, event)
         }, ModalityState.nonModal(), project.disposed)
     }
 

@@ -12,6 +12,18 @@ import dev.effect.intellij.settings.EffectTsconfigSync
 import dev.effect.intellij.settings.SettingSeverity
 
 class EffectJsonSchemaProviderTest : BasePlatformTestCase() {
+    override fun setUp() {
+        super.setUp()
+        // Mermaid output lives under the IDE system directory and the bundled schema resolves from the
+        // build's resources directory; Windows CI (8.3 short temp paths) does not list either among the
+        // default allowed VFS roots, so allow both, raw and canonical.
+        val roots = listOf(
+            java.nio.file.Path.of(com.intellij.openapi.application.PathManager.getSystemPath()),
+            java.nio.file.Path.of(System.getProperty("user.dir")),
+        ).flatMap { root -> listOf(root.toAbsolutePath().toString(), runCatching { root.toRealPath().toString() }.getOrDefault(root.toString())) }
+        com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess.allowRootAccess(testRootDisposable, *roots.distinct().toTypedArray())
+    }
+
     fun testNearestAncestorAndBundledFallbackForBothConfigNames() {
         val rootSchema = myFixture.addFileToProject("node_modules/@effect/tsgo/schema.json", "{} ").virtualFile
         val nestedSchema = myFixture.addFileToProject("packages/a/node_modules/@effect/tsgo/schema.json", "{} ").virtualFile
@@ -24,6 +36,116 @@ class EffectJsonSchemaProviderTest : BasePlatformTestCase() {
         assertEquals(rootSchema, providers.single { it.isAvailable(otherConfig) }.schemaFile)
         WriteCommandAction.runWriteCommandAction(project) { rootSchema.delete(this) }
         assertEquals("tsgo-0.67.4.schema.json", providers.single { it.isAvailable(rootConfig) }.schemaFile!!.name)
+    }
+
+    fun testRenameConfigAwayRemovesEffectSchema() {
+        JsonSchemaProviderFactory.EP_NAME.point.registerExtension(EffectJsonSchemaProviderFactory(), testRootDisposable)
+        val config = myFixture.addFileToProject("tsconfig.json", "{}").virtualFile
+        val json = JsonSchemaService.Impl.get(project)
+        assertTrue(json.getSchemaFilesForFile(config).any { it.name == "tsgo-0.67.4.schema.json" })
+        val provider = EffectJsonSchemaProviderFactory().getProviders(project).single { it.isAvailable(config) }
+        WriteCommandAction.runWriteCommandAction(project) { config.rename(this, "notes.json") }
+        assertFalse(provider.isAvailable(config))
+        awaitSchema { json.getSchemaFilesForFile(config).none { it.name == "tsgo-0.67.4.schema.json" } }
+    }
+
+    fun testRenameWorkspaceSchemaAwayUsesBundledSchema() {
+        val schema = myFixture.addFileToProject("node_modules/@effect/tsgo/schema.json", "{}").virtualFile
+        val config = myFixture.addFileToProject("tsconfig.json", "{}").virtualFile
+        JsonSchemaProviderFactory.EP_NAME.point.registerExtension(EffectJsonSchemaProviderFactory(), testRootDisposable)
+        val json = JsonSchemaService.Impl.get(project)
+        assertContainsElements(json.getSchemaFilesForFile(config), schema)
+        WriteCommandAction.runWriteCommandAction(project) { schema.rename(this, "old-schema.json") }
+        awaitSchema { json.getSchemaFilesForFile(config).any { it.name == "tsgo-0.67.4.schema.json" } }
+    }
+
+    fun testWorkspaceSchemaChangesRefreshCompletionWithoutManualReset() {
+        JsonSchemaProviderFactory.EP_NAME.point.registerExtension(EffectJsonSchemaProviderFactory(), testRootDisposable)
+        val config = myFixture.addFileToProject("tsconfig.json", "{}").virtualFile
+        fun options(): List<String> {
+            myFixture.configureFromExistingVirtualFile(config)
+            WriteCommandAction.runWriteCommandAction(project) { myFixture.editor.document.setText("""{"compilerOptions":{"plugins":[{"name":"@effect/language-service", ""}]}}""") }
+            myFixture.editor.caretModel.moveToOffset(myFixture.editor.document.text.indexOf("\"\"}") + 1)
+            com.intellij.psi.PsiDocumentManager.getInstance(project).commitAllDocuments()
+            com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().saveAllDocuments()
+            myFixture.completeBasic()
+            val result = myFixture.lookupElementStrings.orEmpty().toList()
+            com.intellij.codeInsight.lookup.LookupManager.getInstance(project).hideActiveLookup()
+            return result
+        }
+        assertContainsElements(options(), "inlays")
+        fun schema(option: String) = """{"type":"object","properties":{"compilerOptions":{"type":"object","properties":{
+            "plugins":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
+            "name":{"const":"@effect/language-service"},"$option":{"type":"boolean"}}}}}}}}"""
+        val workspace = myFixture.addFileToProject("node_modules/@effect/tsgo/schema.json", schema("installedOption")).virtualFile
+        val json = JsonSchemaService.Impl.get(project)
+        awaitSchema { json.getSchemaFilesForFile(config).contains(workspace) }
+        assertContainsElements(options(), "installedOption")
+        val resets = java.util.concurrent.atomic.AtomicInteger()
+        val onReset = Runnable { resets.incrementAndGet() }
+        json.registerResetAction(onReset)
+        com.intellij.openapi.util.Disposer.register(testRootDisposable) { json.unregisterResetAction(onReset) }
+        WriteCommandAction.runWriteCommandAction(project) { workspace.setBinaryContent(schema("updatedOption").toByteArray()) }
+        awaitSchema { resets.get() > 0 }
+        assertContainsElements(options(), "updatedOption")
+        val advisory = project.getService(EffectSchemaService::class.java)
+        awaitSchema { advisory.warnings(EffectJson.mapper.readTree("""{"updatedOption":"bad"}"""), config.parent)
+            .any { it.contains("boolean") } }
+        WriteCommandAction.runWriteCommandAction(project) { workspace.delete(this) }
+        awaitSchema { json.getSchemaFilesForFile(config).any { it.name == "tsgo-0.67.4.schema.json" } }
+        assertContainsElements(options(), "inlays")
+    }
+
+    fun testRemovingNearestPackageDirectoryUsesAncestorSchema() {
+        val ancestor = myFixture.addFileToProject("node_modules/@effect/tsgo/schema.json", "{}").virtualFile
+        val nearest = myFixture.addFileToProject("nested/node_modules/@effect/tsgo/schema.json", "{}").virtualFile
+        val config = myFixture.addFileToProject("nested/tsconfig.json", "{}").virtualFile
+        JsonSchemaProviderFactory.EP_NAME.point.registerExtension(EffectJsonSchemaProviderFactory(), testRootDisposable)
+        val json = JsonSchemaService.Impl.get(project)
+        assertContainsElements(json.getSchemaFilesForFile(config), nearest)
+        val resets = java.util.concurrent.atomic.AtomicInteger()
+        val onReset = Runnable { resets.incrementAndGet() }
+        json.registerResetAction(onReset)
+        try {
+            WriteCommandAction.runWriteCommandAction(project) { nearest.parent.delete(this) }
+            awaitSchema { resets.get() > 0 }
+            assertContainsElements(json.getSchemaFilesForFile(config), ancestor)
+        } finally {
+            json.unregisterResetAction(onReset)
+        }
+    }
+
+    fun testSchemaInvalidationsAreScopedAndCoalesced() {
+        val schema = myFixture.addFileToProject("node_modules/@effect/tsgo/schema.json", "{}").virtualFile
+        val config = myFixture.addFileToProject("tsconfig.json", "{}").virtualFile
+        JsonSchemaProviderFactory.EP_NAME.point.registerExtension(EffectJsonSchemaProviderFactory(), testRootDisposable)
+        val json = JsonSchemaService.Impl.get(project)
+        json.getSchemaFilesForFile(config)
+        val service = project.getService(EffectSchemaService::class.java)
+        val unrelated = com.intellij.openapi.vfs.newvfs.events.VFileCreateEvent(
+            this, config.parent, "unrelated-directory", true, null, null, null)
+        assertFalse(service.affectsAssociations(unrelated))
+        val saves = com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent(this, config, config.modificationStamp, config.modificationStamp + 1, false)
+        assertFalse(service.affectsAssociations(saves))
+        val otherProject = com.intellij.openapi.vfs.newvfs.events.VFileCreateEvent(
+            this, config.parent.parent, "unrelated-project", true, null, null, null)
+        assertFalse(service.affectsAssociations(otherProject))
+        val resets = java.util.concurrent.atomic.AtomicInteger()
+        val onReset = Runnable { resets.incrementAndGet() }
+        json.registerResetAction(onReset)
+        try {
+            val event = com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent(this, schema, schema.modificationStamp, schema.modificationStamp + 1, false)
+            val publisher = project.messageBus.syncPublisher(com.intellij.openapi.vfs.VirtualFileManager.VFS_CHANGES)
+            WriteCommandAction.runWriteCommandAction(project) { repeat(5) { publisher.after(listOf(event)) } }
+            awaitSchema { resets.get() > 0 }
+            assertEquals(1, resets.get())
+        } finally {
+            json.unregisterResetAction(onReset)
+        }
+    }
+
+    private fun awaitSchema(condition: () -> Boolean) {
+        com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Automatic schema refresh", condition, 20)
     }
 
     fun testCompletionComposesWithOrdinaryCompilerOptionsAndOtherPlugins() {

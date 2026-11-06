@@ -12,6 +12,18 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class EffectLspCoreRegressionTest : BasePlatformTestCase() {
+    override fun setUp() {
+        super.setUp()
+        // Mermaid output lives under the IDE system directory and the bundled schema resolves from the
+        // build's resources directory; Windows CI (8.3 short temp paths) does not list either among the
+        // default allowed VFS roots, so allow both, raw and canonical.
+        val roots = listOf(
+            java.nio.file.Path.of(com.intellij.openapi.application.PathManager.getSystemPath()),
+            java.nio.file.Path.of(System.getProperty("user.dir")),
+        ).flatMap { root -> listOf(root.toAbsolutePath().toString(), runCatching { root.toRealPath().toString() }.getOrDefault(root.toString())) }
+        com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess.allowRootAccess(testRootDisposable, *roots.distinct().toTypedArray())
+    }
+
     fun testMermaidPositionUsesUtf16OffsetsWithTabsAndSupplementaryCharacters() {
         for (prefix in listOf("\t", "\uD83D\uDE00 ", "\t\uD83D\uDE00 ")) {
             for (tabSize in listOf(2, 8)) {

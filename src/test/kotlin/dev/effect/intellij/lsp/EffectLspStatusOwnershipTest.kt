@@ -16,6 +16,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.eclipse.lsp4j.ConfigurationItem
 import org.eclipse.lsp4j.InitializeResult
+import org.eclipse.lsp4j.jsonrpc.json.MessageJsonHandler
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
@@ -236,7 +237,7 @@ class EffectLspStatusOwnershipTest : BasePlatformTestCase() {
             descriptor.lspServerListener.serverInitialized(InitializeResult())
 
             assertTrue(commandLine.exePath.endsWith(binaryName))
-            assertEquals("""{"feature":"enabled"}""", initializationOptions.toString())
+            assertEquals("""{"feature":"enabled"}""", MessageJsonHandler(emptyMap()).format(initializationOptions))
             assertEquals(mapOf("inlays" to true), workspaceConfiguration)
             assertEquals(true, nestedWorkspaceConfiguration)
             assertEquals(EffectLspStatus.RUNNING, project.getService(EffectStatusService::class.java).currentSnapshot().status)

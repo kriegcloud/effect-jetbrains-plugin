@@ -10,6 +10,7 @@ import dev.effect.intellij.core.logger
 import dev.effect.intellij.notifications.EffectNotificationService
 import dev.effect.intellij.settings.EffectProjectSettingsService
 import dev.effect.intellij.status.EffectStatusService
+import java.util.concurrent.CancellationException
 
 @Service(Service.Level.PROJECT)
 class EffectLspProjectService(private val project: Project) {
@@ -40,6 +41,8 @@ class EffectLspProjectService(private val project: Project) {
                 initializationOptions = resolvedSettings.initializationOptions,
                 workspaceConfiguration = resolvedSettings.workspaceConfiguration,
             )
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Exception) {
             val message = error.message ?: "Unknown Effect LSP startup failure."
             log.warn("Failed to build Effect LSP launch configuration", error)

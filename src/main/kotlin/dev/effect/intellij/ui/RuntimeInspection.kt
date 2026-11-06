@@ -1,6 +1,8 @@
 package dev.effect.intellij.ui
 
 import dev.effect.intellij.devtools.*
+import dev.effect.intellij.debug.EffectDebugTreeEntry
+import javax.swing.tree.DefaultTreeModel
 import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.TreePath
@@ -39,13 +41,23 @@ internal class RuntimeTreeInspection private constructor(
 ) {
     fun restore(tree: JTree) {
         val root = tree.model.root as DefaultMutableTreeNode
-        val nodes = root.depthFirstEnumeration().asSequence().filterIsInstance<DefaultMutableTreeNode>().toList()
-        nodes.forEach { node ->
-            val path = TreePath(node.path)
-            if (identity(path) in expanded || !initialized) tree.expandPath(path)
+        fun resolve(keys: List<Any>): TreePath? {
+            var node = root
+            if (keys.firstOrNull() != nodeIdentity(root)) return null
+            for (key in keys.drop(1)) {
+                node = node.children().asSequence().filterIsInstance<DefaultMutableTreeNode>()
+                    .firstOrNull { nodeIdentity(it) == key } ?: return null
+            }
+            return TreePath(node.path)
         }
-        val selection = nodes.firstOrNull { identity(TreePath(it.path)) == selected }
-        if (selection != null) tree.selectionPath = TreePath(selection.path)
+        if (!initialized) {
+            tree.expandPath(TreePath(root.path))
+            // Initial display opens only the top level, independent of retained tree size.
+        } else {
+            expanded.sortedBy { it.size }.forEach { keys -> resolve(keys)?.let(tree::expandPath) }
+        }
+        val selection = selected?.let(::resolve)
+        if (selection != null) tree.selectionPath = selection
         else if (tree.rowCount > 0) tree.setSelectionRow(0)
     }
 
@@ -57,14 +69,44 @@ internal class RuntimeTreeInspection private constructor(
             return RuntimeTreeInspection(tree.selectionPath?.let(::identity), expanded, root.childCount > 0)
         }
 
-        private fun identity(path: TreePath): List<Any> = path.path.map { element ->
-            when (val value = (element as DefaultMutableTreeNode).userObject) {
-                is RuntimeSpanSnapshot -> value.traceId to value.spanId
-                is RuntimeSpanEventSnapshot -> value.name to value.startTime
-                is RuntimeMetricSnapshot -> Triple(value.name, value.kind, value.tags)
-                is RuntimeDetailEntry -> value.key
-                else -> value.toString()
-            }
+        private fun identity(path: TreePath): List<Any> = path.path.map { nodeIdentity(it as DefaultMutableTreeNode) }
+
+        private fun nodeIdentity(node: DefaultMutableTreeNode): Any = when (val value = node.userObject) {
+            is RuntimeSpanSnapshot -> value.traceId to value.spanId
+            is RuntimeSpanEventSnapshot -> value.name to value.startTime
+            is RuntimeMetricSnapshot -> Triple(value.name, value.kind, value.tags)
+            is RuntimeDetailEntry -> value.key
+            is EffectDebugTreeEntry -> value.inspectionKey
+            else -> value.toString()
         }
     }
+}
+
+/** Reuse unchanged branches and notify Swing only for changed nodes or child lists. */
+internal fun reconcileSpanNodes(parent: DefaultMutableTreeNode, spans: List<RuntimeSpanSnapshot>, model: DefaultTreeModel) {
+    fun reconcile(node: DefaultMutableTreeNode, values: List<Any>) {
+        val old = node.children().asSequence().filterIsInstance<DefaultMutableTreeNode>().toList()
+        fun key(value: Any): Any = when (value) {
+            is RuntimeSpanSnapshot -> value.traceId to value.spanId
+            is RuntimeSpanEventSnapshot -> value.name to value.startTime
+            else -> value
+        }
+        // Queues also preserve duplicate event identities in protocol order.
+        val available = old.groupBy { key(it.userObject) }.mapValues { java.util.ArrayDeque(it.value) }
+        val children = values.map { value ->
+            val child = available[key(value)]?.pollFirst() ?: DefaultMutableTreeNode()
+            if (child.userObject != value) {
+                child.userObject = value
+                if (value is RuntimeSpanSnapshot) reconcile(child, value.events + value.children)
+                model.nodeChanged(child)
+            }
+            child
+        }
+        if (old != children) {
+            node.removeAllChildren()
+            children.forEach(node::add)
+            model.nodeStructureChanged(node)
+        }
+    }
+    reconcile(parent, spans)
 }
