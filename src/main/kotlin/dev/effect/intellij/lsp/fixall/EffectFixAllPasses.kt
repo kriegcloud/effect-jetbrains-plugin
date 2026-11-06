@@ -66,7 +66,7 @@ internal fun runFixAllPasses(
 
     var oneAtATime = false
     val skippedSites = HashSet<String>()
-    var rejected = 0
+    val rejectedSites = HashSet<String>()
     var applied = 0
     var passes = 0
     var lastEmptyPlan: EffectFixAllPlan? = null
@@ -95,14 +95,30 @@ internal fun runFixAllPasses(
 
         val errorsBefore = errorSignatures(diagnostics)
         session.apply(plan.edits)
-        val after = session.pullDiagnostics()
+        if (session.currentText() == text) {
+            // The fix rewrote the text to itself; repeating it can never make progress.
+            if (!oneAtATime) {
+                break
+            }
+            skippedSites += sites.getValue(batch.single().fixAllKey())
+            continue
+        }
+        val after = try {
+            session.pullDiagnostics()
+        } catch (error: Throwable) {
+            // Unvalidated: never leave this pass in the document. Earlier, validated passes stay.
+            session.restore(text)
+            throw error
+        }
         if (introducesErrors(errorsBefore, errorSignatures(after))) {
             session.restore(text)
-            if (!oneAtATime && plan.fixedDiagnostics > 1) {
+            if (!oneAtATime) {
+                // Only a one-fix pass identifies the culprit: retry the batch one site at a time.
                 oneAtATime = true
             } else {
-                rejected += 1
-                skippedSites += sites.getValue(batch.first().fixAllKey())
+                val site = sites.getValue(batch.single().fixAllKey())
+                rejectedSites += site
+                skippedSites += site
             }
             // The text is back to what `diagnostics` describes.
             continue
@@ -112,14 +128,14 @@ internal fun runFixAllPasses(
     }
 
     val remaining = selectFixAllDiagnostics(diagnostics, session.currentText(), request.ruleKey).size
-    return EffectFixAllRunResult(initial, applied, remaining, rejected, lastEmptyPlan.takeIf { applied == 0 }, passes)
+    return EffectFixAllRunResult(initial, applied, remaining, rejectedSites.size, lastEmptyPlan.takeIf { applied == 0 }, passes)
 }
 
 internal const val DEFAULT_MAX_FIX_ALL_PASSES = 64
 
 /**
  * Identifies a diagnostic site by what it covers rather than where, so a site skipped in one pass is
- * still recognized after earlier fixes moved it: message, covered text, the text of its line, and the
+ * still recognized after earlier fixes moved or reformatted its line: message, covered text, and the
  * occurrence index among identical sites.
  */
 private fun siteKeys(diagnostics: List<Diagnostic>, text: String): Map<EffectDiagnosticKey, String> {
@@ -128,12 +144,7 @@ private fun siteKeys(diagnostics: List<Diagnostic>, text: String): Map<EffectDia
     return diagnostics.sortedWith(diagnosticOrder).associate { diagnostic ->
         val range = diagnostic.range?.let(lineIndex::rangeOf)
         val covered = range?.let { text.substring(it.startOffset, it.endOffset) }.orEmpty()
-        val lineText = range?.let {
-            val lineStart = text.lastIndexOf('\n', it.startOffset - 1) + 1
-            val lineEnd = text.indexOf('\n', it.startOffset).let { end -> if (end < 0) text.length else end }
-            text.substring(lineStart, lineEnd)
-        }.orEmpty()
-        val base = "${diagnostic.effectDiagnosticMessageOrEmpty()}\u0000$covered\u0000$lineText"
+        val base = "${diagnostic.effectDiagnosticMessageOrEmpty()}\u0000$covered"
         val occurrence = seen.merge(base, 1, Int::plus)!!
         diagnostic.fixAllKey() to "$base\u0000$occurrence"
     }

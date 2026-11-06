@@ -285,6 +285,19 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     }
 
     fun reset(settings: EffectProjectSettings) {
+        // Loading stored settings must not default a blank pinned version: that would mark the page
+        // modified and let Apply save a version the user never chose.
+        resetting = true
+        try {
+            resetFields(settings)
+        } finally {
+            resetting = false
+        }
+    }
+
+    private var resetting = false
+
+    private fun resetFields(settings: EffectProjectSettings) {
         binaryMode.selectedItem = settings.binaryMode
         refreshDetectedVersions()
         setPinnedVersionText(settings.pinnedVersion)
@@ -355,7 +368,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         manualBinaryPathRow.visible(mode == EffectBinaryMode.MANUAL)
         pinnedVersion.isEnabled = mode == EffectBinaryMode.PINNED
         manualBinaryPath.isEnabled = mode == EffectBinaryMode.MANUAL
-        if (mode == EffectBinaryMode.PINNED && pinnedVersionText().isBlank()) {
+        if (!resetting && mode == EffectBinaryMode.PINNED && pinnedVersionText().isBlank()) {
             // Switching to PINNED defaults to the release the workspace already depends on.
             refreshDetectedVersions()
             detectedVersions.firstOrNull()?.let { detected -> setPinnedVersionText(detected.version) }

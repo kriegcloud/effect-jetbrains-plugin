@@ -14,11 +14,11 @@ class EffectFixAllMessagesTest : BasePlatformTestCase() {
         assertEquals("Applied 'X' to 1 problem", EffectBundle.message("fix.all.in.file.applied", "X", 1))
         assertEquals("Applied 'X' to 3 problems", EffectBundle.message("fix.all.in.file.applied", "X", 3))
         assertEquals(
-            "Applied 'X' to 2 problems. 3 problems remain without an applicable fix; 1 fix was not applied because it introduced new errors.",
+            "Applied 'X' to 2 problems. 3 problems remain; 1 fix was not applied because it introduced new errors.",
             EffectBundle.message("fix.all.in.file.partial", "X", 2, 3, 1),
         )
         assertEquals(
-            "Applied 'X' to 1 problem. 1 problem remains without an applicable fix.",
+            "Applied 'X' to 1 problem. 1 problem remains.",
             EffectBundle.message("fix.all.in.file.partial", "X", 1, 1, 0),
         )
         assertEquals(

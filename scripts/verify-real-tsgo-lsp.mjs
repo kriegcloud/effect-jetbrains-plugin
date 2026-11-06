@@ -818,7 +818,7 @@ async function verifyNewDiagnosticsWorkspace(workspacePath) {
       diagnostics: messages,
       codeActionTitles,
       obsoleteSchemaImport: { severity: obsolete[0].severity, suppressionOnly: true },
-      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach", "Effect.catchTag", "Effect.andThen", "Effect.yieldNow", "Effect.tap"],
+      appliedQuickFixes: ["Effect.succeedSome", "Effect.succeedNone", "Effect.forEach", "Effect.catchTag", "Effect.andThen", "Effect.yieldNow", "Effect.tap", "Effect.as", "Effect.flatten"],
       optInSuppressionOnly: ["preferEffectArray", "preferEffectRecord", "preferSchemaTaggedError", "apiStabilityLeak"],
       quickFixBaselineErrorCount: errorSignatures(diagnostics).length,
       executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],

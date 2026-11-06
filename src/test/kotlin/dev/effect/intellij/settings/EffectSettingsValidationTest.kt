@@ -177,6 +177,25 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         }
     }
 
+    fun testResetDoesNotDefaultAStoredBlankPinnedVersion() {
+        val workspaceRoot = java.nio.file.Path.of(requireNotNull(project.basePath))
+        val tsgoManifest = workspaceRoot.resolve("node_modules/@effect/tsgo/package.json")
+        Files.createDirectories(tsgoManifest.parent)
+        Files.writeString(tsgoManifest, """{"name":"@effect/tsgo","version":"0.53.4"}""")
+        val service = project.getService(EffectProjectSettingsService::class.java)
+        service.updateSettings(EffectProjectSettings(binaryMode = EffectBinaryMode.PINNED, pinnedVersion = ""))
+        val configurable = EffectProjectSettingsConfigurable(project)
+        configurable.createComponent()
+        try {
+            configurable.reset()
+
+            assertFalse("Loading stored settings must not mark the page modified", configurable.isModified)
+        } finally {
+            configurable.disposeUIResources()
+            tsgoManifest.parent.parent.parent.toFile().deleteRecursively()
+        }
+    }
+
     fun testConfigurableUsesScrollableGroupedLayoutWithoutSplitter() {
         val service = project.getService(EffectProjectSettingsService::class.java)
         service.updateSettings(EffectProjectSettings(binaryMode = EffectBinaryMode.LATEST))

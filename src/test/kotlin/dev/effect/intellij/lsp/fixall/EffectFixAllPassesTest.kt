@@ -12,6 +12,8 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class EffectFixAllPassesTest {
@@ -92,6 +94,45 @@ class EffectFixAllPassesTest {
     }
 
     @Test
+    fun stopsWhenAFixRewritesTheTextToItself() {
+        val session = FakeSession("B B") { site -> site }
+
+        val result = runFixAllPasses(request, URI, session)
+
+        assertEquals("B B", session.text)
+        assertEquals(0, result.appliedFixes)
+        assertEquals(2, result.remainingDiagnostics)
+        assertTrue(result.passes <= 3)
+    }
+
+    @Test
+    fun restoresTheUnvalidatedPassWhenTheValidationPullFails() {
+        val session = FakeSession("B B") { "ok" }
+        session.failPullNumber = 2
+
+        try {
+            runFixAllPasses(request, URI, session)
+            fail("Expected the failed validation pull to propagate")
+        } catch (_: IllegalStateException) {
+        }
+
+        assertEquals("B B", session.text)
+    }
+
+    @Test
+    fun countsARejectedSiteOnceEvenWhenAMergedPassFixedOnlyThatSite() {
+        // The first site has no matching fix, so the merged pass fixes only the harmful second one.
+        val session = FakeSession("B1 B") { site -> if (site == "B") "broken" else site }
+        session.titleFor = { site -> if (site == "B1") "Another fix" else "Fix it" }
+
+        val result = runFixAllPasses(request, URI, session)
+
+        assertEquals("B1 B", session.text)
+        assertEquals(0, result.appliedFixes)
+        assertEquals(1, result.rejectedFixes)
+    }
+
+    @Test
     fun reportsNothingWhenTheRuleHasNoDiagnostics() {
         val session = FakeSession("ok") { "ok" }
 
@@ -108,10 +149,15 @@ class EffectFixAllPassesTest {
         private val rewrite: (String) -> String,
     ) : EffectFixAllSession {
         val restores = mutableListOf<String>()
+        var failPullNumber = -1
+        var titleFor: (String) -> String = { title }
+        private var pulls = 0
 
         override fun currentText(): String = text
 
         override fun pullDiagnostics(): List<Diagnostic> {
+            pulls += 1
+            check(pulls != failPullNumber) { "server stopped" }
             val sites = Regex("""\bB\d*\b""").findAll(text).map { match ->
                 Diagnostic(range(match.range), "Simplify this. effect(bRule)").also {
                     it.code = Either.forRight(377100)
@@ -137,7 +183,7 @@ class EffectFixAllPassesTest {
             diagnostics.map { diagnostic ->
                 val start = diagnostic.range.start.character
                 val site = text.substring(start, diagnostic.range.end.character)
-                CodeAction(title).also { action ->
+                CodeAction(titleFor(site)).also { action ->
                     action.kind = CodeActionKind.QuickFix
                     action.diagnostics = listOf(diagnostic)
                     action.edit = WorkspaceEdit(mapOf(URI to listOf(TextEdit(diagnostic.range, rewrite(site)))))

@@ -72,6 +72,9 @@ class EffectWebStormTypeScriptService(private val project: Project) {
                     "or let the Effect plugin download @effect/tsgo 0.57.0 or newer, which ships tsrs.",
             )
         ensureExecutable(candidate.executable)
+        check(platform.isWindows || Files.isExecutable(candidate.executable)) {
+            "${candidate.executable} is not executable and its permissions could not be changed."
+        }
         val packageDirectory = EffectTsrsTypeScriptPackage.create(packageCacheRoot(), candidate, platform)
         return candidate to packageDirectory
     }

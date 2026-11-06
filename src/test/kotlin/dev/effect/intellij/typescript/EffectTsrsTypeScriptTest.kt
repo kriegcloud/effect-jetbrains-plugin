@@ -5,6 +5,7 @@ import com.intellij.lang.typescript.lsp.getTypeScriptGoPackageInfo
 import com.intellij.lang.typescript.lsp.invalidateTsGoPackageInfo
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.nio.file.Files
 import java.nio.file.Path
@@ -16,7 +17,9 @@ class EffectTsrsTypeScriptTest : BasePlatformTestCase() {
 
     override fun setUp() {
         super.setUp()
-        root = Files.createTempDirectory("effect-tsrs-test")
+        // Canonical path: macOS temp dirs resolve through /private/var, which VFS root checks see.
+        root = Files.createTempDirectory("effect-tsrs-test").toRealPath()
+        VfsRootAccess.allowRootAccess(testRootDisposable, root.toString())
     }
 
     override fun tearDown() {
@@ -67,12 +70,37 @@ class EffectTsrsTypeScriptTest : BasePlatformTestCase() {
                 "0.9.0" to TsrsSource.MANAGED_EFFECT_TSGO_CACHE,
             ),
             candidates.map { candidate ->
-                val path = candidate.executable.toString()
+                val path = candidate.executable.toString().replace('\\', '/')
                 val marker = listOf("@tsrs/linux-x64-gnu", "@tsrs/linux-x64-musl", "/0.67.4/", "/0.9.0/", "tsgo-linux-x64").first { path.contains(it) }.trim('/')
                 marker to candidate.source
             },
         )
         assertTrue(candidates.filter { it.source != TsrsSource.WORKSPACE_TSRS_PACKAGE }.all { it.effectPatched })
+    }
+
+    fun testPrefersTheMuslBuildOnMuslHosts() {
+        val workspace = root.resolve("workspace")
+        tsrsPackage(workspace.resolve("node_modules/@tsrs/linux-x64-gnu"))
+        tsrsPackage(workspace.resolve("node_modules/@tsrs/linux-x64-musl"))
+
+        val candidate = EffectTsrsLocator.find(workspace, null, TsrsPlatform("linux", "x64", musl = true)).first()
+
+        assertTrue(candidate.executable.toString().replace('\\', '/').contains("@tsrs/linux-x64-musl"))
+    }
+
+    fun testRebuildingReplacesThePackageWithoutLeavingStagingDirectories() {
+        val first = artifact(root.resolve("tsrs-install"))
+        val candidate = TsrsCandidate(first.resolve("tsrs"), "7.1.0-beta", "0.22.0-ts7.1.0-beta", TsrsSource.WORKSPACE_TSRS_PACKAGE, false)
+        val generated = root.resolve("generated")
+
+        EffectTsrsTypeScriptPackage.create(generated, candidate, platform)
+        Files.delete(first.resolve("lib.es5.d.ts"))
+        val packageDirectory = EffectTsrsTypeScriptPackage.create(generated, candidate, platform)
+
+        val lib = EffectTsrsTypeScriptPackage.linkedExecutable(packageDirectory, platform)!!.parent
+        assertFalse(Files.exists(lib.resolve("lib.es5.d.ts")))
+        assertTrue(Files.exists(lib.resolve("lib.d.ts")))
+        assertEquals(1, Files.list(generated).use { it.count() })
     }
 
     fun testGeneratedPackageIsRecognizedByWebStormsTypeScriptGoDetection() {

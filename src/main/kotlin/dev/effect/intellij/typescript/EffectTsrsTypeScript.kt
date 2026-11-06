@@ -1,6 +1,7 @@
 package dev.effect.intellij.typescript
 
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.openapi.util.io.FileUtil
 import dev.effect.intellij.core.EffectJson
 import java.nio.file.Files
 import java.nio.file.Path
@@ -37,12 +38,16 @@ data class TsrsCandidate(
 }
 
 /** Host naming used by both the `@typescript/typescript-<os>-<arch>` and `@tsrs/<os>-<arch>[-libc]` packages. */
-data class TsrsPlatform(val os: String, val arch: String) {
+data class TsrsPlatform(val os: String, val arch: String, val musl: Boolean = false) {
     val isWindows: Boolean get() = os == "win32"
     val executableName: String get() = if (isWindows) "tsrs.exe" else "tsrs"
     val typeScriptExecutableName: String get() = if (isWindows) "tsc.exe" else "tsc"
 
     companion object {
+        /** musl hosts ship the musl dynamic loader (`/lib/ld-musl-<arch>.so.1`) instead of glibc's. */
+        private fun isMuslHost(): Boolean =
+            runCatching { Path.of("/lib").listDirectoryEntries("ld-musl-*").isNotEmpty() }.getOrDefault(false)
+
         fun current(): TsrsPlatform? {
             val os = when {
                 SystemInfo.isLinux -> "linux"
@@ -56,7 +61,7 @@ data class TsrsPlatform(val os: String, val arch: String) {
                 "arm" -> "arm"
                 else -> return null
             }
-            return TsrsPlatform(os, arch)
+            return TsrsPlatform(os, arch, musl = os == "linux" && isMuslHost())
         }
     }
 }
@@ -98,8 +103,8 @@ object EffectTsrsLocator {
         val prefix = "${platform.os}-${platform.arch}"
         return safeList(scopeRoot)
             .filter { it.isDirectory() && (it.name == prefix || it.name.startsWith("$prefix-")) }
-            // glibc builds first; a musl build only when it is the one installed.
-            .sortedBy { if (it.name.contains("musl")) 1 else 0 }
+            // The build matching the host C library first: glibc normally, musl on musl hosts (Alpine).
+            .sortedBy { if (it.name.contains("musl") == platform.musl) 0 else 1 }
             .mapNotNull { packageRoot ->
                 val tsrsVersion = readVersion(packageRoot.resolve("package.json")) ?: return@mapNotNull null
                 val typeScriptVersion = typeScriptVersionOf(tsrsVersion) ?: return@mapNotNull null
@@ -174,13 +179,35 @@ object EffectTsrsLocator {
  */
 object EffectTsrsTypeScriptPackage {
     fun packageDirectory(cacheRoot: Path, candidate: TsrsCandidate): Path =
-        cacheRoot.resolve(shortHash(candidate.executable.toAbsolutePath().normalize().toString()))
-            .resolve("node_modules")
-            .resolve("typescript")
+        packageRoot(cacheRoot, candidate).resolve("node_modules").resolve("typescript")
 
+    private fun packageRoot(cacheRoot: Path, candidate: TsrsCandidate): Path =
+        cacheRoot.resolve(shortHash(candidate.executable.toAbsolutePath().normalize().toString()))
+
+    /**
+     * Builds the package in a staging directory beside the active one and swaps it in only once it is
+     * complete, so a failed rebuild never leaves WebStorm pointing at a half-written package.
+     */
     fun create(cacheRoot: Path, candidate: TsrsCandidate, platform: TsrsPlatform): Path {
-        val typeScriptPackage = packageDirectory(cacheRoot, candidate)
-        val nodeModules = typeScriptPackage.parent
+        val activeRoot = packageRoot(cacheRoot, candidate)
+        val stagingRoot = activeRoot.resolveSibling("${activeRoot.fileName}.staging-${System.nanoTime()}")
+        try {
+            writePackage(stagingRoot, candidate, platform)
+            if (Files.exists(activeRoot)) {
+                FileUtil.delete(activeRoot)
+            }
+            Files.move(stagingRoot, activeRoot)
+        } finally {
+            if (Files.exists(stagingRoot)) {
+                FileUtil.delete(stagingRoot)
+            }
+        }
+        return packageDirectory(cacheRoot, candidate)
+    }
+
+    private fun writePackage(root: Path, candidate: TsrsCandidate, platform: TsrsPlatform) {
+        val nodeModules = root.resolve("node_modules")
+        val typeScriptPackage = nodeModules.resolve("typescript")
         val platformPackageName = "typescript-${platform.os}-${platform.arch}"
         val platformPackage = nodeModules.resolve("@typescript").resolve(platformPackageName)
         val lib = platformPackage.resolve("lib")
@@ -207,14 +234,11 @@ object EffectTsrsTypeScriptPackage {
             ),
         )
 
-        // Replace links from an earlier run so a moved or upgraded tsrs never leaves stale files behind.
-        runCatching { lib.listDirectoryEntries() }.getOrDefault(emptyList()).forEach { Files.deleteIfExists(it) }
         link(lib.resolve(platform.typeScriptExecutableName), candidate.executable)
         val standardLibraryRoot = candidate.executable.parent
         runCatching { standardLibraryRoot.listDirectoryEntries("lib*.d.ts") }.getOrDefault(emptyList())
             .filter { it.isRegularFile() }
             .forEach { link(lib.resolve(it.name), it) }
-        return typeScriptPackage
     }
 
     /** The executable WebStorm will start for [typeScriptPackage], if it was generated by [create]. */
