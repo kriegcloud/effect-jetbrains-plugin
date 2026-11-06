@@ -81,6 +81,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
             EffectBinaryService.getInstance().requestTimeout = Duration.ofMinutes(2)
             EffectBinaryService.getInstance().downloadTempDirectory = null
             EffectApplicationStateService.getInstance().loadState(originalApplicationState)
+            tempDir.toFile().deleteRecursively()
         } finally {
             super.tearDown()
         }

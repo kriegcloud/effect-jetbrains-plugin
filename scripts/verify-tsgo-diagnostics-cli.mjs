@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { assertDiagnosticParity } from "./tsgo-diagnostic-parity.mjs"
 import { spawn } from "node:child_process"
 import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -48,7 +49,7 @@ async function run(command, args, cwd, allowedCodes = [0]) {
 
 // A small read-only LSP transport: the existing verifier is an executable script, not an
 // importable helper. Use the same installed CLI/backend and tsconfig for both protocols.
-async function lspRuleNames(binary, cwd, sources) {
+async function lspFindings(binary, cwd, sources) {
   const child = spawn(binary, ["--lsp", "--stdio"], {
     cwd, stdio: ["pipe", "pipe", "pipe"],
   })
@@ -123,7 +124,7 @@ async function lspRuleNames(binary, cwd, sources) {
     notify("initialized", {})
     notify("workspace/didChangeConfiguration", { settings: {} })
     // Open and pull every fixture source, matching the CLI's project-wide check.
-    const names = []
+    const findings = []
     for (const [file, text] of sources) {
       const uri = pathToFileURL(path.join(cwd, "src", file)).href
       notify("textDocument/didOpen", {
@@ -132,15 +133,18 @@ async function lspRuleNames(binary, cwd, sources) {
       // The pull is ordered after didOpen, and returns a full report even for a healthy fixture.
       const report = await request("textDocument/diagnostic", { textDocument: { uri } })
       assert(Array.isArray(report?.items), `Expected full LSP diagnostic report for ${file}: ${JSON.stringify(report)}`)
-      names.push(...report.items.flatMap((diagnostic) => {
+      findings.push(...report.items.flatMap((diagnostic) => {
         const message = typeof diagnostic.message === "string" ? diagnostic.message : diagnostic.message?.value
         const name = message?.match(/effect\(([^)]+)\)\s*$/)?.[1]
-        return name ? [name] : [] // The CLI deliberately excludes ordinary TypeScript diagnostics.
+        // The CLI deliberately excludes ordinary TypeScript diagnostics.
+        // CLI lines are one-based; LSP ranges are zero-based.
+        return name ? [{ file: `src/${file}`, name, line: diagnostic.range.start.line + 1,
+          severity: { 1: "error", 2: "warning", 3: "message", 4: "message" }[diagnostic.severity] }] : []
       }))
     }
     await request("shutdown")
     notify("exit")
-    return [...new Set(names)].sort()
+    return findings
   } finally {
     child.kill()
     const killTimeout = setTimeout(() => child.kill("SIGKILL"), 2_000)
@@ -210,8 +214,8 @@ async function main() {
       verifyFindings(name, report.diagnostics, text)
       const cliNames = [...new Set(report.diagnostics.map((item) => item.name))].sort()
       const sources = await Promise.all(fixtureSources.map(async (file) => [file, await readFile(path.join(cwd, "src", file), "utf8")]))
-      assert.deepEqual(cliNames, await lspRuleNames(binary, cwd, sources), `${name}: CLI/LSP rule-name parity`)
-      results[name] = { diagnostics: report.diagnostics.length, rules: cliNames, lspRuleNamesAgree: true }
+      assertDiagnosticParity(report.diagnostics, await lspFindings(binary, cwd, sources), cwd, name)
+      results[name] = { diagnostics: report.diagnostics.length, rules: cliNames, lspDiagnosticMultisetsAgree: true }
       if (name === "diagnostic-directives-workspace") {
         // The published spelling is github-actions, not github.
         const github = await run(process.execPath, [...args, "github-actions"], cwd, [0, 1])

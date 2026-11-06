@@ -68,12 +68,22 @@ class EffectJsonSchemaProviderTest : BasePlatformTestCase() {
 
     fun testUnrelatedEventBatchAcquiresRootsOnceWithoutReset() {
         val config = myFixture.addFileToProject("tsconfig.json", "{}").virtualFile
-        val service = project.getService(EffectSchemaService::class.java)
+        // Own the dispatch queue so an unrelated delivery cannot hide a reset behind a
+        // delayed coroutine. Nothing runs until this test explicitly drains the queue,
+        // even if the worker is held for longer than the old 300 ms observation window.
+        val queued = java.util.concurrent.ConcurrentLinkedQueue<Runnable>()
+        val dispatcher = object : kotlinx.coroutines.CoroutineDispatcher() {
+            override fun dispatch(context: kotlin.coroutines.CoroutineContext, block: Runnable) {
+                queued.add(block)
+            }
+        }
+        val job = kotlinx.coroutines.SupervisorJob()
+        val service = EffectSchemaService(project, kotlinx.coroutines.CoroutineScope(job + dispatcher))
         val json = JsonSchemaService.Impl.get(project)
-        // Finish any reset scheduled by fixture creation before observing this delivery.
-        var settled = false
-        com.intellij.util.Alarm(testRootDisposable).addRequest({ settled = true }, 300)
-        awaitSchema { settled }
+        // The factory can also have initialized the project's watched service during
+        // fixture creation. Settle its actual job before observing global resets.
+        val watched = project.getService(EffectSchemaService::class.java)
+        awaitSchema { watched.associationResetJob?.isCompleted != false }
         val resets = java.util.concurrent.atomic.AtomicInteger()
         val onReset = Runnable { resets.incrementAndGet() }
         json.registerResetAction(onReset)
@@ -85,13 +95,26 @@ class EffectJsonSchemaProviderTest : BasePlatformTestCase() {
             }
             service.associationsChanged(events) { acquisitions++; listOf(config.parent.path) }
             assertEquals(1, acquisitions)
-            // Drain the same delayed coroutine/EDT path used for resets before checking absence.
-            var drained = false
-            com.intellij.util.Alarm(testRootDisposable).addRequest({ drained = true }, 300)
-            awaitSchema { drained }
+            assertTrue("Unrelated events must not enqueue a reset coroutine", queued.isEmpty())
+            assertEquals(0, job.children.count())
             assertEquals(0, resets.get())
+
+            // Positive control: a relevant event must enqueue work, and draining that
+            // same scope must complete an observable reset before we assert the count.
+            val relevant = com.intellij.openapi.vfs.newvfs.events.VFileCreateEvent(
+                this, config.parent, "jsconfig.json", false, null, null, null)
+            service.associationsChanged(listOf(relevant)) { listOf(config.parent.path) }
+            assertFalse("Relevant events must enqueue a reset coroutine", queued.isEmpty())
+            awaitSchema {
+                queued.poll()?.run()
+                job.children.none()
+            }
+            assertEquals(1, resets.get())
         } finally {
             json.unregisterResetAction(onReset)
+            job.cancel()
+            while (true) (queued.poll() ?: break).run()
+            service.dispose()
         }
     }
 

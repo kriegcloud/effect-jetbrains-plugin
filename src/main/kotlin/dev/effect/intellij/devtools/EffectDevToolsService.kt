@@ -353,7 +353,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             val client = clients[clientId] ?: return
             client.lastSeenAt = Instant.now()
             val spanId = root.path("spanId").asText()
-            client.cachedRoots = null
+            invalidateSpanSnapshot(client, spanId)
             val state = client.spans.getOrPut(spanId) { MutableSpanState(spanId = spanId) }
             state.traceId = root.path("traceId").asText()
             state.name = root.path("name").asText()
@@ -387,6 +387,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             trimEvents(client, state.events)
             previousParent?.let { removeChildLink(client, it, spanId) }
             state.parentSpanId?.let { client.children.getOrPut(it) { linkedSetOf() }.add(spanId) }
+            invalidateSpanSnapshot(client, spanId)
             enforceRetention(client)
             publishLocked()
         }
@@ -402,7 +403,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
                 startTime = root.path("startTime").asText(),
                 details = parseEntries(root.path("attributes"), prefix = "attr."),
             )
-            client.cachedRoots = null
+            invalidateSpanSnapshot(client, spanId)
             val span = client.spans[spanId]
             if (span != null) {
                 span.events += event
@@ -703,7 +704,21 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         }
     }
 
+    // Immutable publications share unaffected branches. Walk even through uncached spans: a
+    // newly attached child or a parent-link change can still invalidate a cached ancestor.
+    private fun invalidateSpanSnapshot(client: RuntimeClientState, spanId: String) {
+        client.cachedRoots = null
+        val visited = hashSetOf<String>()
+        var currentId: String? = spanId
+        while (currentId != null && visited.add(currentId)) {
+            val span = client.spans[currentId] ?: break
+            span.cachedSnapshot = null
+            currentId = span.parentSpanId
+        }
+    }
+
     private fun removeChildLink(client: RuntimeClientState, parentId: String, childId: String) {
+        invalidateSpanSnapshot(client, parentId)
         client.children[parentId]?.let { children ->
             children.remove(childId)
             if (children.isEmpty()) client.children.remove(parentId)
@@ -810,6 +825,8 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             children = emptyList(),
         )
 
+        state.cachedSnapshot?.let { return it }
+
         if (!visited.add(spanId)) {
             return RuntimeSpanSnapshot(
                 spanId = state.spanId,
@@ -837,7 +854,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             details = state.details,
             events = state.events.toList(),
             children = children,
-        )
+        ).also { state.cachedSnapshot = it }
     }
 
     companion object {
@@ -895,4 +912,5 @@ private data class MutableSpanState(
     var parentSpanId: String? = null,
     var details: List<RuntimeDetailEntry> = emptyList(),
     val events: MutableList<RuntimeSpanEventSnapshot> = mutableListOf(),
+    var cachedSnapshot: RuntimeSpanSnapshot? = null,
 )

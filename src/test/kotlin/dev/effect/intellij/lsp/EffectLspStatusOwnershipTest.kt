@@ -225,6 +225,7 @@ class EffectLspStatusOwnershipTest : BasePlatformTestCase() {
             }
 
             server.stop(0)
+            tempDir.toFile().deleteRecursively()
             binaryService.registryBaseUrl = "http://127.0.0.1:1"
 
             val initializationOptions = descriptor.createInitializationOptions()
@@ -252,6 +253,7 @@ class EffectLspStatusOwnershipTest : BasePlatformTestCase() {
         Files.createTempFile("effect-tsgo-test", if (System.getProperty("os.name").contains("Windows")) ".exe" else "").also { path ->
             Files.writeString(path, "echo test")
             path.toFile().setExecutable(true, false)
+            path.toFile().deleteOnExit()
         }
 
     private fun currentPlatformPackage(): String {

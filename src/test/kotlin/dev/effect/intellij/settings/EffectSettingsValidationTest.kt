@@ -293,6 +293,7 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         val service = project.getService(EffectProjectSettingsService::class.java)
         val executable = Files.createTempFile("effect-manual", if (System.getProperty("os.name").contains("win", ignoreCase = true)) ".exe" else "")
         executable.toFile().setExecutable(true, false)
+        executable.toFile().deleteOnExit()
 
         val problems = service.validate(
             EffectProjectSettings(
@@ -307,7 +308,7 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
     fun testManualModeRejectsNonExecutableFile() {
         if (SystemInfo.isWindows) return
         val service = project.getService(EffectProjectSettingsService::class.java)
-        val manual = Files.createTempFile("effect-manual-non-exec", ".tmp")
+        val manual = Files.createTempFile("effect-manual-non-exec", ".tmp").also { it.toFile().deleteOnExit() }
         Files.writeString(manual, "manual")
         makeNonExecutable(manual)
 

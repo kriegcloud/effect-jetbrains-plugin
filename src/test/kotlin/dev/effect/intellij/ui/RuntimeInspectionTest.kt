@@ -153,6 +153,105 @@ class RuntimeInspectionTest : BasePlatformTestCase() {
         println("Retained-limit EDT tree construction=${fullNanos / 1_000_000.0}ms; one-event update=${updateNanos / 1_000_000.0}ms")
     }
 
+    fun testLiveProducerOneEventUpdateSkipsUnchangedBranches() = withLiveProducer { publish ->
+        val first = publish(buildString {
+            repeat(EffectDevToolsService.MAX_RETAINED_SPANS) { id ->
+                appendLine("""{"_tag":"Span","spanId":"s$id","traceId":"t$id","name":"s$id"}""")
+                repeat(EffectDevToolsService.MAX_EVENTS_PER_SPAN) { event ->
+                    appendLine("""{"_tag":"SpanEvent","spanId":"s$id","name":"e$event","startTime":"$event"}""")
+                }
+            }
+        })
+        assertEquals(2000, first.size)
+        assertTrue(first.all { it.events.size == 100 })
+        val root = DefaultMutableTreeNode("root")
+        val model = DefaultTreeModel(root)
+        reconcileSpanNodes(root, first, model)
+        val second = publish("""{"_tag":"SpanEvent","spanId":"s0","name":"new","startTime":"100"}""" + "\n")
+        assertNotSame(first.first(), second.first())
+        first.indices.drop(1).forEach { assertSame(first[it], second[it]) }
+        var visits = 0
+        reconcileSpanNodes(root, second, model) { visits++ }
+        assertEquals(2100, visits) // 2,000 root identities and only the changed root's 100 events.
+        assertEquals("e0", first.first().events.first().name) // Published snapshots stay immutable.
+        assertEquals("new", second.first().events.last().name)
+    }
+
+    fun testLiveProducerInvalidatesBothParentsAndRetainedChildrenOnEviction() = withLiveProducer { publish ->
+        fun spanLine(id: String, trace: String = id, parent: String? = null): String {
+            val parentJson = parent?.let { """{"_tag":"Some","value":{"_tag":"Span","spanId":"$it"}}""" } ?: """{"_tag":"None"}"""
+            return """{"_tag":"Span","spanId":"$id","traceId":"$trace","name":"$id","parent":$parentJson}""" + "\n"
+        }
+        val first = publish(spanLine("a") + spanLine("b") + spanLine("child", parent = "a") + spanLine("untouched"))
+        val moved = publish(spanLine("child", parent = "b"))
+        assertEmpty(moved.first { it.spanId == "a" }.children)
+        assertEquals("child", moved.first { it.spanId == "b" }.children.single().spanId)
+        assertNotSame(first.first { it.spanId == "a" }, moved.first { it.spanId == "a" })
+        assertNotSame(first.first { it.spanId == "b" }, moved.first { it.spanId == "b" })
+        assertSame(first.first { it.spanId == "untouched" }, moved.first { it.spanId == "untouched" })
+        val event = publish("""{"_tag":"SpanEvent","spanId":"child","name":"new","startTime":"1"}""" + "\n")
+        assertNotSame(moved.first { it.spanId == "b" }, event.first { it.spanId == "b" })
+        assertEquals(1, event.first { it.spanId == "b" }.children.single().events.size)
+        // Fill capacity, then evict a followed by b. The cross-trace child becomes a root.
+        publish(buildString { repeat(1996) { append(spanLine("fill$it")) } })
+        val evicted = publish(spanLine("extra1") + spanLine("extra2"))
+        assertFalse(evicted.any { it.spanId == "a" || it.spanId == "b" })
+        assertEquals(1, evicted.first { it.spanId == "child" }.events.size)
+    }
+
+    fun testLiveProducerAttachesMissingParentAndInvalidatesParentOnChildEviction() = withLiveProducer { publish ->
+        val orphan = publish("""{"_tag":"Span","spanId":"child","traceId":"oldest","name":"child","parent":{"_tag":"Some","value":{"_tag":"Span","spanId":"parent"}}}""" + "\n").single()
+        val attached = publish("""{"_tag":"Span","spanId":"parent","traceId":"parent-trace","name":"parent"}""" + "\n").single()
+        assertSame(orphan, attached.children.single())
+        publish(buildString {
+            repeat(1998) { id -> appendLine("""{"_tag":"Span","spanId":"fill$id","traceId":"t$id","name":"fill$id"}""") }
+        })
+        val evicted = publish("""{"_tag":"Span","spanId":"extra","traceId":"extra","name":"extra"}""" + "\n")
+        val parent = evicted.first { it.spanId == "parent" }
+        assertNotSame(attached, parent)
+        assertEmpty(parent.children)
+        assertEquals("child", attached.children.single().spanId)
+    }
+
+    private fun withLiveProducer(test: ((String) -> List<RuntimeSpanSnapshot>) -> Unit) {
+        val port = java.net.ServerSocket(0).use { it.localPort }
+        project.getService(dev.effect.intellij.settings.EffectProjectSettingsService::class.java).updateSettings(
+            dev.effect.intellij.settings.EffectProjectSettings(devToolsPort = port, metricsPollIntervalMs = 60_000),
+        )
+        val service = project.getService(EffectDevToolsService::class.java)
+        val scheduler = service.schedulePublication
+        val publications = java.util.concurrent.ConcurrentLinkedQueue<() -> Unit>()
+        service.schedulePublication = { publications.add(it) } // Drain after the ordered Pong barrier.
+        val replies = java.util.concurrent.LinkedBlockingQueue<String>()
+        service.startServer()
+        var client: org.java_websocket.client.WebSocketClient? = null
+        try {
+            repeat(50) {
+                if (client == null) {
+                    val candidate = object : org.java_websocket.client.WebSocketClient(java.net.URI("ws://127.0.0.1:$port")) {
+                        override fun onOpen(handshake: org.java_websocket.handshake.ServerHandshake?) = Unit
+                        override fun onMessage(message: String) { replies.add(message) }
+                        override fun onClose(code: Int, reason: String?, remote: Boolean) = Unit
+                        override fun onError(error: Exception?) = Unit
+                    }
+                    if (candidate.connectBlocking(1, java.util.concurrent.TimeUnit.SECONDS)) client = candidate
+                    else { candidate.closeBlocking(); Thread.sleep(20) }
+                }
+            }
+            val connected = checkNotNull(client) { "Runtime socket did not connect" }
+            test { payload ->
+                connected.send(payload + """{"_tag":"Ping"}""" + "\n")
+                assertTrue("Ingestion barrier timed out", replies.poll(30, java.util.concurrent.TimeUnit.SECONDS)?.contains("Pong") == true)
+                checkNotNull(publications.poll()) { "Missing pending publication" }.invoke()
+                service.currentState().clients.single().rootSpans
+            }
+        } finally {
+            client?.closeBlocking()
+            service.stopServer()
+            service.schedulePublication = scheduler
+        }
+    }
+
     fun testDeepLeafUpdateVisitsEachSpanOnce() {
         for (depth in listOf(100, 300)) {
             var reads = 0

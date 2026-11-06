@@ -12,6 +12,7 @@ import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -31,6 +32,8 @@ class EffectSchemaService(private val project: Project, private val coroutineSco
     private val schemas = ConcurrentHashMap<String, CompletableFuture<EffectOptionSchema>>()
     private val watching = AtomicBoolean()
     private val resetPending = AtomicBoolean()
+    @Volatile internal var associationResetJob: Job? = null
+        private set
     @Volatile private var configPaths: List<String> = emptyList()
     @Volatile private var schemaRoots: List<String> = project.basePath?.let { base ->
         generateSequence(Path.of(base).toAbsolutePath().normalize()) { it.parent }
@@ -57,7 +60,7 @@ class EffectSchemaService(private val project: Project, private val coroutineSco
         // Merge VFS deliveries from package installation; never reset under the write action.
         if (resetPending.compareAndSet(false, true)) {
             // The injected service scope cancels pending resets when the service is disposed.
-            coroutineScope.launch {
+            associationResetJob = coroutineScope.launch {
                 delay(100.milliseconds)
                 resetPending.set(false)
                 if (!project.isDisposed) JsonSchemaService.Impl.get(project).reset()
