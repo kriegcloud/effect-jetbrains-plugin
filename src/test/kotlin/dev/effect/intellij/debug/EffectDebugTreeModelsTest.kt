@@ -15,6 +15,22 @@ class EffectDebugTreeModelsTest : TestCase() {
         assertNull(localDebugSourcePath("https://example.com/app.ts"))
     }
 
+    fun testSpanAttributesDecodeSnapshotTuplesForDisplay() {
+        val snapshot = EffectDebugSnapshot.parse("""{
+          "spanStack":[{"name":"work","attributes":[
+            ["http.method",{"type":"string","summary":"\"GET\"","children":[]}],
+            ["request",{"type":"object","summary":"{…}","children":[{"label":"id","type":"number","summary":"7"}]}],
+            "legacy=1"
+          ]}]
+        }""")
+        val attributes = snapshot.spanStack.single().attributes
+
+        assertEquals(listOf("http.method", "request", "legacy=1"), attributes.map { it.label })
+        assertEquals("\"GET\"", attributes[0].summary)
+        assertEquals("id", attributes[1].children.single().label)
+        assertTrue(snapshot.spanStack.single().formatDebugSpan().contains("http.method=\"GET\""))
+    }
+
     fun testTreeRetainsNamesAndNormalizesLocations() {
         val snapshot = EffectDebugSnapshot.parse("""{
           "context":[{"tag":"Service","value":{"label":"object","children":[

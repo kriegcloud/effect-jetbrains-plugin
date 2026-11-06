@@ -122,7 +122,7 @@ object EffectDebugTreeModels {
             inspectionKey = "${span.traceId}:${span.spanId}",
             detail = span.formatDebugSpan(),
             location = span.toSourceLocation(),
-            children = span.attributes.map { attribute -> EffectDebugTreeEntry(title = attribute, detail = attribute) },
+            children = span.attributes.map(::valueEntry),
         )
 
     private fun valueEntry(value: EffectDebugValueSnapshot): EffectDebugTreeEntry =
@@ -156,7 +156,7 @@ fun EffectDebugSpanEntry.formatDebugSpan(): String = buildString {
         appendLine("source: $path:${line ?: 0}:${column ?: 0}")
     }
     if (attributes.isNotEmpty()) {
-        appendLine("attributes: ${attributes.joinToString()}")
+        appendLine("attributes: ${attributes.joinToString { attribute -> "${attribute.label}=${attribute.summary ?: attribute.type ?: ""}" }}")
     }
 }
 

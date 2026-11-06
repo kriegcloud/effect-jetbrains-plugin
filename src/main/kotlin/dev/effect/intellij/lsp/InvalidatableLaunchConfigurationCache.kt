@@ -12,15 +12,21 @@ internal class InvalidatableLaunchConfigurationCache<K, V> {
     fun get(currentKey: () -> K, resolve: () -> V): V {
         val key = currentKey()
         state.get().let { if (it.key == key && it.value != null) return it.value }
-        return synchronized(resolutionLock) {
+        return synchronized(resolutionLock) { resolveCurrent(currentKey, resolve) }
+    }
+
+    private fun resolveCurrent(currentKey: () -> K, resolve: () -> V): V {
+        while (true) {
             val refreshedKey = currentKey()
             val generation = state.get()
             if (generation.key == refreshedKey && generation.value != null) {
-                generation.value
-            } else {
-                resolve().also { value ->
-                    state.compareAndSet(generation, State(refreshedKey, value))
-                }
+                return generation.value
+            }
+            val value = resolve()
+            // A restart that cleared the cache while this resolution ran makes it stale: never hand an
+            // invalidated configuration to the starting process; resolve again for the current settings.
+            if (state.compareAndSet(generation, State(refreshedKey, value)) && currentKey() == refreshedKey) {
+                return value
             }
         }
     }

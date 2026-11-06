@@ -138,7 +138,8 @@ class EffectLayerMermaidService(private val project: Project) {
         Files.createDirectories(mermaidDir)
 
         val baseName = sourceFile.nameWithoutExtension.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "layer" }
-        val mermaidPath = mermaidDir.resolve("$baseName-${System.currentTimeMillis()}.mmd")
+        // Created atomically with a unique name, so concurrent graphs never share (or overwrite) a file.
+        val mermaidPath = Files.createTempFile(mermaidDir, "$baseName-", ".mmd")
         Files.writeString(mermaidPath, mermaidCode)
 
         val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(mermaidPath)

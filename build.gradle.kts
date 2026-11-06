@@ -167,6 +167,14 @@ tasks {
     publishPlugin {
         dependsOn(patchChangelog)
     }
+
+    // Ship the license and third-party notices (including Java-WebSocket's MIT notice, which its JAR
+    // does not carry) at the root of the plugin directory inside the distribution ZIP.
+    prepareSandbox {
+        from(layout.projectDirectory.files("LICENSE", "THIRD_PARTY_NOTICES.md")) {
+            into(pluginName)
+        }
+    }
 }
 
 // Sandbox IDE boots (runIde, runIdeVerifierWebStorm) may run inside agent sandboxes whose host

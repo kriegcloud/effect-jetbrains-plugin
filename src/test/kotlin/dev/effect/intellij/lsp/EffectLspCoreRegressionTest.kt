@@ -9,6 +9,7 @@ import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.TimeUnit
 
 class EffectLspCoreRegressionTest : BasePlatformTestCase() {
@@ -40,11 +41,18 @@ class EffectLspCoreRegressionTest : BasePlatformTestCase() {
         val cache = InvalidatableLaunchConfigurationCache<String, String>()
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
+        val resolutions = AtomicInteger()
+        // Like the real resolver, each resolution reads the settings current at that moment: the first
+        // one started before the restart ("old"), any later one sees the restarted settings ("new").
         val worker = ApplicationManager.getApplication().executeOnPooledThread(Callable {
             cache.get({ "settings" }) {
-                started.countDown()
-                check(release.await(10, TimeUnit.SECONDS)) { "Resolution was not released" }
-                "old"
+                if (resolutions.incrementAndGet() == 1) {
+                    started.countDown()
+                    check(release.await(10, TimeUnit.SECONDS)) { "Resolution was not released" }
+                    "old"
+                } else {
+                    "new"
+                }
             }
         })
         try {
@@ -57,8 +65,9 @@ class EffectLspCoreRegressionTest : BasePlatformTestCase() {
         } finally {
             release.countDown()
         }
-        assertEquals("old", worker.get(5, TimeUnit.SECONDS))
-        assertEquals("new", cache.get({ "settings" }) { "new" })
+        // The in-flight caller never receives the configuration invalidated while it was resolving.
+        assertEquals("new", worker.get(5, TimeUnit.SECONDS))
+        assertEquals(2, resolutions.get())
         assertEquals("new", cache.get({ "settings" }) { error("Expected cached restarted configuration") })
     }
 

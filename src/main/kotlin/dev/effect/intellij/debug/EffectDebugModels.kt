@@ -23,7 +23,7 @@ data class EffectDebugSpanEntry(
     val path: String? = null,
     val line: Int? = null,
     val column: Int? = null,
-    val attributes: List<String> = emptyList(),
+    val attributes: List<EffectDebugValueSnapshot> = emptyList(),
 )
 
 data class EffectDebugFiberEntry(
@@ -83,7 +83,7 @@ data class EffectDebugSnapshot(
                 path = node.stringOrNull("path"),
                 line = node.intOrNull("line"),
                 column = node.intOrNull("column"),
-                attributes = node.childArray("attributes").map(::compactJson),
+                attributes = node.childArray("attributes").map(::parseAttribute),
             )
 
         private fun parseFiberEntry(node: JsonNode): EffectDebugFiberEntry =
@@ -118,6 +118,20 @@ data class EffectDebugSnapshot(
                 line = node.intOrNull("line"),
                 column = node.intOrNull("column"),
             )
+        }
+
+        /**
+         * Span attributes arrive as `[key, snapshot]` tuples whose snapshot has the same
+         * `{type, summary, children}` shape as other captured values; anything else (older
+         * instrumentation, unexpected shapes) is shown as compact JSON.
+         */
+        private fun parseAttribute(node: JsonNode): EffectDebugValueSnapshot {
+            if (node.isArray && node.size() == 2 && node[1].isObject) {
+                val key = node[0].asText()
+                return parseValue(node[1]).copy(label = key)
+            }
+            val text = compactJson(node)
+            return EffectDebugValueSnapshot(label = text, summary = text)
         }
 
         private fun parseValue(node: JsonNode?): EffectDebugValueSnapshot {
