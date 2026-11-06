@@ -29,7 +29,7 @@ TypeScript and JavaScript files.
 | Feature | Status | Notes |
 | --- | --- | --- |
 | Diagnostics | Implemented | Delivered through JetBrains LSP support |
-| Code actions | Implemented | Uses standard LSP code-action flows; every Effect codemod quick fix also offers "Fix all '…' problems in file" in its submenu |
+| Code actions | Implemented | Uses standard LSP code-action flows; every Effect codemod quick fix is followed by a "Fix all '…' problems in file" entry in the Alt+Enter list (and in the fix's submenu) |
 | Completion | Implemented | Uses standard LSP completion |
 | Hover | Implemented | Uses standard LSP hover / quick documentation |
 | Inlay hints | Implemented | Available on the `262.*`/`263.*` platform baseline |
@@ -49,32 +49,45 @@ for diagnostics that the source has explicitly disabled.
 ### Fix all problems of one rule in a file
 
 Every codemod quick fix that `@effect/tsgo` offers on an Effect diagnostic (for example `Replace
-yield* Effect.fail with yield*`, `Replace with Effect.map`, or `Add yield* statement`) carries a
-submenu entry (the `…`/right-arrow next to the fix in the Alt+Enter popup) named
-**Fix all '<fix title>' problems in file**. Choosing it:
+yield* Effect.fail with yield*`, `Replace with Effect.map`, or `Add yield* statement`) is followed
+directly in the Alt+Enter list by an entry named **Fix all '<fix title>' problems in file** (since
+0.1.10; the same entry also stays in the fix's `…`/right-arrow submenu). `Disable <rule> …`
+directive fixes get no such entry. Choosing it:
 
 1. asks the running Effect language server for the file's current diagnostics
    (`textDocument/diagnostic`),
 2. keeps the diagnostics of the same rule that no `@effect-diagnostics` directive silences,
-3. requests their quick fixes in one `textDocument/codeAction` call, and
-4. applies the fixes whose title matches the chosen one as a single undoable edit.
+3. requests their quick fixes in one `textDocument/codeAction` call,
+4. applies the fixes whose title matches the chosen one and whose edits do not overlap,
+5. pulls the diagnostics again and undoes the pass if it introduced any new error, and
+6. repeats until a pass changes nothing (at most 64 passes), so sites whose edits overlapped, and
+   findings a rewrite exposes (a nested pipe chain that is only flat once its parent is fixed), are
+   handled in the same run.
+
+The whole run is one undoable change, and it can be cancelled from the progress dialog.
 
 A fix at another site counts as "the same" when its title is identical, or differs only inside
 quotes (`Remove redundant identifier 'x'` / `'y'`, `Convert to Effect.fn("a")` / `("b")`). Rules that
 offer different rewrites per site (`Catch all errors with Effect.catch/catchAll` vs `Catch unexpected
 errors with Effect.catchTag`) only apply the exact variant you picked, and a site where several fixes
-share one title shape is skipped rather than guessed; skipped sites are reported, not rewritten
-differently. Fixes whose edits overlap an already-applied fix are left
-for a second run, and a notification reports anything that was skipped. The `Disable <rule> for this
-line` / `for entire file` directive fixes have no fix-all entry. `@effect/tsgo` itself only produces
-combined "fix all" actions for providers that implement `GetAllCodeActions`, which the Effect
-fixables do not, so this is a plugin-side feature.
+share one title shape is skipped rather than guessed.
+
+`@effect/tsgo` computes each site's fix independently, so fixes that are correct alone can conflict
+once merged (two hoisted `const` declarations given the same generated name in one scope), and a few
+upstream fixes are incorrect even alone. Error-severity diagnostics are compared, by code and
+message, before and after each pass; errors that were already in the file do not count. When a merged
+pass adds an error it is undone and the remaining sites are fixed one at a time, and a single fix that
+still adds an error is left unapplied. The closing notification reports how many sites were fixed,
+how many remain, and how many fixes were rejected this way. The `Disable <rule> for this line` / `for
+entire file` directive fixes have no fix-all entry. `@effect/tsgo` itself only produces combined "fix
+all" actions for providers that implement `GetAllCodeActions`, which the Effect fixables do not, so
+this is a plugin-side feature.
 
 ### Current TSGO Smoke Targets
 
-The current recorded real-binary smoke target is `@effect/tsgo@0.54.1` with
+The current recorded real-binary smoke target is `@effect/tsgo@0.67.4` with
 `typescript@7.0.2` (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) and
-`effect@4.0.5`. In addition to the existing
+`effect@4.1.2`. In addition to the existing
 `catchToOrElseSucceed`, `redundantOrDie`, `schemaNumber`, `newSchemaClass`, `catchToIgnore`
 (published as of 0.16.0), fixable `flatMapToMap` (as of 0.19.0), `missingPipeableSignature`
 (0.21.0, off by default), `schemaOpaqueInstanceMember` (0.22.0, **error by default**, Effect v4
@@ -112,15 +125,23 @@ actions only: `preferEffectArray` and `preferEffectRecord` (0.52.0, `effect-nati
 `preferSchemaTaggedError` (0.52.0), and `apiStabilityLeak` (0.50.0, v4 only, `maintainers` preset).
 `preferNamespaceImport` and `preferBarrelImport` (0.53.0, off by default) report imports that
 contradict `namespaceImportPackages` / `barrelImportPackages`, which may now also appear in per-file
-`overrides`; they are in completion but not in the fixture. Completion covers all 129 published
-rules; the real-binary fixtures exercise a representative subset. `preferEffectString` is only on
-upstream `main` past the 0.54.1 tag and is deferred until published.
+`overrides`; they are in completion but not in the fixture.
+
+The 0.67.4 refresh adds applied `Replace with Effect.as` (`mapConstToAs`) and
+`Replace with Effect.flatten` (`flatMapIdentityToFlatten`) fixes. Completion covers all 147 published
+rules, including now-published `preferEffectString`; the real-binary fixtures exercise a
+representative subset.
 
 Since 0.46.0 an unknown rule name in `diagnosticSeverity` reports `effect(unknownRuleName)` in
 `tsconfig.json`, and a `strict` preset promotes every default-enabled diagnostic to an error. Both
-are upstream configuration behavior; the plugin does not manage presets.
+are upstream configuration behavior; the plugin does not manage presets. New options include
+`keyPatterns.target: "taggedClass"` and `brandedSchemaClasses`, which defaults to all five kinds
+(`Class`, `TaggedClass`, `Error`, `TaggedError`, `Opaque`); `[]` disables branding, including
+completion insertion. Both options support per-file overrides. Configuring deprecated
+`preferSchemaOverJson` now reports the `deprecatedRuleName` configuration warning; use `globalJson` /
+`globalJsonInEffect` instead.
 
-npm `effect` `latest` is now the stable v4 line. Samples install the exact `effect@4.0.5` smoke
+npm `effect` `latest` is now the stable v4 line. Samples install the exact `effect@4.1.2` smoke
 target so the verifier does not drift when the dist-tag advances. Effect 4.0 publishes former
 `effect/unstable/*` modules at top-level paths, so a DevTools client imports from `effect/devtools`
 (`effect/unstable/devtools` before rc.118).
@@ -178,11 +199,15 @@ Equivalent raw JSON example:
 
 ### Recorded Real-Binary Smoke
 
-On October 20, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
-for `@effect/tsgo@0.54.1`; fixture workspaces install the validated `typescript@7.0.2` package
+On November 6, 2026, the real-binary verifier was run against the matching native Linux x64 npm binary
+for `@effect/tsgo@0.67.4`; fixture workspaces install the validated `typescript@7.0.2` package
 (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`, confirmed identical to the tarball's
-`lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.0.5` release.
-All five lanes passed against that fixed pair.
+`lib/upstream.json` `typescript.latest` component) and the explicit `effect@4.1.2` release.
+All five lanes (`healthy`, `failing`, `new-diagnostics`, `diagnostic-directives`, `fix-all`) passed
+against `lib/tsc` (7.0.2), `artifacts/typescript/7.1.0-beta/tsc`, and
+`artifacts/tsrs/0.22.0-ts7.1.0-beta/tsrs`, with those same workspace dependencies. tsrs is the Rust
+port (`oxc-project/tsrs`) of TypeScript 7.1, with Effect patches; it can be tried through `MANUAL`
+mode and is not a managed selection. Interactive qualification remains follow-up work.
 
 Command (since 0.52.0 the `latest` TypeScript build ships only as `lib/tsc`; other builds live
 under `artifacts/typescript/<version>/`):
@@ -216,25 +241,27 @@ Observed through LSP:
   `errorPayloadShadowsName` reported the `name` payload field. The opt-in `preferEffectArray`,
   `preferEffectRecord`, `preferSchemaTaggedError`, and `apiStabilityLeak` warnings appeared with only
   the two suppression actions each.
+- 0.67.4 cases: `mapConstToAs` and `flatMapIdentityToFlatten` offered the applied
+  `Replace with Effect.as` and `Replace with Effect.flatten` quick fixes.
 - Diagnostic-directive fixture: next-line and section directives suppressed the intended
   `strictEffectProvide` and `floatingEffect` findings, then surfaced them again when re-enabled.
   The next-line `schemaSync:warning` directive enabled exactly one warning and did not affect the
   default-off examples before or after it.
-- The published `0.54.1` server still did not advertise `executeCommandProvider.commands`, so the local
-  Mermaid graph action remains experimental; hover Mermaid links are the supported path.
+- The published `0.67.4` compilers advertise inlay hints, semantic tokens, and pull diagnostics,
+  with no `executeCommandProvider`, so the local Mermaid graph action remains experimental; hover Mermaid links are the supported path.
 
 ### Runtime Instrumentation Smoke
 
 The companion `scripts/verify-instrumentation.mjs` probe copies the repository's
 [`smoke-app`](../src/test/testData/fixtures/runtime/smoke-app/) fixture into temporary workspaces,
-installs exact Effect v4 release candidates 112 and 115, and injects the same instrumentation used
-by the IDE:
+installs exact Effect `4.0.0-rc.112`, `4.0.0-rc.115`, `4.0.1`, `4.0.5`, and `4.1.2`, and injects
+the same instrumentation used by the IDE:
 
 ```bash
 node scripts/verify-instrumentation.mjs
 ```
 
-Both versions passed span-stack, source/defect-location, and fiber-interruption assertions. Cache
+All five versions passed span-stack, source/defect-location, and fiber-interruption assertions. Cache
 and legacy-field controls exercise the rc.113+ transition and older runtime fallback. The fixture
 also supplies a DevTools client, metrics, nested spans, a defect loop, an `Effect.never` long-runner,
 and `example.ts` for the human editor pass. Follow its

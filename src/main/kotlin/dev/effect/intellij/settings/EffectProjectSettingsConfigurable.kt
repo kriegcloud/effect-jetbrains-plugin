@@ -10,7 +10,6 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.TextBrowseFolderListener
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.DocumentAdapter
-import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -19,7 +18,9 @@ import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.panel as uiPanel
 import com.intellij.ui.dsl.builder.rows
+import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 import com.intellij.util.ui.JBUI
+import dev.effect.intellij.typescript.EffectWebStormTypeScriptService
 import java.nio.file.Path
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JComponent
@@ -72,9 +73,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     private val binaryMode = ComboBox(EffectBinaryMode.entries.toTypedArray())
     private val pinnedVersion = ComboBox<PinnedVersionItem>().apply {
         isEditable = true
-        renderer = SimpleListCellRenderer.create { label, item, _ ->
-            label.text = item?.label.orEmpty()
-        }
+        renderer = textListCellRenderer("") { item: PinnedVersionItem -> item.label }
     }
     private val manualBinaryPath = TextFieldWithBrowseButton()
     private val extraEnv = JBTextArea(4, 40)
@@ -97,6 +96,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     }
     private val spanStackIgnoreList = JBTextArea(4, 40)
     private val validationLabel = JBLabel()
+    private val webStormTypeScriptStatus = JBLabel()
 
     private lateinit var pinnedVersionRow: Row
     private lateinit var manualBinaryPathRow: Row
@@ -133,6 +133,22 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         ).forEach { field -> field.document.addDocumentListener(clearProblemsListener) }
         updateBinaryFieldState()
         clearProblems()
+        refreshWebStormTypeScriptStatus()
+    }
+
+    private fun useTsrsForWebStormTypeScript() {
+        webStormTypeScriptStatus.text = "Looking for tsrs…"
+        EffectWebStormTypeScriptService.getInstance(project).useTsrsForWebStormTypeScript { refreshWebStormTypeScriptStatus() }
+    }
+
+    private fun refreshWebStormTypeScriptStatus() {
+        val state = runCatching { EffectWebStormTypeScriptService.getInstance(project).currentState() }.getOrNull()
+        webStormTypeScriptStatus.text = when {
+            state == null -> "WebStorm's TypeScript settings are unavailable in this IDE."
+            state.usesTsrs -> "WebStorm TypeScript uses tsrs: ${state.serviceDirectory}"
+            state.candidates.isEmpty() -> "Current: ${state.serviceDirectory ?: "bundled or auto-detected"}. No tsrs installation found."
+            else -> "Current: ${state.serviceDirectory ?: "bundled or auto-detected"}. Available: ${state.candidates.first().description}"
+        }
     }
 
     private fun createPanel(): JComponent {
@@ -150,6 +166,21 @@ private class EffectProjectSettingsComponent(private val project: Project) {
                     cell(manualBinaryPath)
                         .align(AlignX.FILL)
                         .resizableColumn()
+                }
+            }
+
+            group("WebStorm TypeScript") {
+                row {
+                    button("Use tsrs (TypeScript 7.1) for WebStorm TypeScript") { useTsrsForWebStormTypeScript() }
+                        .comment(
+                            "Points Settings | Languages & Frameworks | TypeScript at tsrs, the Rust port of the " +
+                                "TypeScript 7.1 compiler, from the workspace tsrs or @effect/tsgo package or the " +
+                                "managed @effect/tsgo cache, and restarts WebStorm's TypeScript service. A stock tsrs " +
+                                "is preferred over an Effect-patched one so Effect diagnostics are not reported twice.",
+                        )
+                }
+                row {
+                    cell(webStormTypeScriptStatus)
                 }
             }
 

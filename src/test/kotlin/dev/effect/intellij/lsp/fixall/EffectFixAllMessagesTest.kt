@@ -14,9 +14,16 @@ class EffectFixAllMessagesTest : BasePlatformTestCase() {
         assertEquals("Applied 'X' to 1 problem", EffectBundle.message("fix.all.in.file.applied", "X", 1))
         assertEquals("Applied 'X' to 3 problems", EffectBundle.message("fix.all.in.file.applied", "X", 3))
         assertEquals(
-            "Applied 'X' to 2 of 5 problems. Skipped 1 problem whose edits overlapped an applied fix (run \"Fix all\" again for them), " +
-                "0 problems without a matching fix, and 2 problems whose edits could not be applied to this file.",
-            EffectBundle.message("fix.all.in.file.partial", "X", 2, 5, 1, 0, 2),
+            "Applied 'X' to 2 problems. 3 problems remain without an applicable fix; 1 fix was not applied because it introduced new errors.",
+            EffectBundle.message("fix.all.in.file.partial", "X", 2, 3, 1),
+        )
+        assertEquals(
+            "Applied 'X' to 1 problem. 1 problem remains without an applicable fix.",
+            EffectBundle.message("fix.all.in.file.partial", "X", 1, 1, 0),
+        )
+        assertEquals(
+            "Did not apply 'X': each of the 2 fixes introduces new errors in this file, so the file was left unchanged.",
+            EffectBundle.message("fix.all.in.file.all.rejected", "X", 2),
         )
         assertEquals("The 1 problem in this file no longer offers the 'X' fix.", EffectBundle.message("fix.all.in.file.no.matching.fix", "X", 1))
         assertEquals("None of the 4 problems in this file offer the 'X' fix.", EffectBundle.message("fix.all.in.file.no.matching.fix", "X", 4))

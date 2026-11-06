@@ -171,6 +171,9 @@ class EffectBinaryService {
         }
     }
 
+    /** Root of the managed `@effect/tsgo` package cache (`<version>/<platform package>/package/`). */
+    internal fun managedPackageCacheRoot(): Path = managedCacheRoot()
+
     private fun managedCacheRoot(): Path {
         val state = EffectApplicationStateService.getInstance().currentState()
         val override = state.binaryCacheDirOverride.trim()

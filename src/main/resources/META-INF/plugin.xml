@@ -82,6 +82,13 @@
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action
+                id="dev.effect.intellij.UseTsrsForWebStormTypeScript"
+                class="dev.effect.intellij.typescript.EffectUseTsrsForTypeScriptAction"
+                text="Effect: Use tsrs (TypeScript 7.1) for WebStorm TypeScript"
+                description="Point Settings | Languages &amp; Frameworks | TypeScript at the tsrs compiler found in the workspace or the managed @effect/tsgo cache">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action
                 id="dev.effect.intellij.ExportTracer"
                 class="dev.effect.intellij.devtools.EffectExportTracerAction"
                 text="Effect: Export Tracer Snapshot"

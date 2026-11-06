@@ -7,6 +7,7 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.platform.lsp.api.customization.LspDiagnosticsSupport
 import com.intellij.psi.PsiDocumentManager
 import dev.effect.intellij.lsp.fixall.EffectFixAllCapableQuickFix
+import dev.effect.intellij.lsp.fixall.EffectFixAllInFileQuickFix
 import dev.effect.intellij.lsp.fixall.isEffectDiagnostic
 import org.eclipse.lsp4j.Diagnostic
 
@@ -53,13 +54,17 @@ internal class EffectLspDiagnosticsSupport : LspDiagnosticsSupport() {
 
     internal companion object {
         /**
-         * Gives every quick fix of an Effect diagnostic a "Fix all '…' problems in file" submenu entry.
+         * Gives every quick fix of an Effect diagnostic a "Fix all '…' problems in file" companion: a
+         * submenu entry on the fix itself, plus a top-level entry listed right after it in the Alt+Enter
+         * popup. Both resolve lazily from the fix's title and drop out for directive-insertion fixes.
          * Non-Effect diagnostics (plain TypeScript errors served by the same `@effect/tsgo` process) keep
          * the platform's quick fixes untouched; the server already offers its own combined fixes there.
          */
         fun withFixAllOptions(diagnostic: Diagnostic, quickFixes: List<IntentionAction>): List<IntentionAction> =
             if (quickFixes.isNotEmpty() && diagnostic.isEffectDiagnostic()) {
-                quickFixes.map { quickFix -> EffectFixAllCapableQuickFix(quickFix, diagnostic) }
+                quickFixes.flatMap { quickFix ->
+                    listOf(EffectFixAllCapableQuickFix(quickFix, diagnostic), EffectFixAllInFileQuickFix(quickFix, diagnostic))
+                }
             } else {
                 quickFixes
             }

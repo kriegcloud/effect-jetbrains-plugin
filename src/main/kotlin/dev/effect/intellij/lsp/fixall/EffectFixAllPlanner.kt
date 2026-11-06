@@ -256,7 +256,7 @@ internal fun normalizeActionEdits(edits: List<ResolvedEdit>): List<ResolvedEdit>
 
 private val quotedSegment = Regex("""'[^']*'|"[^"]*"""")
 
-private val diagnosticOrder: Comparator<Diagnostic> =
+internal val diagnosticOrder: Comparator<Diagnostic> =
     compareBy({ it.range?.start?.line ?: -1 }, { it.range?.start?.character ?: -1 })
 
 /**
