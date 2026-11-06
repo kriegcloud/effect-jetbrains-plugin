@@ -14,32 +14,15 @@ import dev.effect.intellij.status.EffectStatusService
 @Service(Service.Level.PROJECT)
 class EffectLspProjectService(private val project: Project) {
     private val log = logger<EffectLspProjectService>()
-    private val launchConfigurationLock = Any()
-    @Volatile
-    private var activeLaunchConfiguration: ActiveLaunchConfiguration? = null
+    private val launchConfigurations = InvalidatableLaunchConfigurationCache<LaunchConfigurationKey, LspLaunchConfiguration>()
 
     fun createLaunchConfiguration(): LspLaunchConfiguration = buildLaunchConfiguration()
 
-    fun activeLaunchConfiguration(): LspLaunchConfiguration {
-        val currentKey = currentLaunchConfigurationKey()
-        activeLaunchConfiguration?.takeIf { it.key == currentKey }?.let { return it.configuration }
-
-        return synchronized(launchConfigurationLock) {
-            val refreshedKey = currentLaunchConfigurationKey()
-            activeLaunchConfiguration?.takeIf { it.key == refreshedKey }?.configuration
-                ?: buildLaunchConfiguration().also { configuration ->
-                    activeLaunchConfiguration = ActiveLaunchConfiguration(
-                        key = refreshedKey,
-                        configuration = configuration,
-                    )
-                }
-        }
-    }
+    fun activeLaunchConfiguration(): LspLaunchConfiguration =
+        launchConfigurations.get(::currentLaunchConfigurationKey, ::buildLaunchConfiguration)
 
     fun clearActiveLaunchConfiguration() {
-        synchronized(launchConfigurationLock) {
-            activeLaunchConfiguration = null
-        }
+        launchConfigurations.clear()
     }
 
     private fun buildLaunchConfiguration(): LspLaunchConfiguration {
@@ -93,11 +76,6 @@ class EffectLspProjectService(private val project: Project) {
         )
     }
 }
-
-private data class ActiveLaunchConfiguration(
-    val key: LaunchConfigurationKey,
-    val configuration: LspLaunchConfiguration,
-)
 
 private data class LaunchConfigurationKey(
     val binaryMode: dev.effect.intellij.settings.EffectBinaryMode,

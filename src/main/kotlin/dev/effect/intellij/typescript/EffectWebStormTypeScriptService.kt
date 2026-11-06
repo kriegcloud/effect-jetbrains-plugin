@@ -43,21 +43,29 @@ class EffectWebStormTypeScriptService(private val project: Project) {
             ?.takeIf { settings.versionType == TypeScriptCompilerSettings.TypeScriptCompilerVersionType.SERVICE_DIRECTORY }
         val usesTsrs = serviceDirectory != null && platform != null &&
             runCatching { Path.of(FileUtil.toSystemDependentName(serviceDirectory)) }.getOrNull()
-                ?.startsWith(packageCacheRoot()) == true
+                ?.startsWith(Path.of(com.intellij.openapi.application.PathManager.getSystemPath(), TYPESCRIPT_PACKAGE_CACHE_DIR)) == true
         return CurrentState(serviceDirectory, usesTsrs, candidates)
     }
 
     /** Finds tsrs, builds the WebStorm-shaped package, and switches the TypeScript setting, off the EDT. */
     fun useTsrsForWebStormTypeScript(onDone: (Result<TsrsCandidate>) -> Unit = {}) {
+        switchToTsrs(onDone = onDone)
+    }
+
+    internal fun switchToTsrs(
+        preparePackage: () -> Pair<TsrsCandidate, Path> = ::prepare,
+        reportResult: (Result<TsrsCandidate>) -> Unit = ::report,
+        onDone: (Result<TsrsCandidate>) -> Unit = {},
+    ) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Pointing WebStorm TypeScript at tsrs", false) {
             override fun run(indicator: ProgressIndicator) {
-                val result = runCatching { prepare() }
+                val result = runCatching { preparePackage() }
                 ApplicationManager.getApplication().invokeLater({
                     val applied = result.mapCatching { (candidate, packageDirectory) ->
                         apply(packageDirectory)
                         candidate
                     }
-                    report(applied)
+                    reportResult(applied)
                     onDone(applied)
                 }, project.disposed)
             }
@@ -76,7 +84,7 @@ class EffectWebStormTypeScriptService(private val project: Project) {
         check(platform.isWindows || Files.isExecutable(candidate.executable)) {
             "${candidate.executable} is not executable and its permissions could not be changed."
         }
-        val packageDirectory = EffectTsrsTypeScriptPackage.create(packageCacheRoot(), candidate, platform)
+        val packageDirectory = EffectTsrsTypeScriptPackage.prepare(packageCacheRoot(), candidate, platform)
         return candidate to packageDirectory
     }
 

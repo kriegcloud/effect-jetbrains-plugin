@@ -2,9 +2,7 @@ package dev.effect.intellij.typescript
 
 import com.intellij.lang.typescript.lsp.TypeScriptGoPackageInfo
 import com.intellij.lang.typescript.lsp.getTypeScriptGoPackageInfo
-import com.intellij.lang.typescript.lsp.invalidateTsGoPackageInfo
 import com.intellij.openapi.util.io.FileUtil
-import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.nio.file.Files
@@ -124,17 +122,15 @@ class EffectTsrsTypeScriptTest : BasePlatformTestCase() {
         val candidate = TsrsCandidate(tsrsRoot.resolve("tsrs"), "7.1.0-beta", "0.22.0-ts7.1.0-beta", TsrsSource.WORKSPACE_TSRS_PACKAGE, false)
         val current = TsrsPlatform.current() ?: return
 
-        val packageDirectory = EffectTsrsTypeScriptPackage.create(root.resolve("generated"), candidate, current)
+        val packageDirectory = preparePublished(candidate, current)
         // Re-running is idempotent and replaces the previous links.
-        assertEquals(packageDirectory, EffectTsrsTypeScriptPackage.create(root.resolve("generated"), candidate, current))
+        assertEquals(packageDirectory, preparePublished(candidate, current))
 
         val linked = EffectTsrsTypeScriptPackage.linkedExecutable(packageDirectory, current)!!
         assertEquals("tsrs-binary", linked.readText())
         assertEquals("lib", linked.resolveSibling("lib.d.ts").readText())
         assertTrue(packageDirectory.resolve("package.json").readText().contains("\"version\" : \"7.1.0-beta\""))
 
-        LocalFileSystem.getInstance().refreshNioFiles(listOf(root), false, true, null)
-        invalidateTsGoPackageInfo()
         val info = getTypeScriptGoPackageInfo(FileUtil.toSystemIndependentName(packageDirectory.toString()))
         assertNotNull("WebStorm did not recognize the generated package as TypeScript 7", info)
         info as TypeScriptGoPackageInfo
@@ -144,6 +140,70 @@ class EffectTsrsTypeScriptTest : BasePlatformTestCase() {
             linked.toRealPath(),
             Path.of(info.binaryExecutable.path).toRealPath(),
         )
+    }
+
+    fun testRegenerationPublishesNewVersionAtTheSameExecutablePath() {
+        val current = TsrsPlatform.current() ?: return
+        val install = artifact(root.resolve("tsrs-install"))
+        val candidate = TsrsCandidate(install.resolve("tsrs"), "7.1.0-beta", "0.22.0-ts7.1.0-beta", TsrsSource.WORKSPACE_TSRS_PACKAGE, false)
+        val directory = preparePublished(candidate, current)
+        val path = FileUtil.toSystemIndependentName(directory.toString())
+        assertEquals("7.1.0-beta", getTypeScriptGoPackageInfo(path)?.version?.rawVersion)
+        assertEquals(directory, preparePublished(candidate.copy(typeScriptVersion = "7.2.0"), current))
+        assertEquals("7.2.0", getTypeScriptGoPackageInfo(path)?.version?.rawVersion)
+    }
+
+    private fun preparePublished(candidate: TsrsCandidate, current: TsrsPlatform): Path {
+        val task = com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread<Path> {
+            EffectTsrsTypeScriptPackage.prepare(root.resolve("generated"), candidate, current)
+        }
+        com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Package preparation", { task.isDone }, 20)
+        return task.get()
+    }
+
+    fun testSwitchMutatesSettingsAndRestartsOnceAndFailurePreservesSettings() {
+        val settings = com.intellij.lang.typescript.compiler.TypeScriptCompilerSettings.getSettings(project)
+        val previousType = settings.versionType
+        val previousDirectory = settings.typeScriptServiceDirectory
+        val previousUseService = settings.useService
+        val manager = com.intellij.openapi.actionSystem.ActionManager.getInstance()
+        val actionId = "TypeScript.Restart.Service"
+        val previousAction = manager.getAction(actionId)
+        var restarts = 0
+        if (previousAction != null) manager.unregisterAction(actionId)
+        manager.registerAction(actionId, object : com.intellij.openapi.actionSystem.AnAction() {
+            override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) { restarts++ }
+        })
+        try {
+            val install = artifact(root.resolve("tsrs-switch"))
+            val candidate = TsrsCandidate(install.resolve("tsrs"), "7.1.0-beta", "0.22.0-ts7.1.0-beta", TsrsSource.WORKSPACE_TSRS_PACKAGE, false)
+            val service = EffectWebStormTypeScriptService(project)
+            var result: Result<TsrsCandidate>? = null
+            service.switchToTsrs(
+                preparePackage = { candidate to EffectTsrsTypeScriptPackage.prepare(root.resolve("generated"), candidate, TsrsPlatform.current()!!) },
+                reportResult = {}, onDone = { result = it },
+            )
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Switch completion", { result != null && restarts == 1 }, 20)
+            assertTrue(result!!.isSuccess)
+            assertEquals(com.intellij.lang.typescript.compiler.TypeScriptCompilerSettings.TypeScriptCompilerVersionType.SERVICE_DIRECTORY, settings.versionType)
+            val expected = EffectTsrsTypeScriptPackage.packageDirectory(root.resolve("generated"), candidate)
+            assertEquals(FileUtil.toSystemIndependentName(expected.toString()), settings.typeScriptServiceDirectory)
+            assertTrue(settings.useService)
+            result = null
+            service.switchToTsrs(preparePackage = { error("No candidate") }, reportResult = {}, onDone = { result = it })
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Failed switch completion", { result != null }, 20)
+            assertTrue(result!!.isFailure)
+            assertEquals(FileUtil.toSystemIndependentName(expected.toString()), settings.typeScriptServiceDirectory)
+            assertEquals(com.intellij.lang.typescript.compiler.TypeScriptCompilerSettings.TypeScriptCompilerVersionType.SERVICE_DIRECTORY, settings.versionType)
+            assertTrue(settings.useService)
+            assertEquals(1, restarts)
+        } finally {
+            manager.unregisterAction(actionId)
+            if (previousAction != null) manager.registerAction(actionId, previousAction)
+            settings.versionType = previousType
+            settings.typeScriptServiceDirectory = previousDirectory
+            settings.useService = previousUseService
+        }
     }
 
     private fun tsrsPackage(packageRoot: Path): Path {

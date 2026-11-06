@@ -49,7 +49,9 @@ temporary so the original examples remain available for the next pass.
    and a non-null source reveal. This is a best-effort pause on fiber completion, not a guarantee
    of a pause at the original throw site. Resume; the defect loop should continue.
 10. **Interrupt and cleanup (2 min).** While paused again inside a tick, select the fiber whose
-    span is `smoke.long-runner` (its ID is also logged at startup), then use the plugin's interrupt
-    action. Resume and capture another snapshot: that fiber should disappear while ticks continue.
+    span is `smoke.long-runner` (its ID is also logged at startup) in `Debug > Fibers`, then click
+    `Interrupt Selected` in that panel. The main toolbar's `Interrupt Fiber` targets the current
+    paused Effect fiber independently of tree selection. Resume and capture another snapshot:
+    the selected long-runner should disappear while ticks continue.
     Stop the debug run, stop DevTools, and undo any example edits. Record failures and observations;
     the docs lane owns any parity-matrix update after this pass.

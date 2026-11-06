@@ -98,13 +98,22 @@ libraries can change within the same platform line.
 
 ## Managed Cache Issues
 
-Managed binaries are stored under the JetBrains system cache area in an `effect-tsgo` directory.
+Managed packages normally live at `<IDE system path>/effect-tsgo/<version>/<platform package>/package/`.
+A configured binary-cache override changes the managed cache root.
 
 If a managed install looks stale or corrupted:
 
-1. Close the IDE or stop using the project
-2. Remove the `effect-tsgo` cache directory from the IDE system path
-3. Reopen the project and let the plugin resolve the binary again
+1. Close the IDE before changing its cache.
+2. Remove only the affected `<managed cache root>/<version>/<platform package>` directory.
+   Preserve sibling versions and the `effect-tsgo/tracer` exports, `effect-tsgo/mermaid` sources,
+   and `effect-tsgo/webstorm-typescript` generated TypeScript packages. Do not remove the whole
+   `effect-tsgo` directory.
+3. Reopen the project and let managed binary resolution download the affected package again.
+4. If WebStorm's TypeScript service uses tsrs from that managed package, re-run
+   `Tools | Effect: Use tsrs (TypeScript 7.1) for WebStorm TypeScript` after resolution completes.
+   Also re-run this action if you removed `effect-tsgo/webstorm-typescript`: WebStorm persists that
+   generated package path in its TypeScript settings, and reopening the project alone does not
+   restore it. The action regenerates the package, sets the path, and restarts the TypeScript service.
 
 If the cache is intact but resolution reports a TypeScript compatibility mismatch, clearing it will
 not change the result. Align the workspace's native TypeScript package with the selected

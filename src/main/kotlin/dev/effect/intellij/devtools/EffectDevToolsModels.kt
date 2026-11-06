@@ -75,6 +75,8 @@ data class RuntimeClientSnapshot(
     val lastSeenAt: Instant,
     val metrics: List<RuntimeMetricSnapshot> = emptyList(),
     val rootSpans: List<RuntimeSpanSnapshot> = emptyList(),
+    val droppedSpans: Int = 0,
+    val droppedEvents: Int = 0,
 ) {
     val metricsSummary: String?
         get() = metrics.takeIf { it.isNotEmpty() }?.size?.let { "$it metric(s)" }

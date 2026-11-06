@@ -108,6 +108,22 @@ intellijPlatform {
 }
 
 intellijPlatformTesting {
+    testIde {
+        register("testIdeVerifierWebStorm") {
+            type = IntelliJPlatformType.WebStorm
+            version = providers.gradleProperty("pluginVerifierWebStormVersion")
+            testFramework(TestFrameworkType.Platform)
+            plugins {
+                bundledPlugins("JavaScript", "NodeJS", "com.intellij.modules.jcef")
+            }
+            task {
+                filter {
+                    includeTestsMatching("dev.effect.intellij.lsp.EffectDiagnosticDirectivesTest")
+                    includeTestsMatching("dev.effect.intellij.lsp.fixall.*")
+                }
+            }
+        }
+    }
     runIde {
         // Sandbox launch against the newest verified WebStorm line (currently the 2026.3 EAP), so the
         // plugin can be smoked on the upper edge of the compatibility range without replacing the
@@ -156,6 +172,7 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask>().config
     doFirst { sandboxXdgConfigHome.get().asFile.mkdirs() }
 }
 
-tasks.named("qodanaScan") {
+tasks.named<org.jetbrains.qodana.tasks.QodanaScanTask>("qodanaScan") {
+    arguments.set(listOf("--fail-threshold", "0"))
     mustRunAfter(tasks.matching { candidate -> candidate.name != name })
 }

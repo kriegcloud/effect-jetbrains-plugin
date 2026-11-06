@@ -139,7 +139,10 @@ the IDE does not configure or run them independently.
   - `Deferred`
   - `Pending evidence`
 - Keep debugger wording as best-effort unless there is recorded paused-session smoke evidence.
-- Keep Mermaid execute-command wording experimental until that bridge is published in `@effect/tsgo`.
+- Document the local Mermaid action's published hover fallback (`noExternal=false`,
+  `mermaidProvider="mermaid.live"`, caret on a Layer declaration). It opens `.mmd` source;
+  rendered preview depends on IDE support and manual IDE smoke remains pending. Qualify only
+  the execute-command transport as requiring an unpublished bridge.
 - Keep support statements aligned with the current target baseline:
   - WebStorm `2026.2` stable and `2026.3` GA / `262.*`–`263.*`
   - IntelliJ IDEA Ultimate `2026.2`–`2026.3` GA / `262.*`–`263.*`
@@ -177,7 +180,8 @@ TypeScript provider metadata; since 0.48.0 each compiler needs the `lib.*.d.ts` 
 beside it, so point `--binary` at the executable inside an intact extracted package rather than a
 lone copied file. This is the route
 for validating the `_effectGetLayerMermaid` execute-command bridge before it exists in a published
-package.
+package. The local action already falls back to decoding the Layer hover's `mermaid.live` `pako:`
+link with published servers; testing that path does not require a custom bridge build.
 
 ## Current Verification Posture
 

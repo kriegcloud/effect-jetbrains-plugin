@@ -156,6 +156,9 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
             }
         }
 
+        if (settings.lspDiagnosticSeverity.keys.any(String::isBlank)) {
+            problems += SettingProblem("lspDiagnosticSeverity", "Diagnostic rule names must not be blank.")
+        }
         val invalidSeverity = settings.lspDiagnosticSeverity
             .filterValues { severity -> severity !in EFFECT_LSP_SEVERITIES }
         invalidSeverity.forEach { (rule, severity) ->

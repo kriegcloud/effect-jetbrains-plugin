@@ -26,11 +26,9 @@ internal class EffectLspDiagnosticsSupport : LspDiagnosticsSupport() {
             return
         }
 
-        val severity = effectDirectiveSeverityForDiagnostic(
-            sourceText = document.text,
-            diagnosticLine = diagnosticLine(document, textRange),
-            diagnostic = diagnostic,
-        )
+        val severity = diagnostic.effectDiagnosticRuleName()?.let { ruleName ->
+            effectDiagnosticDirectives(document).effectiveSeverity(ruleName, diagnosticLine(document, textRange))
+        }
 
         when (severity) {
             EffectDiagnosticDirectiveSeverity.OFF,

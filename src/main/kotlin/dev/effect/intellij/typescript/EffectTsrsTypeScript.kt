@@ -1,7 +1,6 @@
 package dev.effect.intellij.typescript
 
 import com.intellij.openapi.util.SystemInfo
-import com.intellij.openapi.util.io.FileUtil
 import dev.effect.intellij.core.EffectJson
 import java.nio.file.Files
 import java.nio.file.Path
@@ -178,6 +177,14 @@ object EffectTsrsLocator {
  * idempotent.
  */
 object EffectTsrsTypeScriptPackage {
+    /** Publishes NIO writes to WebStorm's VFS consumer before its package setting is changed. Run off EDT. */
+    fun prepare(cacheRoot: Path, candidate: TsrsCandidate, platform: TsrsPlatform): Path {
+        val directory = create(cacheRoot, candidate, platform)
+        com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshNioFiles(listOf(cacheRoot), false, true, null)
+        com.intellij.lang.typescript.lsp.invalidateTsGoPackageInfo()
+        return directory
+    }
+
     fun packageDirectory(cacheRoot: Path, candidate: TsrsCandidate): Path =
         packageRoot(cacheRoot, candidate).resolve("node_modules").resolve("typescript")
 
@@ -210,7 +217,7 @@ object EffectTsrsTypeScriptPackage {
                     throw error
                 }
             } finally {
-                listOf(stagingRoot, backupRoot).filter(Files::exists).forEach(FileUtil::delete)
+                listOf(stagingRoot, backupRoot).filter(Files::exists).forEach { it.toFile().deleteRecursively() }
             }
         }
         return packageDirectory(cacheRoot, candidate)

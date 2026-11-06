@@ -135,8 +135,8 @@ class EffectFixAllInFileService(private val project: Project) {
      * Talks to the server from the progress thread and changes the document on the EDT. Every change runs
      * in a command of one shared group, so the whole run (including rolled-back passes) is one undo step.
      */
-    private inner class EditorFixAllSession(
-        private val server: LspServer,
+    internal inner class EditorFixAllSession(
+        private val server: LspClient,
         private val documentId: TextDocumentIdentifier,
         private val editor: Editor,
         private val psiFile: PsiFile,
@@ -164,7 +164,7 @@ class EffectFixAllInFileService(private val project: Project) {
             // The platform intention resolves its URI -> Document map inside isAvailable; invoke() is a
             // silent no-op until that ran (verified against the 262 bytecode), exactly as the IDE's own
             // intention flow calls isAvailable before invoke.
-            val applier = LspIntentionAction(server as LspClient, combined)
+            val applier = LspIntentionAction(server, combined)
             if (!applier.isAvailable(project, editor, psiFile)) {
                 throw EffectFixAllServerException(
                     EffectBundle.message("fix.all.in.file.not.applicable", request.fixTitle, edits.size),
@@ -215,7 +215,7 @@ class EffectFixAllInFileService(private val project: Project) {
      * as a `null` response instead of throwing, so `null` is turned into a failure here rather than
      * being mistaken for "no diagnostics" / "no fixes".
      */
-    private fun pullDiagnostics(server: LspServer, documentId: TextDocumentIdentifier): List<Diagnostic> {
+    private fun pullDiagnostics(server: LspClient, documentId: TextDocumentIdentifier): List<Diagnostic> {
         val report = server.sendRequestSync(REQUEST_TIMEOUT_MS) { languageServer ->
             languageServer.textDocumentService.diagnostic(DocumentDiagnosticParams(documentId))
         } ?: throw EffectFixAllServerException(EffectBundle.message("fix.all.in.file.no.response", "textDocument/diagnostic"))
@@ -227,7 +227,7 @@ class EffectFixAllInFileService(private val project: Project) {
     }
 
     private fun requestQuickFixes(
-        server: LspServer,
+        server: LspClient,
         documentId: TextDocumentIdentifier,
         range: Range,
         diagnostics: List<Diagnostic>,

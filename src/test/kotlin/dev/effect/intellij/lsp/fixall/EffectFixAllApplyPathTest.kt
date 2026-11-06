@@ -58,6 +58,108 @@ class EffectFixAllApplyPathTest : BasePlatformTestCase() {
         assertEquals("const a = yield* Effect.succeed(1)\nconst b = yield* Effect.succeed(2)\n", myFixture.editor.document.text)
     }
 
+    fun testProductionSessionGroupsRetainedPassesAndRollbackIntoOneUndoStep() {
+        val original = "const value = 0\n"
+        val file = myFixture.configureByText("index.ts", original)
+        val uri = "file:///fake/index.ts"
+        val request = EffectFixAllRequest("rule:test", "test", "Fix it")
+        val diagnostic = org.eclipse.lsp4j.Diagnostic().also {
+            it.range = Range(Position(0, 14), Position(0, 15))
+            it.message = "Fix value. effect(test)"
+        }
+        val error = org.eclipse.lsp4j.Diagnostic().also {
+            it.range = diagnostic.range
+            it.message = "New error"
+            it.severity = org.eclipse.lsp4j.DiagnosticSeverity.Error
+        }
+        fun report(vararg diagnostics: org.eclipse.lsp4j.Diagnostic) =
+            org.eclipse.lsp4j.DocumentDiagnosticReport(org.eclipse.lsp4j.RelatedFullDocumentDiagnosticReport(diagnostics.toList()))
+        fun fix(value: String) = listOf(org.eclipse.lsp4j.jsonrpc.messages.Either.forRight<org.eclipse.lsp4j.Command, CodeAction>(
+            CodeAction(request.fixTitle).also {
+                it.diagnostics = listOf(diagnostic)
+                it.edit = WorkspaceEdit(mapOf(uri to listOf(TextEdit(diagnostic.range, value))))
+            },
+        ))
+        val responses = ArrayDeque<Any>(listOf(
+            report(diagnostic), fix("1"), report(diagnostic), fix("2"), report(diagnostic),
+            fix("3"), report(diagnostic, error), fix("3"), report(diagnostic, error),
+        ))
+        val client = FakeLspClient(project, FakeDescriptor(project, uri, file.virtualFile)) { responses.removeFirst() }
+        val session = EffectFixAllInFileService(project).EditorFixAllSession(
+            client, TextDocumentIdentifier(uri), myFixture.editor, file, request,
+        )
+        val future = com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(
+            java.util.concurrent.Callable { runFixAllPasses(request, uri, session) },
+        )
+        val result = com.intellij.testFramework.PlatformTestUtil.waitForFuture(future, 10_000)
+        assertEquals(2, result.appliedFixes)
+        assertEquals(1, result.rejectedFixes)
+        assertTrue(responses.isEmpty())
+        val retained = session.currentText()
+        assertEquals("const value = 2\n", session.currentText())
+        val undo = com.intellij.openapi.command.undo.UndoManager.getInstance(project)
+        val editor = com.intellij.openapi.fileEditor.impl.text.TextEditorProvider.getInstance().getTextEditor(myFixture.editor)
+        assertTrue(undo.isUndoAvailable(editor))
+        undo.undo(editor)
+        assertEquals(original, session.currentText())
+        assertTrue(undo.isRedoAvailable(editor))
+        undo.redo(editor)
+        assertEquals(retained, session.currentText())
+    }
+
+    fun testProductionSessionRefusesStaleApplyAndRestore() {
+        val file = myFixture.configureByText("index.ts", "const value = 0\n")
+        val uri = "file:///fake/index.ts"
+        val client = FakeLspClient(project, FakeDescriptor(project, uri, file.virtualFile))
+        val session = EffectFixAllInFileService(project).EditorFixAllSession(
+            client, TextDocumentIdentifier(uri), myFixture.editor, file,
+            EffectFixAllRequest("rule:test", "test", "Fix it"),
+        )
+        com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(project) {
+            myFixture.editor.document.setText("user text")
+        }
+        listOf<() -> Unit>(
+            { session.apply(listOf(TextEdit(Range(Position(0, 0), Position(0, 1)), "x"))) },
+            { session.restore("stale text") },
+        ).forEach { write ->
+            try {
+                write()
+                fail("Expected stale snapshot refusal")
+            } catch (_: EffectFixAllServerException) {
+                assertEquals("user text", session.currentText())
+            }
+        }
+    }
+
+    fun testProductionSessionFailsClosedOnMissingResponsesAndCancellation() {
+        val file = myFixture.configureByText("index.ts", "const value = 0\n")
+        val uri = "file:///fake/index.ts"
+        var cancel = false
+        val client = FakeLspClient(project, FakeDescriptor(project, uri, file.virtualFile)) {
+            if (cancel) throw com.intellij.openapi.progress.ProcessCanceledException()
+            null
+        }
+        val session = EffectFixAllInFileService(project).EditorFixAllSession(
+            client, TextDocumentIdentifier(uri), myFixture.editor, file,
+            EffectFixAllRequest("rule:test", "test", "Fix it"),
+        )
+        listOf<() -> Unit>({ session.pullDiagnostics() }, { session.requestQuickFixes(emptyList()) }).forEach { request ->
+            try {
+                request()
+                fail("Expected failed response")
+            } catch (_: EffectFixAllServerException) {
+                assertEquals("const value = 0\n", session.currentText())
+            }
+        }
+        cancel = true
+        try {
+            session.pullDiagnostics()
+            fail("Expected cancellation")
+        } catch (_: com.intellij.openapi.progress.ProcessCanceledException) {
+            assertEquals("const value = 0\n", session.currentText())
+        }
+    }
+
     private class FakeDescriptor(
         project: Project,
         private val fakeUri: String,
@@ -75,6 +177,7 @@ class EffectFixAllApplyPathTest : BasePlatformTestCase() {
     private class FakeLspClient(
         override val project: Project,
         override val descriptor: LspClientDescriptor,
+        private val response: () -> Any? = { null },
     ) : LspClient {
         override val providerClass: Class<out LspIntegrationProvider> = EffectLspServerSupportProvider::class.java
 
@@ -91,7 +194,10 @@ class EffectFixAllApplyPathTest : BasePlatformTestCase() {
         override fun <Lsp4jResponse> sendRequestSync(
             timeoutMs: Int,
             requestExecutor: (LanguageServer) -> CompletableFuture<Lsp4jResponse>,
-        ): Lsp4jResponse? = null
+        ): Lsp4jResponse? {
+            @Suppress("UNCHECKED_CAST")
+            return response() as Lsp4jResponse?
+        }
 
         override fun getDocumentIdentifier(file: VirtualFile): TextDocumentIdentifier =
             TextDocumentIdentifier(descriptor.getFileUri(file))

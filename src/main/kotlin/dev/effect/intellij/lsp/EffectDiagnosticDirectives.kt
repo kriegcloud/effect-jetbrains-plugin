@@ -1,5 +1,10 @@
 package dev.effect.intellij.lsp
 
+import com.intellij.lang.javascript.DialectOptionHolder
+import com.intellij.lang.javascript.JSElementTypes
+import com.intellij.lang.javascript.JSFlexAdapter
+import com.intellij.openapi.editor.Document
+import com.intellij.openapi.util.Key
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DiagnosticSeverity
 
@@ -66,37 +71,53 @@ internal class EffectDiagnosticDirectiveSet private constructor(
 
                 if (directive.isNextLine) {
                     byLine.getOrPut(directive.affectedLine) { mutableListOf() } += directive
-                } else if (skipFileRules.isEmpty()) {
-                    sectionDirectives += directive
+                } else {
+                    val sectionRules = directive.rules.filter { it.severity != EffectDiagnosticDirectiveSeverity.SKIP_FILE }
+                    if (sectionRules.isNotEmpty()) sectionDirectives += directive.copy(rules = sectionRules)
                 }
             }
 
             return EffectDiagnosticDirectiveSet(byLine, fileLevel, sectionDirectives)
         }
 
-        private fun collectDirectives(sourceText: String): List<EffectDiagnosticDirective> =
-            sourceText
-                .split('\n')
-                .mapIndexedNotNull { lineNumber, line ->
-                    val match = directivePattern.find(line) ?: return@mapIndexedNotNull null
-                    val rules = ruleSeverityPattern.findAll(match.groupValues[2])
-                        .mapNotNull { ruleMatch ->
+        private fun collectDirectives(sourceText: String): List<EffectDiagnosticDirective> {
+            if (!sourceText.contains("@effect-diagnostics")) return emptyList()
+            val lexer = JSFlexAdapter(DialectOptionHolder.TS)
+            lexer.start(sourceText)
+            val directives = mutableListOf<EffectDiagnosticDirective>()
+            var lineNumber = 0
+            while (lexer.tokenType != null) {
+                val token = sourceText.subSequence(lexer.tokenStart, lexer.tokenEnd)
+                if (JSElementTypes.COMMENTS.contains(lexer.tokenType)) {
+                    token.split('\n').forEachIndexed { relativeLine, line ->
+                        val match = directivePattern.find(line) ?: return@forEachIndexed
+                        val rules = ruleSeverityPattern.findAll(match.groupValues[2]).mapNotNull { ruleMatch ->
                             val severity = parseSeverity(ruleMatch.groupValues[2]) ?: return@mapNotNull null
                             EffectDiagnosticDirectiveRule(ruleMatch.groupValues[1], severity)
+                        }.toList()
+                        if (rules.isNotEmpty()) {
+                            directives += EffectDiagnosticDirective(lineNumber + relativeLine, match.groupValues[1] == "-next-line", rules)
                         }
-                        .toList()
-
-                    if (rules.isEmpty()) {
-                        null
-                    } else {
-                        EffectDiagnosticDirective(
-                            line = lineNumber,
-                            isNextLine = match.groupValues[1] == "-next-line",
-                            rules = rules,
-                        )
                     }
                 }
+                lineNumber += token.count { it == '\n' }
+                lexer.advance()
+            }
+            return directives
+        }
     }
+}
+
+private data class CachedEffectDirectives(val stamp: Long, val directives: EffectDiagnosticDirectiveSet)
+private val directiveCacheKey = Key.create<CachedEffectDirectives>("effect.diagnostic.directives")
+
+/** Call under read access, so the stamp and text belong to the same document snapshot. */
+internal fun effectDiagnosticDirectives(document: Document): EffectDiagnosticDirectiveSet = synchronized(document) {
+    val stamp = document.modificationStamp
+    document.getUserData(directiveCacheKey)?.takeIf { it.stamp == stamp }?.directives
+        ?: EffectDiagnosticDirectiveSet.parse(document.text).also {
+            document.putUserData(directiveCacheKey, CachedEffectDirectives(stamp, it))
+        }
 }
 
 internal fun effectDirectiveSeverityForDiagnostic(

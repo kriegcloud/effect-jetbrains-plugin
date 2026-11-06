@@ -1,5 +1,7 @@
 package dev.effect.intellij.debug
 
+import java.net.URI
+
 data class EffectSourceLocation(
     val path: String,
     val line: Int = 0,
@@ -196,12 +198,12 @@ private fun EffectDebugValueSnapshot.valueTitle(): String =
     }
 
 private fun EffectDebugSpanEntry.toSourceLocation(): EffectSourceLocation? {
-    val sourcePath = path?.takeIf(String::isNotBlank) ?: return null
+    val sourcePath = path?.let(::localDebugSourcePath) ?: return null
     return EffectSourceLocation(sourcePath, line ?: 0, column ?: 0)
 }
 
 private fun EffectDebugBreakpointLocation.toSourceLocation(): EffectSourceLocation? {
-    val sourcePath = path?.takeIf(String::isNotBlank) ?: return null
+    val sourcePath = path?.let(::localDebugSourcePath) ?: return null
     return EffectSourceLocation(sourcePath, line ?: 0, column ?: 0)
 }
 
@@ -218,4 +220,20 @@ private fun wildcardMatches(value: String, pattern: String): Boolean {
         append('$')
     }.toRegex()
     return regex.matches(value)
+}
+
+/** Convert Node ESM file URLs without depending on the host OS's path parser. */
+internal fun localDebugSourcePath(path: String): String? {
+    if (path.isBlank()) return null
+    if (Regex("^[A-Za-z]:[\\\\/].*").matches(path)) return path
+    if (!Regex("^[A-Za-z][A-Za-z0-9+.-]*:").containsMatchIn(path)) return path
+    return runCatching {
+        val uri = URI(path)
+        if (!uri.scheme.equals("file", ignoreCase = true) ||
+            (!uri.authority.isNullOrEmpty() && !uri.authority.equals("localhost", ignoreCase = true)) ||
+            uri.query != null || uri.fragment != null
+        ) return null
+        val decoded = uri.path?.takeIf { it.startsWith("/") } ?: return null
+        if (Regex("^/[A-Za-z]:/.*").matches(decoded)) decoded.drop(1) else decoded
+    }.getOrNull()
 }

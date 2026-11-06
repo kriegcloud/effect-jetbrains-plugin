@@ -3,6 +3,8 @@ package dev.effect.intellij.binary
 import com.fasterxml.jackson.databind.JsonNode
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.progress.ProcessCanceledException
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import dev.effect.intellij.core.EffectFileUtil
 import dev.effect.intellij.core.EffectJson
@@ -32,9 +34,11 @@ import java.time.Duration
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.locks.Lock
 import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
-import kotlin.concurrent.withLock
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.inputStream
@@ -49,6 +53,9 @@ class EffectBinaryService {
         .followRedirects(HttpClient.Redirect.NORMAL)
         .connectTimeout(Duration.ofSeconds(20))
         .build()
+
+    internal var requestTimeout: Duration = Duration.ofMinutes(2)
+    internal var downloadTempDirectory: Path? = null
 
     internal var registryBaseUrl: String = DEFAULT_REGISTRY_BASE_URL
 
@@ -74,7 +81,7 @@ class EffectBinaryService {
 
             EffectBinaryMode.LATEST,
             EffectBinaryMode.PINNED,
-            -> cacheLifecycleLock.readLock().withLock {
+            -> cacheLifecycleLock.readLock().withCancellableLock {
                 status.markResolvingBinary("Resolving @effect/tsgo")
                 val platform = currentPlatformPackage()
                 val version = when (settings.binaryMode) {
@@ -100,7 +107,7 @@ class EffectBinaryService {
 
                 val cacheRoot = managedCacheRoot()
                 val versionRoot = cacheRoot.resolve(version).resolve(platform.packageName)
-                val binaryPath = versionRootLock(versionRoot).withLock {
+                val binaryPath = versionRootLock(versionRoot).withCancellableLock {
                     var installed = false
                     fun reinstall() {
                         versionRoot.deleteRecursively()
@@ -147,7 +154,7 @@ class EffectBinaryService {
             return
         }
 
-        cacheLifecycleLock.writeLock().withLock {
+        cacheLifecycleLock.writeLock().withCancellableLock {
             val cacheRoot = managedCacheRoot()
             val version = settings.pinnedVersion.takeIf { it.isNotBlank() }
             if (settings.binaryMode == EffectBinaryMode.PINNED && version != null) {
@@ -205,17 +212,13 @@ class EffectBinaryService {
             throw EffectBinaryException("npm metadata for $packageName@$version did not include tarball integrity.")
         }
 
-        val tempRoot = Files.createTempDirectory("effect-tsgo-download")
+        val tempRoot = downloadTempDirectory?.let { Files.createTempDirectory(it, "effect-tsgo-download") }
+            ?: Files.createTempDirectory("effect-tsgo-download")
         val archivePath = tempRoot.resolve("package.tgz")
         val stagingRoot = versionRoot.resolveSibling("${versionRoot.fileName}.staging-${UUID.randomUUID()}")
-        val archiveResponse = sendFileRequest(HttpRequest.newBuilder(URI.create(tarballUrl)).GET().build(), archivePath)
-        if (archiveResponse.statusCode() !in 200..299) {
-            archivePath.deleteIfExists()
-            throw EffectBinaryException("Failed to download $packageName@$version from npm: HTTP ${archiveResponse.statusCode()}")
-        }
-        verifyArchiveIntegrity(packageName, version, archivePath, integrity)
-
         try {
+            sendFileRequest(HttpRequest.newBuilder(URI.create(tarballUrl)).GET().build(), archivePath)
+            verifyArchiveIntegrity(packageName, version, archivePath, integrity)
             extractArchive(archivePath, stagingRoot)
             val stagedPackageRoot = stagingRoot.resolve("package")
             val stagedLib = stagedPackageRoot.resolve("lib")
@@ -233,6 +236,7 @@ class EffectBinaryService {
             versionRoot.deleteRecursively()
             EffectFileUtil.atomicMove(stagingRoot, versionRoot)
         } catch (error: Exception) {
+            if (error is ProcessCanceledException) throw error
             if (error is EffectBinaryException) {
                 throw error
             }
@@ -248,6 +252,7 @@ class EffectBinaryService {
         val libRoot = packageRoot.resolve("lib")
         val marker = EffectJson.mapper.createObjectNode()
         marker.put("version", version)
+        marker.put("schemaVersion", 2)
         val files = marker.putObject("files")
         platform.packagedFileNames.forEach { fileName ->
             val file = libRoot.resolve(fileName)
@@ -258,6 +263,16 @@ class EffectBinaryService {
         findArtifactTypeScriptBinaries(packageRoot, platform).forEach { file ->
             val key = packageRoot.relativize(file).joinToString("/")
             files.put(key, Files.size(file))
+        }
+        val compilerDirectories = (platform.packagedBinaryNames.map(libRoot::resolve).filter(Files::isRegularFile) +
+            findArtifactTypeScriptBinaries(packageRoot, platform)).map { it.parent }.distinct()
+        compilerDirectories.forEach { directory ->
+            Files.newDirectoryStream(directory, "*.d.ts").use { libraries ->
+                libraries.filter(Files::isRegularFile).forEach { file ->
+                    val key = if (directory == libRoot) file.fileName.toString() else packageRoot.relativize(file).joinToString("/")
+                    files.put(key, Files.size(file))
+                }
+            }
         }
         Files.writeString(versionRoot.resolve(INSTALL_COMPLETE_MARKER), EffectJson.mapper.writeValueAsString(marker))
     }
@@ -288,13 +303,13 @@ class EffectBinaryService {
 
         val marker = EffectJson.mapper.readTree(Files.readString(markerPath))
         val files = marker.path("files")
-        if (marker.path("version").asText() != version || !files.isObject) {
+        if (marker.path("schemaVersion").asInt() != 2 || marker.path("version").asText() != version || !files.isObject) {
             return@runCatching false
         }
 
         val installedFileNames = files.properties().asSequence().map { it.key }.toSet()
         if (installedFileNames.isEmpty() ||
-            installedFileNames.any { it !in platform.packagedFileNames && !platform.isArtifactTypeScriptKey(it) }
+            installedFileNames.any { it !in platform.packagedFileNames && !platform.isArtifactTypeScriptKey(it) && !isDeclarationLibraryKey(it) }
         ) {
             return@runCatching false
         }
@@ -689,32 +704,64 @@ class EffectBinaryService {
         return Base64.getEncoder().encodeToString(digest.digest()) == expected
     }
 
-    private fun sendStringRequest(request: HttpRequest): HttpResponse<String> {
-        val response = try {
-            httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-        } catch (error: Exception) {
-            throw EffectBinaryException("Could not reach npm while resolving @effect/tsgo: ${error.message}", error)
-        }
-
-        if (response.statusCode() !in 200..299) {
-            throw EffectBinaryException("npm returned HTTP ${response.statusCode()} for ${request.uri()}")
-        }
-
-        return response
+    private fun isDeclarationLibraryKey(key: String): Boolean {
+        val segments = key.split('/')
+        return segments.none { it == "." || it == ".." || it.isBlank() || '\\' in it } &&
+            segments.last().endsWith(".d.ts") &&
+            (segments.size == 1 || (segments.size == 4 && segments[0] == "artifacts" && segments[1] == "typescript"))
     }
 
-    private fun sendFileRequest(request: HttpRequest, target: Path): HttpResponse<Path> {
-        val response = try {
-            httpClient.send(request, HttpResponse.BodyHandlers.ofFile(target))
+    private fun <T> Lock.withCancellableLock(action: () -> T): T {
+        while (!tryLock(100, TimeUnit.MILLISECONDS)) ProgressManager.checkCanceled()
+        try {
+            ProgressManager.checkCanceled()
+            return action()
+        } finally {
+            unlock()
+        }
+    }
+
+    private fun sendStringRequest(request: HttpRequest): HttpResponse<String> =
+        sendRequest(request, HttpResponse.BodyHandlers.ofString(), "reach npm while resolving")
+
+    private fun sendFileRequest(request: HttpRequest, target: Path): HttpResponse<Path> =
+        sendRequest(request, HttpResponse.BodyHandlers.ofFile(target), "download from npm")
+
+    private fun <T> sendRequest(
+        request: HttpRequest,
+        handler: HttpResponse.BodyHandler<T>,
+        operation: String,
+    ): HttpResponse<T> {
+        // The future completes after the body subscriber completes, so this deadline also
+        // covers a server that sends headers and then stalls partway through the archive.
+        val future = httpClient.sendAsync(request, handler)
+        val deadline = System.nanoTime() + requestTimeout.toNanos()
+        try {
+            while (true) {
+                ProgressManager.checkCanceled()
+                val remaining = deadline - System.nanoTime()
+                if (remaining <= 0) throw TimeoutException("Response deadline exceeded ($requestTimeout)")
+                val response = try {
+                    future.get(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(100)), TimeUnit.NANOSECONDS)
+                } catch (_: TimeoutException) {
+                    continue
+                }
+                if (response.statusCode() !in 200..299) {
+                    throw EffectBinaryException("npm returned HTTP ${response.statusCode()} for ${request.uri()}")
+                }
+                return response
+            }
+        } catch (error: ProcessCanceledException) {
+            throw error
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw ProcessCanceledException(error)
         } catch (error: Exception) {
-            throw EffectBinaryException("Could not download @effect/tsgo from npm: ${error.message}", error)
+            if (error is EffectBinaryException) throw error
+            throw EffectBinaryException("Could not $operation @effect/tsgo: ${error.message}", error)
+        } finally {
+            future.cancel(true)
         }
-
-        if (response.statusCode() !in 200..299) {
-            throw EffectBinaryException("npm returned HTTP ${response.statusCode()} for ${request.uri()}")
-        }
-
-        return response
     }
 
     private fun currentPlatformPackage(): PlatformPackage {

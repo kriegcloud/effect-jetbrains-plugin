@@ -156,16 +156,17 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         try {
             val comboBoxes = collectComponents(component).filterIsInstance<ComboBox<*>>()
             val modeBox = comboBoxes.first { box -> (0 until box.itemCount).any { box.getItemAt(it) == EffectBinaryMode.PINNED } }
-            val versionBox = comboBoxes.first { box -> (0 until box.itemCount).any { box.getItemAt(it) is PinnedVersionItem } }
+            val versionBox = comboBoxes.first { it.isEditable }
 
             modeBox.selectedItem = EffectBinaryMode.PINNED
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Version discovery", { versionBox.editor.item.toString() == "0.53.4" }, 20)
             configurable.apply()
 
             assertEquals("0.53.4", service.currentSettings().pinnedVersion)
             assertEquals(EffectBinaryMode.PINNED, service.currentSettings().binaryMode)
             val labels = (0 until versionBox.itemCount).map { (versionBox.getItemAt(it) as PinnedVersionItem).label }
             assertTrue(labels.toString(), labels.first().startsWith("0.53.4  —  @effect/tsgo"))
-            assertEquals("Select…", labels.last())
+            assertFalse(labels.contains("Select…"))
 
             // A hand-typed version still wins over detection and is what gets saved.
             versionBox.editor.item = "0.54.1"
@@ -212,6 +213,9 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
             assertTrue(visibleText.contains("Binary"))
             assertTrue(visibleText.contains("Language Server"))
             assertTrue(visibleText.contains("Dev Tools"))
+            val noticeText = findTextComponents(component).joinToString("\n") { it.text }.replace(Regex("\\s+"), " ")
+            assertTrue(noticeText, noticeText.contains("Restart Runtime"))
+            assertTrue(noticeText, noticeText.contains("port or poll interval"))
             assertTrue(visibleText.contains("Debugger"))
             assertTrue(collectComponents(component).filterIsInstance<JButton>().any { it.text == "Sync to tsconfig.json" })
         } finally {
@@ -348,6 +352,95 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
         service.loadState(EffectProjectSettingsState().also { it.binaryMode = "BROKEN" })
 
         assertEquals(EffectBinaryMode.MANUAL, service.currentSettings().binaryMode)
+    }
+
+    fun testEnvironmentWhitespaceSurvivesResetAndApply() {
+        val service = EffectProjectSettingsService.getInstance(project)
+        val env = linkedMapOf("TRAIL" to "abc ", "LEAD" to " abc", "EMPTY" to "", "EQUALS" to "a=b")
+        service.updateSettings(EffectProjectSettings(binaryMode = EffectBinaryMode.LATEST, extraEnv = env))
+        val configurable = EffectProjectSettingsConfigurable(project)
+        configurable.createComponent()
+        try {
+            assertFalse(configurable.isModified)
+            configurable.apply()
+            assertEquals(env, service.currentSettings().extraEnv)
+            assertFalse(configurable.isModified)
+            configurable.reset()
+            assertFalse(configurable.isModified)
+        } finally { configurable.disposeUIResources() }
+    }
+
+    fun testBlankDiagnosticRuleIsRejectedBeforeApplyAndSync() {
+        val tsconfig = myFixture.addFileToProject("tsconfig.json", """{ "compilerOptions": {} }""")
+        val original = tsconfig.text
+        val service = EffectProjectSettingsService.getInstance(project)
+        val settings = EffectProjectSettings(binaryMode = EffectBinaryMode.LATEST)
+        service.updateSettings(settings)
+        val configurable = EffectProjectSettingsConfigurable(project)
+        val component = configurable.createComponent()
+        try {
+            val fields = findTextComponents(component)
+            val severity = fields.filterIsInstance<com.intellij.ui.components.JBTextArea>().first { it.rows == 5 }
+            severity.text = "=error"
+            try {
+                configurable.apply()
+                fail("Blank diagnostic names must be rejected")
+            } catch (expected: com.intellij.openapi.options.ConfigurationException) {
+                assertTrue(expected.message.orEmpty().contains("Diagnostic rule names"))
+            }
+            collectComponents(component).filterIsInstance<JButton>().first { it.text == "Sync to tsconfig.json" }.doClick()
+            assertEquals(settings, service.currentSettings())
+            assertEquals(original, tsconfig.text)
+            assertTrue(collectComponents(component).filterIsInstance<JLabel>().any { it.text.orEmpty().contains("Diagnostic rule names") })
+            severity.text = "schemaNumber = warning "
+            configurable.apply()
+            assertFalse(configurable.isModified)
+        } finally { configurable.disposeUIResources() }
+    }
+
+    fun testPinnedPackageChooserCancelPreservesTypedVersion() = checkPackageChooserPreservesVersion(false)
+
+    fun testPinnedPackageChooserInvalidSelectionPreservesTypedVersion() = checkPackageChooserPreservesVersion(true)
+
+    private fun checkPackageChooserPreservesVersion(invalid: Boolean) {
+        val file = if (invalid) myFixture.addFileToProject("not-a-package/package.json", "{} ").virtualFile else null
+        val ui = EffectProjectSettingsComponent(project, discoverVersions = { emptyList() },
+            discoverTypeScript = { error("Unavailable") }, choosePackage = { file })
+        try {
+            ui.reset(EffectProjectSettings(binaryMode = EffectBinaryMode.PINNED, pinnedVersion = "0.54.1"))
+            val versionBox = collectComponents(ui.panel).filterIsInstance<ComboBox<*>>().first { it.isEditable }
+            versionBox.editor.item = "0.55.2"
+            collectComponents(ui.panel).filterIsInstance<JButton>().first { it.text == "Select pinned package…" }.doClick()
+            assertEquals("0.55.2", ui.toSettings().pinnedVersion)
+        } finally { ui.dispose() }
+    }
+
+    fun testSettingsDiscoveryRunsOffEdtAndDisposalSuppressesUpdates() {
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val finished = java.util.concurrent.CountDownLatch(1)
+        val ui = EffectProjectSettingsComponent(project, discoverVersions = {
+            assertFalse(com.intellij.openapi.application.ApplicationManager.getApplication().isDispatchThread)
+            started.countDown()
+            try { release.await() } catch (_: InterruptedException) { /* Deliberately complete after disposal. */ }
+            emptyList()
+        }, discoverTypeScript = {
+            finished.countDown()
+            dev.effect.intellij.typescript.EffectWebStormTypeScriptService.CurrentState(null, false, emptyList())
+        })
+        try {
+            ui.reset(EffectProjectSettings(binaryMode = EffectBinaryMode.LATEST))
+            val mode = collectComponents(ui.panel).filterIsInstance<ComboBox<*>>().first { it.getItemAt(0) is EffectBinaryMode }
+            mode.selectedItem = EffectBinaryMode.PINNED
+            assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals(1L, release.count)
+            val status = collectComponents(ui.panel).filterIsInstance<JLabel>().first { it.text == "Looking for tsrs…" }
+            ui.dispose()
+            release.countDown()
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Discovery completion", { finished.count == 0L }, 20)
+            UIUtil.dispatchAllInvocationEvents()
+            assertEquals("Looking for tsrs…", status.text)
+        } finally { release.countDown(); ui.dispose() }
     }
 
     private fun findTextComponents(component: Component): List<JTextComponent> =

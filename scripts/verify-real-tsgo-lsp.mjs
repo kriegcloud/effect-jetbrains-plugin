@@ -1,11 +1,16 @@
 import { chmod, mkdtemp, readFile, writeFile, cp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import nodeAssert from "node:assert/strict"
 import { spawn } from "node:child_process"
 
-const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..")
-const fixturesRoot = path.join(repoRoot, "src", "test", "testData", "fixtures", "lsp")
+function fixtureRootForScript(scriptUrl) {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(scriptUrl)), "..")
+  return path.join(repoRoot, "src", "test", "testData", "fixtures", "lsp")
+}
+
+const fixturesRoot = fixtureRootForScript(import.meta.url)
 const REQUEST_TIMEOUT_MS = 60_000
 
 function sleep(ms) {
@@ -16,7 +21,9 @@ function parseArgs(argv) {
   const args = {}
   for (let index = 0; index < argv.length; index += 1) {
     const current = argv[index]
-    if (current === "--binary") {
+    if (current === "--self-test") {
+      args.selfTest = true
+    } else if (current === "--binary") {
       args.binary = argv[index + 1]
       index += 1
     } else if (current === "--only") {
@@ -27,9 +34,10 @@ function parseArgs(argv) {
   return args
 }
 
-const { binary, only = "all" } = parseArgs(process.argv.slice(2))
-if (!binary) {
+const { binary, only = "all", selfTest = false } = parseArgs(process.argv.slice(2))
+if (!binary && !selfTest) {
   console.error("Usage: node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/tsgo [--only healthy|failing|new-diagnostics|diagnostic-directives|fix-all|all]")
+  console.error("       node scripts/verify-real-tsgo-lsp.mjs --self-test")
   process.exit(1)
 }
 
@@ -286,12 +294,9 @@ function hoverText(hover) {
     return contents
   }
   if (Array.isArray(contents)) {
-    return contents.map(hoverText).join("\n")
+    return contents.map((item) => hoverText({ contents: item })).join("\n")
   }
   if (typeof contents.value === "string") {
-    return contents.value
-  }
-  if (typeof contents.language === "string" && typeof contents.value === "string") {
     return contents.value
   }
   return JSON.stringify(contents)
@@ -494,6 +499,9 @@ Layer.`
     assert(completionItems.length > 0, "Expected completion items for Layer.")
     assert(completionItems.some((item) => String(item.label).includes("provide")), "Expected Effect completion for Layer.")
 
+    // The pinned compiler returns no hints for this fixture (docs/usage.md). This probes
+    // capability/response compatibility only; it does not prove rendered Effect hints.
+    assert(initializeResult.capabilities?.inlayHintProvider, "Expected advertised inlay hint capability")
     const inlayHints = await requestWithRetries(client, "textDocument/inlayHint", {
       textDocument: { uri: indexUri },
       range: {
@@ -527,6 +535,12 @@ Layer.`
       executeCommands: initializeResult.capabilities?.executeCommandProvider?.commands ?? [],
       completionItems: completionItems.length,
       inlayHints: normalizedInlayHints.length,
+      inlayHintEvidence: {
+        scope: "capability-only",
+        advertised: true,
+        response: inlayHints === null ? "null" : "array",
+        positiveHintRenderingVerified: false,
+      },
       documentSymbols: documentSymbolNames,
       workspaceSymbolCount: workspaceSymbols.length,
       workspacePath,
@@ -1165,7 +1179,27 @@ async function main() {
   console.log(JSON.stringify(result, null, 2))
 }
 
-main().catch((error) => {
+function verifyHelpers() {
+  nodeAssert.equal(
+    fixtureRootForScript(new URL("file:///tmp/project%20copy/scripts/verify-real-tsgo-lsp.mjs")),
+    path.join("/tmp/project copy", "src", "test", "testData", "fixtures", "lsp"),
+  )
+  const cases = [
+    ["string", "Layer.Layer<Cache>", "Layer.Layer<Cache>"],
+    ["MarkupContent", { kind: "markdown", value: "**Layer**" }, "**Layer**"],
+    ["string array", ["Layer.Layer<Cache>", "Show full graph"], "Layer.Layer<Cache>\nShow full graph"],
+    ["language/value array", [{ language: "typescript", value: "Layer.Layer<Cache>" }], "Layer.Layer<Cache>"],
+    ["mixed array", ["Show full graph", { language: "typescript", value: "Layer.Layer<Cache>" }], "Show full graph\nLayer.Layer<Cache>"],
+  ]
+  for (const [name, contents, expected] of cases) {
+    nodeAssert.equal(hoverText({ contents }), expected, name)
+  }
+  nodeAssert.equal(hoverText(null), "")
+  nodeAssert.equal(hoverText({ contents: [] }), "")
+  console.log("Verifier helper regressions passed (decoded fixture path and hover response forms)")
+}
+
+Promise.resolve().then(() => selfTest ? verifyHelpers() : main()).catch((error) => {
   console.error(error.stack || error.message)
   process.exit(1)
 })

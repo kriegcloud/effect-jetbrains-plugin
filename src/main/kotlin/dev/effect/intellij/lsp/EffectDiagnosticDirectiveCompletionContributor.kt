@@ -7,6 +7,8 @@ import com.intellij.codeInsight.completion.CompletionResultSet
 import com.intellij.codeInsight.completion.CompletionType
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.patterns.PlatformPatterns
+import com.intellij.psi.PsiComment
+import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.ProcessingContext
 import dev.effect.intellij.core.EffectPluginConstants
 
@@ -31,12 +33,16 @@ class EffectDiagnosticDirectiveCompletionContributor : CompletionContributor() {
                         return
                     }
 
-                    val text = parameters.originalFile.text
-                    val offset = parameters.offset.coerceIn(0, text.length)
-                    val lineStart = text.lastIndexOf('\n', (offset - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
-                    val linePrefix = text.substring(lineStart, offset)
-
+                    val document = parameters.editor.document
+                    val offset = parameters.offset.coerceIn(0, document.textLength)
+                    val lineStart = document.getLineStartOffset(document.getLineNumber(offset))
+                    val linePrefix = document.charsSequence.subSequence(lineStart, offset).toString()
                     val completion = completionFor(linePrefix) ?: return
+                    val markerOffset = lineStart + linePrefix.lastIndexOf(DIRECTIVE_MARKER)
+                    val element = parameters.originalFile.findElementAt(markerOffset) ?: return
+                    val comment = PsiTreeUtil.getParentOfType(element, PsiComment::class.java, false) ?: return
+                    if (offset > comment.textRange.endOffset || linePrefix.substringAfterLast(DIRECTIVE_MARKER).contains("*/")) return
+
                     val scoped = result.withPrefixMatcher(completion.prefix)
                     when (completion.kind) {
                         DirectiveCompletionKind.SEVERITY -> SEVERITIES.forEach { severity ->

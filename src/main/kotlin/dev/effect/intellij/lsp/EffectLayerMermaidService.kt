@@ -52,22 +52,28 @@ class EffectLayerMermaidService(private val project: Project) {
                 } else {
                     requestMermaidViaHover(server, file, line, character)
                 }
+            }.mapCatching { mermaidCode ->
+                mermaidCode?.takeIf(String::isNotBlank)?.let { prepareMermaidSource(file, it) }
             }
 
             ApplicationManager.getApplication().invokeLater {
-                if (project.isDisposed) return@invokeLater
-
-                val mermaidCode = result.getOrNull()
-                if (!mermaidCode.isNullOrBlank()) {
-                    openMermaidSource(file, mermaidCode)
-                    return@invokeLater
-                }
-
-                val message = result.exceptionOrNull()?.message
-                    ?: "No Effect Layer graph was found here. Place the caret on a Layer declaration name and make sure the Effect LSP has `noExternal` disabled so hover graph links are produced."
-                notifications.warning(project, "Effect Mermaid graph unavailable", message)
+                displayMermaidResult(result)
             }
         }
+    }
+
+    internal fun displayMermaidResult(result: Result<VirtualFile?>) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        if (project.isDisposed) return
+        val mermaidFile = result.getOrNull()
+        if (mermaidFile != null) {
+            openMermaidSource(mermaidFile)
+            return
+        }
+        val message = result.exceptionOrNull()?.message
+            ?: "No Effect Layer graph was found here. Place the caret on a Layer declaration name and make sure the Effect LSP has `noExternal` disabled so hover graph links are produced."
+        ApplicationManager.getApplication().getService(EffectNotificationService::class.java)
+            .warning(project, "Effect Mermaid graph unavailable", message)
     }
 
     private fun requestMermaidViaCommand(
@@ -126,7 +132,8 @@ class EffectLayerMermaidService(private val project: Project) {
         }
     }
 
-    private fun openMermaidSource(sourceFile: VirtualFile, mermaidCode: String) {
+    internal fun prepareMermaidSource(sourceFile: VirtualFile, mermaidCode: String): VirtualFile {
+        check(!ApplicationManager.getApplication().isDispatchThread) { "Mermaid output must be prepared off EDT" }
         val mermaidDir = Path.of(PathManager.getSystemPath(), EffectPluginConstants.DEFAULT_BINARY_CACHE_DIR, "mermaid")
         Files.createDirectories(mermaidDir)
 
@@ -136,9 +143,13 @@ class EffectLayerMermaidService(private val project: Project) {
 
         val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(mermaidPath)
             ?: LocalFileSystem.getInstance().refreshAndFindFileByPath(mermaidPath.toString())
-            ?: return
+            ?: error("Could not refresh the generated Effect Mermaid file.")
+        return virtualFile
+    }
 
-        FileEditorManager.getInstance(project).openFile(virtualFile, true)
+    private fun openMermaidSource(virtualFile: VirtualFile) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        if (!project.isDisposed) FileEditorManager.getInstance(project).openFile(virtualFile, true)
     }
 
     private fun filePath(file: VirtualFile): String =

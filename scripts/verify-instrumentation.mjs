@@ -57,6 +57,65 @@ function verifyLegacyFallbacks(source) {
   assertLocation(api.getBreakpointSnapshot().location)
 }
 
+function verifySnapshotControls(source) {
+  const sandbox = {}
+  runInNewContext(source, sandbox, { filename: instrumentationPath })
+  const api = sandbox[instrumentationKey]
+  let getterCalls = 0
+  const service = { count: 42, nested: { ok: true } }
+  for (const key of ["danger", "_tag", "constructor"]) {
+    Object.defineProperty(service, key, { enumerable: true, get() {
+      getterCalls++
+      throw new Error("Getter executed")
+    } })
+  }
+  const unreadable = new Proxy({}, { ownKeys() { throw new Error("Unavailable") } })
+  const partial = new Proxy({ good: 1, bad: 2 }, {
+    getOwnPropertyDescriptor(target, key) {
+      if (key === "bad") throw new Error("Unavailable property")
+      return Object.getOwnPropertyDescriptor(target, key)
+    },
+  })
+  // A descriptor may fail on a later inspection even after Object.keys succeeded.
+  let reads = 0
+  const changing = new Proxy({ good: 1 }, {
+    getOwnPropertyDescriptor(target, key) {
+      if (key === "good" && ++reads > 1) throw new Error("Unavailable property")
+      return Object.getOwnPropertyDescriptor(target, key)
+    },
+  })
+  const fiber = { id: 1, context: { mapUnsafe: new Map([["Service", service], ["Proxy", unreadable], ["Partial", partial], ["Changing", changing]]) } }
+  const values = api.getFiberCurrentContextSnapshot(fiber)
+  assert.equal(getterCalls, 0)
+  assert.equal(values.length, 4)
+  const children = values[0].value.children
+  assert.equal(children[0].label, "count")
+  assert.equal(children[0].summary, "42")
+  assert.equal(children[1].label, "nested")
+  assert.equal(children[1].children[0].label, "ok")
+  for (const child of children.slice(2)) assert.equal(child.summary, "[Accessor]")
+  assert.equal(values[2].value.children[0].label, "good")
+  assert.equal(values[2].value.children[1].label, "bad")
+  assert.equal(values[2].value.children[1].summary, "[Unreadable]")
+  assert.equal(values[3].value.children[0].summary, "[Unreadable]")
+  assert.doesNotThrow(() => JSON.stringify(values))
+
+  let idCalls = 0
+  for (let id = 0; id < 1000; id++) {
+    sandbox["effect/FiberCurrent"] = {
+      id() { idCalls++; return { id } }, interruptible: true,
+      cache: { span: { _tag: "Span", name: `fiber-${id}` } },
+    }
+  }
+  idCalls = 0
+  const fibers = api.getAliveFibersSnapshot()
+  assert.equal(fibers.length, 1000)
+  assert.equal(idCalls, 1000, "Fiber IDs must be read once per fiber")
+  assert.equal(fibers[999].id, "999")
+  assert.equal(fibers[999].isCurrent, true)
+  assert.ok(fibers.every((fiber, id) => fiber.stack[0].name === `fiber-${id}` && fiber.isInterruptible))
+}
+
 async function verifyRuntime(workspace) {
   const source = await readFile(instrumentationPath, "utf8")
   // EffectDebugBridgeService evaluates this file, then uses this global API.
@@ -102,11 +161,19 @@ async function verifyRuntime(workspace) {
   assert.ok(exit.cause.reasons.some((reason) => reason._tag === "Interrupt"))
   assert.ok(!api.getAliveFibersSnapshot().some((fiber) => fiber.id === String(longFiber.id)))
   verifyLegacyFallbacks(source)
+  verifySnapshotControls(source)
   console.log(`spans=${snapshot.map((span) => span.name).join(" > ")}; source=${snapshot.find((span) => span.path).path}; defect=${pause.location.path}:${pause.location.line + 1}; legacyFieldsAbsent=${legacyFieldsAbsent}; interrupt=PASS; legacy/cache controls=PASS`)
 }
 
 async function main() {
   const args = process.argv.slice(2)
+  if (args.length === 1 && args[0] === "--controls") {
+    const source = await readFile(instrumentationPath, "utf8")
+    verifyLegacyFallbacks(source)
+    verifySnapshotControls(source)
+    console.log("Snapshot getter/proxy/labels and 1000-fiber linearity controls: PASS")
+    return
+  }
   if (args[0] === "--worker" && args.length === 2) {
     await verifyRuntime(args[1])
     return

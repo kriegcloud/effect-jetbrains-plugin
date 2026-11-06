@@ -19,6 +19,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
 import java.security.MessageDigest
+import java.time.Duration
 import java.util.Base64
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
@@ -77,6 +78,8 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
             server.stop(0)
             serverExecutor.shutdownNow()
             EffectBinaryService.getInstance().registryBaseUrl = originalRegistryBaseUrl
+            EffectBinaryService.getInstance().requestTimeout = Duration.ofMinutes(2)
+            EffectBinaryService.getInstance().downloadTempDirectory = null
             EffectApplicationStateService.getInstance().loadState(originalApplicationState)
         } finally {
             super.tearDown()
@@ -251,6 +254,130 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         val resolution = resolveLatest()
 
         assertEquals("latest-lib", Files.readString(resolution.binaryPath.resolveSibling("lib.d.ts")))
+    }
+
+    fun testManagedLibrariesAreRepairedAfterDeletionAndTruncation() {
+        writeWorkspacePackage("typescript", "7.0.2", STABLE_TYPESCRIPT_HEAD)
+        val downloads = AtomicInteger()
+        registerComponentsLatestEndpoints(CURRENT_TSGO_VERSION, tarballRequests = downloads)
+        val initial = resolveLatest()
+        val packageRoot = requireNotNull(initial.cacheDirectory).resolve("package")
+        val libraries = listOf(
+            packageRoot.resolve("lib/lib.d.ts"),
+            initial.binaryPath.resolveSibling("lib.d.ts"),
+            initial.binaryPath.resolveSibling("lib.es5.d.ts"),
+        )
+        var expectedDownloads = 1
+        libraries.forEach { library ->
+            val original = Files.readString(library)
+            Files.delete(library)
+            resolveLatest()
+            assertEquals(original, Files.readString(library))
+            assertEquals(++expectedDownloads, downloads.get())
+            resolveLatest()
+            assertEquals(expectedDownloads, downloads.get())
+            Files.writeString(library, "")
+            resolveLatest()
+            assertEquals(original, Files.readString(library))
+            assertEquals(++expectedDownloads, downloads.get())
+            resolveLatest()
+            assertEquals(expectedDownloads, downloads.get())
+        }
+    }
+
+    fun testManagedMarkerUpgradeReinstallsOnlyOnce() {
+        val downloads = AtomicInteger()
+        registerModernLatestEndpoints(CURRENT_TSGO_VERSION, tarballRequests = downloads)
+        writeWorkspacePackage("typescript", "7.0.2", STABLE_TYPESCRIPT_HEAD)
+        val initial = resolveLatest()
+        val markerPath = requireNotNull(initial.cacheDirectory).resolve(".install-complete")
+        val marker = ObjectMapper().readTree(Files.readString(markerPath)) as ObjectNode
+        marker.remove("schemaVersion")
+        Files.writeString(markerPath, marker.toString())
+        resolveLatest()
+        resolveLatest()
+        assertEquals(2, downloads.get())
+    }
+
+    fun testManagedMetadataHeaderDeadlineReleasesLocks() = checkFailedTransfer("headers")
+
+    fun testManagedArchiveBodyDeadlineReleasesLocksAndCleansTemporaryFiles() = checkFailedTransfer("body")
+
+    fun testManagedTransportAbortCleansTemporaryFiles() = checkFailedTransfer("abort")
+
+    fun testManagedHttpFailureCleansTemporaryFiles() = checkFailedTransfer("status")
+
+    private fun checkFailedTransfer(failure: String) {
+        val version = "8.8.7"
+        val tarballName = "failure.tgz"
+        val tarball = tempDir.resolve(tarballName)
+        writeLegacyTarball(tarball)
+        val failing = java.util.concurrent.atomic.AtomicBoolean(true)
+        val release = CountDownLatch(1)
+        server.createContext("/$platformPackage/$version") { exchange ->
+            if (failure == "headers" && failing.get()) {
+                release.await(10, TimeUnit.SECONDS)
+                exchange.close()
+            } else {
+                respondJson(exchange, metadataJson(version, tarballName, tarball))
+            }
+        }
+        server.createContext("/tarballs/$tarballName") { exchange ->
+            val bytes = Files.readAllBytes(tarball)
+            if (failing.get() && failure == "status") {
+                exchange.sendResponseHeaders(503, -1)
+                exchange.close()
+            } else {
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { output ->
+                    if (failing.get() && failure in listOf("body", "abort")) {
+                        output.write(bytes, 0, 1)
+                        output.flush()
+                        if (failure == "body") release.await(10, TimeUnit.SECONDS)
+                    } else {
+                        output.write(bytes)
+                    }
+                }
+            }
+        }
+        val service = EffectBinaryService.getInstance()
+        service.registryBaseUrl = "http://127.0.0.1:${server.address.port}"
+        service.requestTimeout = Duration.ofMillis(500)
+        val downloads = Files.createDirectory(tempDir.resolve("downloads"))
+        service.downloadTempDirectory = downloads
+        project.getService(EffectProjectSettingsService::class.java).updateSettings(
+            EffectProjectSettings(binaryMode = EffectBinaryMode.PINNED, pinnedVersion = version),
+        )
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val attempt = executor.submit<Throwable?> {
+                try {
+                    service.ensureAvailable(project)
+                    null
+                } catch (error: EffectBinaryException) {
+                    error
+                }
+            }
+            val error = attempt.get(5, TimeUnit.SECONDS)
+            assertNotNull("Expected $failure failure within deadline", error)
+            val expectedMessage = when (failure) {
+                "headers", "body" -> "Response deadline exceeded"
+                "status" -> "HTTP 503"
+                else -> "Could not download"
+            }
+            assertTrue(error.toString(), error!!.message.orEmpty().contains(expectedMessage))
+            Files.list(downloads).use { assertEquals(0L, it.count()) }
+            failing.set(false)
+            release.countDown()
+            service.requestTimeout = Duration.ofSeconds(5)
+            executor.submit { service.invalidate(project) }.get(5, TimeUnit.SECONDS)
+            val resolution = executor.submit<BinaryResolution> { service.ensureAvailable(project) }.get(5, TimeUnit.SECONDS)
+            assertTrue(Files.isRegularFile(resolution.binaryPath))
+            Files.list(downloads).use { assertEquals(0L, it.count()) }
+        } finally {
+            release.countDown()
+            executor.shutdownNow()
+        }
     }
 
     fun testLatestModeSelectsNextArtifactBinaryFromComponentsManifest() {
@@ -555,6 +682,8 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         val tarballName = "${platformPackage.substringAfter('/')}-${version}.tgz"
         val tarballPath = tempDir.resolve(tarballName)
         val cacheRoot = tempDir.resolve("bad-integrity-cache")
+        val downloads = Files.createDirectory(tempDir.resolve("integrity-downloads"))
+        EffectBinaryService.getInstance().downloadTempDirectory = downloads
         writeLegacyTarball(tarballPath)
 
         server.createContext("/$platformPackage/$version") { exchange ->
@@ -592,6 +721,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         }
 
         assertFalse(Files.exists(cacheRoot.resolve(version)))
+        Files.list(downloads).use { assertEquals(0L, it.count()) }
     }
 
     fun testManualModeUsesProvidedBinary() {
@@ -977,6 +1107,7 @@ class EffectBinaryServiceTest : BasePlatformTestCase() {
         if (includeLatestArtifact) {
             entries["package/artifacts/typescript/7.0.2/$stableBinaryName"] = "latest-binary"
             entries["package/artifacts/typescript/7.0.2/lib.d.ts"] = "latest-lib"
+            entries["package/artifacts/typescript/7.0.2/lib.es5.d.ts"] = "latest-es5-lib"
         }
         if (includeNextArtifact) {
             entries["package/artifacts/typescript/7.1.0-dev.20261019.1/$stableBinaryName"] = "next-binary"

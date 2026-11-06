@@ -1,5 +1,7 @@
 package dev.effect.intellij.settings
 
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
@@ -66,11 +68,24 @@ class EffectProjectSettingsConfigurable(private val project: Project) : Searchab
     }
 
     override fun disposeUIResources() {
+        component?.dispose()
         component = null
     }
 }
 
-private class EffectProjectSettingsComponent(private val project: Project) {
+internal class EffectProjectSettingsComponent(
+    private val project: Project,
+    private val discoverVersions: () -> List<DetectedTsgoVersion> = {
+        project.basePath?.takeIf(String::isNotBlank)
+            ?.let { EffectWorkspaceTsgoDetector.detect(Path.of(it)) }.orEmpty()
+    },
+    private val discoverTypeScript: () -> EffectWebStormTypeScriptService.CurrentState = {
+        EffectWebStormTypeScriptService.getInstance(project).currentState()
+    },
+    private val choosePackage: (FileChooserDescriptor) -> com.intellij.openapi.vfs.VirtualFile? = {
+        FileChooser.chooseFile(it, project, null)
+    },
+) {
     private val booleanOptions = arrayOf(SERVER_DEFAULT_OPTION, "true", "false")
     private val binaryMode = ComboBox(EffectBinaryMode.entries.toTypedArray())
     private val pinnedVersion = ComboBox<PinnedVersionItem>().apply {
@@ -103,6 +118,13 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     private lateinit var pinnedVersionRow: Row
     private lateinit var manualBinaryPathRow: Row
 
+    private var resetting = false
+    private var detectedVersions: List<DetectedTsgoVersion> = emptyList()
+    private var disposed = false
+    private var discoveryGeneration = 0
+    private var discoveryTask: java.util.concurrent.Future<*>? = null
+    private var defaultPinnedWhenDiscovered = false
+
     val panel: JComponent = createPanel()
 
     init {
@@ -111,11 +133,6 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             description = "Choose the native tsgo executable for manual mode."
         }
         manualBinaryPath.addBrowseFolderListener(TextBrowseFolderListener(manualBinaryDescriptor, project))
-        pinnedVersion.addActionListener {
-            if (pinnedVersion.selectedItem === PinnedVersionItem.SELECT) {
-                choosePinnedVersionFromPackage()
-            }
-        }
 
         binaryMode.addActionListener { updateBinaryFieldState() }
         val clearProblemsListener = object : DocumentAdapter() {
@@ -133,6 +150,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             lspMermaidProvider,
             lspLayerGraphFollowDepth,
         ).forEach { field -> field.document.addDocumentListener(clearProblemsListener) }
+        updateDetectedVersionItems()
         updateBinaryFieldState()
         clearProblems()
         refreshWebStormTypeScriptStatus()
@@ -141,6 +159,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     private fun useTsrsForWebStormTypeScript() {
         webStormTypeScriptStatus.text = "Looking for tsrs…"
         EffectWebStormTypeScriptService.getInstance(project).useTsrsForWebStormTypeScript { result ->
+            if (disposed || project.isDisposed) return@useTsrsForWebStormTypeScript
             refreshWebStormTypeScriptStatus()
             if (result.isSuccess) {
                 // The TypeScript page of this Settings dialog still shows the old package; OK or Apply
@@ -152,13 +171,33 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         }
     }
 
+    fun dispose() {
+        disposed = true
+        discoveryGeneration++
+        discoveryTask?.cancel(true)
+    }
+
     private fun refreshWebStormTypeScriptStatus() {
-        val state = runCatching { EffectWebStormTypeScriptService.getInstance(project).currentState() }.getOrNull()
-        webStormTypeScriptStatus.text = when {
-            state == null -> "WebStorm's TypeScript settings are unavailable in this IDE."
-            state.usesTsrs -> "WebStorm TypeScript uses tsrs: ${state.serviceDirectory}"
-            state.candidates.isEmpty() -> "Current: ${state.serviceDirectory ?: "bundled or auto-detected"}. No tsrs installation found."
-            else -> "Current: ${state.serviceDirectory ?: "bundled or auto-detected"}. Available: ${state.candidates.first().description}"
+        webStormTypeScriptStatus.text = "Looking for tsrs…"
+        val generation = ++discoveryGeneration
+        discoveryTask?.cancel(true)
+        discoveryTask = ApplicationManager.getApplication().executeOnPooledThread {
+            val versions = runCatching(discoverVersions).getOrDefault(emptyList())
+            val state = runCatching(discoverTypeScript).getOrNull()
+            ApplicationManager.getApplication().invokeLater({
+                if (disposed || project.isDisposed || generation != discoveryGeneration) return@invokeLater
+                detectedVersions = versions
+                updateDetectedVersionItems()
+                if (defaultPinnedWhenDiscovered && binaryMode.selectedItem == EffectBinaryMode.PINNED && pinnedVersionText().isBlank()) {
+                    detectedVersions.firstOrNull()?.let { setPinnedVersionText(it.version) }
+                }
+                webStormTypeScriptStatus.text = when {
+                    state == null -> "WebStorm's TypeScript settings are unavailable in this IDE."
+                    state.usesTsrs -> "WebStorm TypeScript uses tsrs: ${state.serviceDirectory}"
+                    state.candidates.isEmpty() -> "Current: ${state.serviceDirectory ?: "bundled or auto-detected"}. No tsrs installation found."
+                    else -> "Current: ${state.serviceDirectory ?: "bundled or auto-detected"}. Available: ${state.candidates.first().description}"
+                }
+            }, ModalityState.any())
         }
     }
 
@@ -172,6 +211,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
                     cell(pinnedVersion)
                         .align(AlignX.FILL)
                         .resizableColumn()
+                    button("Select pinned package…") { choosePinnedVersionFromPackage() }
                 }
                 manualBinaryPathRow = row("Manual binary path") {
                     cell(manualBinaryPath)
@@ -254,6 +294,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
                 }
                 row("Metrics poll interval (ms)") {
                     cell(metricsPollInterval)
+                        .comment(RUNTIME_RESTART_NOTICE)
                 }
             }
 
@@ -298,6 +339,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     fun reset(settings: EffectProjectSettings) {
         // Loading stored settings must not default a blank pinned version: that would mark the page
         // modified and let Apply save a version the user never chose.
+        defaultPinnedWhenDiscovered = false
         resetting = true
         try {
             resetFields(settings)
@@ -306,11 +348,8 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         }
     }
 
-    private var resetting = false
-
     private fun resetFields(settings: EffectProjectSettings) {
         binaryMode.selectedItem = settings.binaryMode
-        refreshDetectedVersions()
         setPinnedVersionText(settings.pinnedVersion)
         manualBinaryPath.text = settings.manualBinaryPath
         extraEnv.text = settings.extraEnv.entries.joinToString(separator = "\n") { (key, value) -> "$key=$value" }
@@ -342,7 +381,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             lspMermaidProvider = lspMermaidProvider.text.trim(),
             lspNoExternal = parseOptionalBoolean(lspNoExternal.selectedItem),
             lspLayerGraphFollowDepth = parseOptionalNonNegativeInt(lspLayerGraphFollowDepth.text),
-            lspDiagnosticSeverity = parseEnv(lspDiagnosticSeverity.text),
+            lspDiagnosticSeverity = parseEnv(lspDiagnosticSeverity.text).mapValues { (_, value) -> value.trim() },
             devToolsPort = devToolsPort.value as Int,
             metricsPollIntervalMs = metricsPollInterval.value as Int,
             spanStackIgnoreList = parseList(spanStackIgnoreList.text),
@@ -381,12 +420,12 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         manualBinaryPath.isEnabled = mode == EffectBinaryMode.MANUAL
         if (!resetting && mode == EffectBinaryMode.PINNED && pinnedVersionText().isBlank()) {
             // Switching to PINNED defaults to the release the workspace already depends on.
-            refreshDetectedVersions()
+            defaultPinnedWhenDiscovered = true
             detectedVersions.firstOrNull()?.let { detected -> setPinnedVersionText(detected.version) }
         }
     }
 
-    /** The exact version typed or picked; detected entries and the `Select…` sentinel never leak their labels. */
+    /** The exact version typed or picked; detected entries never leak their labels. */
     fun pinnedVersionText(): String =
         when (val item = pinnedVersion.editor.item) {
             is PinnedVersionItem -> item.version
@@ -399,14 +438,9 @@ private class EffectProjectSettingsComponent(private val project: Project) {
         pinnedVersion.editor.item = version
     }
 
-    private var detectedVersions: List<DetectedTsgoVersion> = emptyList()
-
-    private fun refreshDetectedVersions() {
-        detectedVersions = project.basePath?.takeIf(String::isNotBlank)
-            ?.let { basePath -> runCatching { EffectWorkspaceTsgoDetector.detect(Path.of(basePath)) }.getOrDefault(emptyList()) }
-            .orEmpty()
+    private fun updateDetectedVersionItems() {
         val current = pinnedVersionText()
-        val items = detectedVersions.map { detected -> PinnedVersionItem.Detected(detected) as PinnedVersionItem } + PinnedVersionItem.SELECT
+        val items = detectedVersions.map { detected -> PinnedVersionItem.Detected(detected) as PinnedVersionItem }
         pinnedVersion.model = DefaultComboBoxModel(items.toTypedArray())
         pinnedVersion.editor.item = current
     }
@@ -418,7 +452,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             description = "Choose a node_modules/@effect/tsgo (or @effect/tsgo-<platform>) directory or its package.json to pin its version."
             withFileFilter { file -> file.isDirectory || file.name == "package.json" }
         }
-        val chosen = FileChooser.chooseFile(descriptor, project, null)
+        val chosen = choosePackage(descriptor)
         val detected = chosen?.let { file -> EffectWorkspaceTsgoDetector.fromPackageDirectory(Path.of(file.path)) }
         when {
             chosen == null -> setPinnedVersionText(previous)
@@ -429,7 +463,7 @@ private class EffectProjectSettingsComponent(private val project: Project) {
             else -> {
                 if (detectedVersions.none { it.version == detected.version }) {
                     detectedVersions = detectedVersions + detected
-                    val items = detectedVersions.map { PinnedVersionItem.Detected(it) as PinnedVersionItem } + PinnedVersionItem.SELECT
+                    val items = detectedVersions.map { PinnedVersionItem.Detected(it) as PinnedVersionItem }
                     pinnedVersion.model = DefaultComboBoxModel(items.toTypedArray())
                 }
                 setPinnedVersionText(detected.version)
@@ -440,7 +474,6 @@ private class EffectProjectSettingsComponent(private val project: Project) {
 
     private fun parseEnv(text: String): Map<String, String> =
         text.lines()
-            .map(String::trim)
             .filter(String::isNotBlank)
             .associate { line ->
                 val parts = line.split("=", limit = 2)
@@ -474,6 +507,8 @@ private class EffectProjectSettingsComponent(private val project: Project) {
 
     companion object {
         private const val SERVER_DEFAULT_OPTION = "Server default"
+        internal const val RUNTIME_RESTART_NOTICE =
+            "After changing the port or poll interval, use Effect Dev Tools → Restart Runtime to apply the change to a running server."
         private const val DEBUGGER_NOTICE =
             "Attach-time instrumentation is available for active debug sessions. Optional NODE_OPTIONS " +
                 "injection applies to Node.js run/debug configurations; live Context, Span Stack, Fibers, " +
@@ -481,14 +516,12 @@ private class EffectProjectSettingsComponent(private val project: Project) {
     }
 }
 
-/** Entries of the pinned-version picker: detected workspace releases plus the `Select…` chooser sentinel. */
+/** Detected workspace releases displayed by the editable pinned-version picker. */
 internal sealed class PinnedVersionItem(val version: String, val label: String) {
     class Detected(val detected: DetectedTsgoVersion) : PinnedVersionItem(
         detected.version,
         "${detected.version}  —  ${detected.packageName} (${detected.source.parent})",
     )
-
-    object SELECT : PinnedVersionItem("", "Select…")
 
     /** The editable combo box shows this for a selected item, so it must be the bare version. */
     override fun toString(): String = version
