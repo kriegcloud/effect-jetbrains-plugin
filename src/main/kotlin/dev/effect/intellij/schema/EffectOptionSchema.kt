@@ -18,7 +18,7 @@ class EffectOptionSchema(private val document: JsonNode) {
     private fun validate(value: JsonNode, schema: JsonNode, path: String, depth: Int): List<String> {
         if (depth > 64) return listOf("$path: schema nesting is too deep to validate.")
         val warnings = mutableListOf<String>()
-        schema.get("\$ref")?.asText()?.let { ref ->
+        schema.get($$"$ref")?.asText()?.let { ref ->
             if (ref.startsWith("#/")) {
                 val target = document.at(ref.removePrefix("#"))
                 if (!target.isMissingNode) warnings += validate(value, target, path, depth + 1)

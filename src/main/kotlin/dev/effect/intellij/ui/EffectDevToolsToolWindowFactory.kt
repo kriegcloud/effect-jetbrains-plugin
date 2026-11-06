@@ -48,7 +48,6 @@ import javax.swing.JPanel
 import javax.swing.JTabbedPane
 import javax.swing.JToolBar
 import javax.swing.JTree
-import javax.swing.event.TreeSelectionListener
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -60,32 +59,30 @@ class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
     private var disposed = false
 
     val component: JComponent = SimpleToolWindowPanel(true, true).apply {
-        setToolbar(
-            ActionManager.getInstance().createActionToolbar(
-                "EffectDevToolsToolbar",
-                DefaultActionGroup(
-                    StartRuntimeAction(project),
-                    StopRuntimeAction(project),
-                    RestartRuntimeAction(project),
-                    SelectActiveClientAction(project),
-                    OpenSettingsAction(project),
-                    ResetMetricsAction(project),
-                    ResetTracerAction(project),
-                    AttachDebugAction(project),
-                    RefreshDebugSnapshotsAction(project),
-                    TogglePauseOnDefectsAction(project),
-                    InterruptCurrentFiberAction(project),
-                ),
-                true,
-            ).component,
-        )
+        toolbar = ActionManager.getInstance().createActionToolbar(
+            "EffectDevToolsToolbar",
+            DefaultActionGroup(
+                StartRuntimeAction(project),
+                StopRuntimeAction(project),
+                RestartRuntimeAction(project),
+                SelectActiveClientAction(project),
+                OpenSettingsAction(project),
+                ResetMetricsAction(project),
+                ResetTracerAction(project),
+                AttachDebugAction(project),
+                RefreshDebugSnapshotsAction(project),
+                TogglePauseOnDefectsAction(project),
+                InterruptCurrentFiberAction(project),
+            ),
+            true,
+        ).component
         setContent(buildContent())
     }
 
     private fun buildContent(): JComponent {
-        val clientsPanel = ClientsTabPanel(project, devToolsService)
-        val metricsPanel = MetricsTabPanel(devToolsService)
-        val tracerPanel = TracerTabPanel(project, devToolsService)
+        val clientsPanel = ClientsTabPanel(devToolsService)
+        val metricsPanel = MetricsTabPanel()
+        val tracerPanel = TracerTabPanel(project)
         val webTracerPanel = EffectWebTracerSupport.createPanelOrNull()
         browserTracerPanel = webTracerPanel
         val debugPanel = DebugTabGroup(project, debugBridgeService)
@@ -143,8 +140,7 @@ class EffectDevToolsToolWindowPanel(private val project: Project) : Disposable {
 }
 
 internal class ClientsTabPanel(
-    private val project: Project,
-    private val devToolsService: EffectDevToolsService,
+    devToolsService: EffectDevToolsService,
     private val selectClient: (String?) -> Unit = { id -> devToolsService.requestLifecycle { selectActiveClient(clientId = id) } },
 ) {
     private var refreshing = false
@@ -219,9 +215,7 @@ internal class ClientsTabPanel(
     }
 }
 
-internal class MetricsTabPanel(
-    private val devToolsService: EffectDevToolsService,
-) {
+internal class MetricsTabPanel {
     private val statusLabel = JBLabel()
     private val treeRoot = DefaultMutableTreeNode("Metrics")
     private val treeModel = DefaultTreeModel(treeRoot)
@@ -248,14 +242,14 @@ internal class MetricsTabPanel(
     }
 
     init {
-        tree.addTreeSelectionListener(TreeSelectionListener {
+        tree.addTreeSelectionListener {
             val userObject = (tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject
             detailArea.text = when (userObject) {
                 is RuntimeMetricSnapshot -> userObject.formatMetricDetails()
                 is RuntimeDetailEntry -> "${userObject.key}: ${userObject.value}"
                 else -> "Select a metric to inspect its details."
             }
-        })
+        }
     }
 
     private var contentKey: Any? = null
@@ -289,7 +283,6 @@ internal class MetricsTabPanel(
 
 internal class TracerTabPanel(
     private val project: Project,
-    private val devToolsService: EffectDevToolsService,
 ) {
     private val statusLabel = JBLabel()
     private val treeRoot = DefaultMutableTreeNode("Tracer")
@@ -327,9 +320,9 @@ internal class TracerTabPanel(
     }
 
     init {
-        tree.addTreeSelectionListener(TreeSelectionListener {
+        tree.addTreeSelectionListener {
             updateSelectionActions()
-        })
+        }
         copyButton.addActionListener {
             runtimeSelectedText()?.let { CopyPasteManager.getInstance().setContents(StringSelection(it)) }
         }
@@ -486,7 +479,7 @@ internal class DebugTreePanel(
     }
 
     init {
-        tree.addTreeSelectionListener(TreeSelectionListener { updateSelectionActions() })
+        tree.addTreeSelectionListener { updateSelectionActions() }
         copyButton.addActionListener {
             selectedEntry()?.let { entry ->
                 CopyPasteManager.getInstance().setContents(StringSelection(entry.copyText))
@@ -753,16 +746,4 @@ private fun rebuildTree(root: DefaultMutableTreeNode, model: DefaultTreeModel, f
     root.removeAllChildren()
     fill()
     model.reload()
-}
-
-private fun expandAll(tree: JTree) {
-    repeat(tree.rowCount) { row -> tree.expandRow(row) }
-}
-
-private fun selectFirstRowIfAvailable(tree: JTree) {
-    if (tree.rowCount > 0) {
-        tree.setSelectionRow(0)
-    } else {
-        tree.clearSelection()
-    }
 }

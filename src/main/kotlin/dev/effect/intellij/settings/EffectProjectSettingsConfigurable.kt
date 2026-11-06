@@ -139,7 +139,7 @@ internal class EffectProjectSettingsComponent(
 
     init {
         val manualBinaryDescriptor = FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor().apply {
-            title = "Select @effect/tsgo binary"
+            title = @Suppress("DialogTitleCapitalization") "Select @effect/tsgo Binary"
             description = "Choose the native tsgo executable for manual mode."
         }
         manualBinaryPath.addBrowseFolderListener(TextBrowseFolderListener(manualBinaryDescriptor, project))
@@ -227,7 +227,7 @@ internal class EffectProjectSettingsComponent(
                     cell(pinnedVersion)
                         .align(AlignX.FILL)
                         .resizableColumn()
-                    button("Select pinned package…") { choosePinnedVersionFromPackage() }
+                    button("Select Pinned Package…") { choosePinnedVersionFromPackage() }
                 }
                 manualBinaryPathRow = row("Manual binary path") {
                     cell(manualBinaryPath)
@@ -238,7 +238,7 @@ internal class EffectProjectSettingsComponent(
 
             group("WebStorm TypeScript") {
                 row {
-                    button("Use tsrs (TypeScript 7.1) for WebStorm TypeScript") { useTsrsForWebStormTypeScript() }
+                    button(@Suppress("DialogTitleCapitalization") "Use tsrs (TypeScript 7.1) for WebStorm TypeScript") { useTsrsForWebStormTypeScript() }
                         .comment(
                             "Points Settings | Languages & Frameworks | TypeScript at tsrs, the Rust port of the " +
                                 "TypeScript 7.1 compiler, from the workspace tsrs or @effect/tsgo package or the " +
@@ -269,14 +269,14 @@ internal class EffectProjectSettingsComponent(
                         .resizableColumn()
                 }
                 row {
-                    button("Sync to tsconfig.json") { syncCurrentSettings() }
+                    button(@Suppress("DialogTitleCapitalization") "Sync to tsconfig.json") { syncCurrentSettings() }
                         .comment(
                             "Current @effect/tsgo builds read these typed language-service options from " +
                                 "tsconfig.json > compilerOptions.plugins > @effect/language-service. Sync writes " +
                                 "the visible form values without applying the rest of this Settings page.",
                         )
                 }
-                collapsibleGroup("Advanced language-server settings", false) {
+                collapsibleGroup("Advanced Language-Server Settings", false) {
                     row("Extra environment (KEY=VALUE per line)") {
                         scrollCell(extraEnv)
                             .rows(4)
@@ -319,7 +319,7 @@ internal class EffectProjectSettingsComponent(
                     cell(injectNodeOptions)
                         .comment(DEBUGGER_NOTICE)
                 }
-                collapsibleGroup("Advanced debugger settings", false) {
+                collapsibleGroup("Advanced Debugger Settings", false) {
                     row("Run/debug configuration types") {
                         scrollCell(injectDebugConfigurationTypes)
                             .rows(3)
@@ -464,7 +464,7 @@ internal class EffectProjectSettingsComponent(
     private fun choosePinnedVersionFromPackage() {
         val previous = pinnedVersionText()
         val descriptor = FileChooserDescriptor(true, true, false, false, false, false).apply {
-            title = "Select @effect/tsgo package"
+            title = @Suppress("DialogTitleCapitalization") "Select @effect/tsgo Package"
             description = "Choose a node_modules/@effect/tsgo (or @effect/tsgo-<platform>) directory or its package.json to pin its version."
             withFileFilter { file -> file.isDirectory || file.name == "package.json" }
         }

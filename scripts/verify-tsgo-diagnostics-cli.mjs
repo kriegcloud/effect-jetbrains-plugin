@@ -48,7 +48,7 @@ async function run(command, args, cwd, allowedCodes = [0]) {
 
 // A small read-only LSP transport: the existing verifier is an executable script, not an
 // importable helper. Use the same installed CLI/backend and tsconfig for both protocols.
-async function lspRuleNames(binary, cwd, text) {
+async function lspRuleNames(binary, cwd, sources) {
   const child = spawn(binary, ["--lsp", "--stdio"], {
     cwd, stdio: ["pipe", "pipe", "pipe"],
   })
@@ -114,7 +114,6 @@ async function lspRuleNames(binary, cwd, text) {
   })
   try {
     const rootUri = pathToFileURL(cwd).href
-    const uri = pathToFileURL(path.join(cwd, "src/index.ts")).href
     const initialized = await request("initialize", {
       processId: process.pid, rootPath: cwd, rootUri,
       workspaceFolders: [{ uri: rootUri, name: path.basename(cwd) }],
@@ -123,17 +122,22 @@ async function lspRuleNames(binary, cwd, text) {
     assert(initialized.capabilities?.diagnosticProvider, "LSP must advertise pull diagnostics")
     notify("initialized", {})
     notify("workspace/didChangeConfiguration", { settings: {} })
-    notify("textDocument/didOpen", {
-      textDocument: { uri, languageId: "typescript", version: 1, text },
-    })
-    // The pull is ordered after didOpen, and returns a full report even for the healthy fixture.
-    const report = await request("textDocument/diagnostic", { textDocument: { uri } })
-    assert(Array.isArray(report?.items), `Expected full LSP diagnostic report: ${JSON.stringify(report)}`)
-    const names = report.items.flatMap((diagnostic) => {
-      const message = typeof diagnostic.message === "string" ? diagnostic.message : diagnostic.message?.value
-      const name = message?.match(/effect\(([^)]+)\)\s*$/)?.[1]
-      return name ? [name] : [] // The CLI deliberately excludes ordinary TypeScript diagnostics.
-    })
+    // Open and pull every fixture source, matching the CLI's project-wide check.
+    const names = []
+    for (const [file, text] of sources) {
+      const uri = pathToFileURL(path.join(cwd, "src", file)).href
+      notify("textDocument/didOpen", {
+        textDocument: { uri, languageId: "typescript", version: 1, text },
+      })
+      // The pull is ordered after didOpen, and returns a full report even for a healthy fixture.
+      const report = await request("textDocument/diagnostic", { textDocument: { uri } })
+      assert(Array.isArray(report?.items), `Expected full LSP diagnostic report for ${file}: ${JSON.stringify(report)}`)
+      names.push(...report.items.flatMap((diagnostic) => {
+        const message = typeof diagnostic.message === "string" ? diagnostic.message : diagnostic.message?.value
+        const name = message?.match(/effect\(([^)]+)\)\s*$/)?.[1]
+        return name ? [name] : [] // The CLI deliberately excludes ordinary TypeScript diagnostics.
+      }))
+    }
     await request("shutdown")
     notify("exit")
     return [...new Set(names)].sort()
@@ -195,7 +199,8 @@ async function main() {
       const json = await run(process.execPath, [...args, "json"], cwd, [0, 1])
       const report = JSON.parse(json.stdout)
       assert(Array.isArray(report.diagnostics), `${name}: missing JSON diagnostics`)
-      assert.equal(report.summary.filesChecked, 1, `${name}: must check the fixture source`)
+      const fixtureSources = (await readdir(path.join(cwd, "src"))).filter((file) => /\.(?:ts|tsx|mts|cts)$/.test(file))
+      assert.equal(report.summary.filesChecked, fixtureSources.length, `${name}: must check every fixture source (${fixtureSources.join(", ")})`)
       assert.equal(report.summary.filesWithoutPlugin, 0, `${name}: Effect plugin must be active`)
       for (const severity of ["error", "warning", "message"]) {
         const key = severity === "message" ? "messages" : `${severity}s`
@@ -204,7 +209,8 @@ async function main() {
       assert.equal(json.code, report.summary.errors > 0 ? 1 : 0, `${name}: diagnostics exit status`)
       verifyFindings(name, report.diagnostics, text)
       const cliNames = [...new Set(report.diagnostics.map((item) => item.name))].sort()
-      assert.deepEqual(cliNames, await lspRuleNames(binary, cwd, text), `${name}: CLI/LSP rule-name parity`)
+      const sources = await Promise.all(fixtureSources.map(async (file) => [file, await readFile(path.join(cwd, "src", file), "utf8")]))
+      assert.deepEqual(cliNames, await lspRuleNames(binary, cwd, sources), `${name}: CLI/LSP rule-name parity`)
       results[name] = { diagnostics: report.diagnostics.length, rules: cliNames, lspRuleNamesAgree: true }
       if (name === "diagnostic-directives-workspace") {
         // The published spelling is github-actions, not github.

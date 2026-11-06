@@ -11,7 +11,7 @@ import javax.swing.tree.TreePath
 class RuntimeInspectionTest : BasePlatformTestCase() {
     fun testRuntimeRefreshDoesNotPublishSelectionChanges() {
         val selected = mutableListOf<String?>()
-        val panel = ClientsTabPanel(project, project.getService(EffectDevToolsService::class.java)) { selected += it }
+        val panel = ClientsTabPanel(project.getService(EffectDevToolsService::class.java)) { selected += it }
         val clients = listOf(client("one"), client("two"))
         val state = DevToolsRuntimeState(running = true, clients = clients, activeClientId = "two")
         panel.refresh(state)
@@ -25,7 +25,7 @@ class RuntimeInspectionTest : BasePlatformTestCase() {
 
     fun testClientSelectionReturnsWhileIngestionHoldsServiceLock() {
         val service = project.getService(EffectDevToolsService::class.java)
-        val panel = ClientsTabPanel(project, service)
+        val panel = ClientsTabPanel(service)
         panel.refresh(DevToolsRuntimeState(clients = listOf(client("one"), client("two")), activeClientId = "one"))
         val lock = EffectDevToolsService::class.java.getDeclaredField("lock").apply { isAccessible = true }.get(service)
         val entered = java.util.concurrent.CountDownLatch(1)
@@ -59,7 +59,7 @@ class RuntimeInspectionTest : BasePlatformTestCase() {
     }
 
     fun testRuntimeRefreshPreservesSelectedSpanAndExpansion() {
-        val panel = TracerTabPanel(project, project.getService(EffectDevToolsService::class.java))
+        val panel = TracerTabPanel(project)
         val first = span("first")
         val second = span("second").copy(children = listOf(span("child")))
         val client = client("one").copy(rootSpans = listOf(first, second))
@@ -78,7 +78,7 @@ class RuntimeInspectionTest : BasePlatformTestCase() {
     }
 
     fun testMetricSelectionSurvivesChangedValues() {
-        val panel = MetricsTabPanel(project.getService(EffectDevToolsService::class.java))
+        val panel = MetricsTabPanel()
         val client = client("one").copy(metrics = listOf(metric("a"), metric("b")))
         val state = DevToolsRuntimeState(running = true, clients = listOf(client), activeClientId = "one")
         panel.refresh(state)
@@ -151,6 +151,69 @@ class RuntimeInspectionTest : BasePlatformTestCase() {
         assertSame(untouchedEvent, untouched.getChildAt(99))
         assertSame(guard, root.getChildAt(1998))
         println("Retained-limit EDT tree construction=${fullNanos / 1_000_000.0}ms; one-event update=${updateNanos / 1_000_000.0}ms")
+    }
+
+    fun testDeepLeafUpdateVisitsEachSpanOnce() {
+        for (depth in listOf(100, 300)) {
+            var reads = 0
+            fun chain(updated: Boolean): RuntimeSpanSnapshot {
+                var child = span("leaf").copy(status = if (updated) "Ended" else "Started")
+                repeat(depth - 1) {
+                    val descendant = child
+                    val children = object : AbstractList<RuntimeSpanSnapshot>() {
+                        override val size = 1
+                        override fun get(index: Int): RuntimeSpanSnapshot { reads++; return descendant }
+                    }
+                    child = span("s$it").copy(children = children)
+                }
+                return child
+            }
+            val root = DefaultMutableTreeNode("root")
+            val model = DefaultTreeModel(root)
+            reconcileSpanNodes(root, listOf(chain(false)), model)
+            val tree = javax.swing.JTree(model)
+            val top = root.getChildAt(0) as DefaultMutableTreeNode
+            tree.expandPath(TreePath(top.path))
+            tree.selectionPath = TreePath((top.getChildAt(0) as DefaultMutableTreeNode).path)
+            val selected = tree.lastSelectedPathComponent
+            val inspection = RuntimeTreeInspection.capture(tree)
+            var visits = 0
+            reads = 0
+            reconcileSpanNodes(root, listOf(chain(true)), model) { visits++ }
+            assertTrue("Descendant reads=$reads at depth=$depth", reads <= 2 * depth)
+            inspection.restore(tree)
+            assertEquals(depth, visits)
+            assertSame(selected, tree.lastSelectedPathComponent)
+            assertTrue(tree.isExpanded(TreePath(top.path)))
+        }
+    }
+
+    fun testExpandedSiblingRestoreUsesOneIndex() {
+        for (count in listOf(200, 600)) {
+            val root = DefaultMutableTreeNode("root")
+            repeat(count) { index ->
+                root.add(DefaultMutableTreeNode("s$index").apply { add(DefaultMutableTreeNode("child")) })
+            }
+            val collapsed = object : DefaultMutableTreeNode("collapsed") {
+                override fun children(): java.util.Enumeration<javax.swing.tree.TreeNode> {
+                    error("Enumerated an unrelated collapsed branch")
+                }
+            }
+            collapsed.add(DefaultMutableTreeNode("hidden"))
+            root.add(collapsed)
+            val tree = javax.swing.JTree(DefaultTreeModel(root))
+            repeat(count) { tree.expandPath(TreePath((root.getChildAt(it) as DefaultMutableTreeNode).path)) }
+            tree.selectionPath = TreePath((root.getChildAt(count - 1) as DefaultMutableTreeNode).path)
+            val inspection = RuntimeTreeInspection.capture(tree)
+            repeat(count) { tree.collapsePath(TreePath((root.getChildAt(it) as DefaultMutableTreeNode).path)) }
+            var lookups = 0
+            inspection.restore(tree) { lookups++; it.userObject.toString() }
+            // One root identity per saved path plus one indexing pass over its children.
+            assertTrue("Identity lookups=$lookups for $count roots", lookups <= 2 * count + 4)
+            repeat(count) { assertTrue(tree.isExpanded(TreePath((root.getChildAt(it) as DefaultMutableTreeNode).path))) }
+            assertSame(root.getChildAt(count - 1), tree.lastSelectedPathComponent)
+            assertFalse(tree.isExpanded(TreePath(collapsed.path)))
+        }
     }
 
     private fun client(id: String) = RuntimeClientSnapshot(id, id, "local", Instant.EPOCH, Instant.EPOCH)

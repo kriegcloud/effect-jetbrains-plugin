@@ -65,13 +65,10 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
             return raw
         }
 
-        val root = raw?.deepCopy<ObjectNode>() ?: EffectJson.emptyObject()
+        val root = raw?.deepCopy() ?: EffectJson.emptyObject()
         val currentEffectNode = root.get("effect")
-        val effect = if (currentEffectNode is ObjectNode) {
-            currentEffectNode
-        } else {
-            EffectJson.emptyObject().also { root.set<ObjectNode>("effect", it) }
-        }
+        val effect = currentEffectNode as? ObjectNode
+            ?: EffectJson.emptyObject().also { root.set<ObjectNode>("effect", it) }
 
         settings.lspInlays?.let { effect.put("inlays", it) }
         settings.lspMermaidProvider.trim().takeIf(String::isNotBlank)?.let { effect.put("mermaidProvider", it) }
@@ -135,7 +132,7 @@ class EffectProjectSettingsService(private val project: Project) : PersistentSta
     private fun parseEnvProblems(extraEnv: Map<String, String>, problems: MutableList<SettingProblem>) {
         extraEnv.keys
             .filter { it.isBlank() }
-            .forEach { problems += SettingProblem("extraEnv", "Environment variable keys must not be blank.") }
+            .forEach { _ -> problems += SettingProblem("extraEnv", "Environment variable keys must not be blank.") }
     }
 
     private fun validateJson(field: String, raw: String, problems: MutableList<SettingProblem>) {

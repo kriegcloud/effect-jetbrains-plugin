@@ -165,7 +165,11 @@ function verifyFiberRemoval(source) {
       const remaining = api.getAliveFibersSnapshot()
       assert.equal(remaining.length, 1)
       assert.equal(remaining[0].id, String(reverse ? 0 : count - 1))
-      api.interruptFiber(remaining[0].id)
+      callbacks[0]() // A duplicate completion must preserve the live survivor.
+      const afterDuplicate = api.getAliveFibersSnapshot()
+      assert.equal(afterDuplicate.length, 1, "Duplicate completion removed a live survivor")
+      assert.equal(afterDuplicate[0].id, remaining[0].id)
+      api.interruptFiber(afterDuplicate[0].id)
       assert.equal(interrupted, 1)
       callbacks[count - 1]()
       assert.equal(api.getAliveFibersSnapshot().length, 0)

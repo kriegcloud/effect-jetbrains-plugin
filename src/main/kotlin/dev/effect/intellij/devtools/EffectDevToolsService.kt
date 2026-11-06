@@ -79,10 +79,6 @@ class EffectDevToolsService(private val project: Project) : Disposable {
 
     fun currentState(): DevToolsRuntimeState = runtimeState
 
-    fun addListener(listener: EffectDevToolsListener) {
-        dispatcher.addListener(listener)
-    }
-
     fun addListener(listener: EffectDevToolsListener, parentDisposable: Disposable) {
         dispatcher.addListener(listener, parentDisposable)
     }
@@ -441,10 +437,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
 
             "Histogram" -> {
                 val state = node.path("state")
-                details += RuntimeDetailEntry("Count", formattedScalar(state.path("count")))
-                details += RuntimeDetailEntry("Sum", "${formattedScalar(state.path("sum"))}$unitSuffix")
-                details += RuntimeDetailEntry("Min", "${formattedScalar(state.path("min"))}$unitSuffix")
-                details += RuntimeDetailEntry("Max", "${formattedScalar(state.path("max"))}$unitSuffix")
+                details += metricAggregateDetails(state, unitSuffix)
                 histogramMeanSummary(state.path("buckets"), state.path("count"), state.path("sum"), unitSuffix)
             }
 
@@ -456,10 +449,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
                         details += RuntimeDetailEntry(quantileKey, "${optionScalarText(quantile.path(1))}$unitSuffix")
                     }
                 }
-                details += RuntimeDetailEntry("Count", formattedScalar(state.path("count")))
-                details += RuntimeDetailEntry("Sum", "${formattedScalar(state.path("sum"))}$unitSuffix")
-                details += RuntimeDetailEntry("Min", "${formattedScalar(state.path("min"))}$unitSuffix")
-                details += RuntimeDetailEntry("Max", "${formattedScalar(state.path("max"))}$unitSuffix")
+                details += metricAggregateDetails(state, unitSuffix)
                 summaryQuantileDescription(state.path("quantiles"), unitSuffix)
             }
 
@@ -522,6 +512,13 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             else -> emptyList()
         }
     }
+
+    private fun metricAggregateDetails(state: JsonNode, unitSuffix: String): List<RuntimeDetailEntry> = listOf(
+        RuntimeDetailEntry("Count", formattedScalar(state.path("count"))),
+        RuntimeDetailEntry("Sum", "${formattedScalar(state.path("sum"))}$unitSuffix"),
+        RuntimeDetailEntry("Min", "${formattedScalar(state.path("min"))}$unitSuffix"),
+        RuntimeDetailEntry("Max", "${formattedScalar(state.path("max"))}$unitSuffix"),
+    )
 
     private fun unitSuffix(tags: List<RuntimeMetricTagSnapshot>): String =
         tags.firstOrNull { it.key == "unit" || it.key == "time_unit" }?.value?.let { " $it" }.orEmpty()

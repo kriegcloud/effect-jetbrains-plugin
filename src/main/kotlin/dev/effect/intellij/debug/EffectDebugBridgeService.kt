@@ -61,10 +61,6 @@ class EffectDebugBridgeService : Disposable {
 
     fun currentState(): DebugBridgeState = state
 
-    fun addListener(listener: EffectDebugBridgeListener) {
-        dispatcher.addListener(listener)
-    }
-
     fun addListener(listener: EffectDebugBridgeListener, parentDisposable: Disposable) {
         dispatcher.addListener(listener, parentDisposable)
     }
@@ -307,11 +303,7 @@ class EffectDebugBridgeService : Disposable {
                 future.completeExceptionally(error)
             }
         }
-        return try {
-            future.get(5, TimeUnit.SECONDS)
-        } finally {
-            evaluation.close()
-        }
+        return evaluation.use { future.get(5, TimeUnit.SECONDS) }
     }
 
     private fun decodeDebuggerString(raw: String): String {

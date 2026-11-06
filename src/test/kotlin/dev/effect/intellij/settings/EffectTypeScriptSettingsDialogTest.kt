@@ -79,7 +79,8 @@ class EffectTypeScriptSettingsDialogTest : BasePlatformTestCase() {
             PlatformTestUtil.waitWithEventsDispatching("Settings activation", { done }, 20)
             assertEquals(0, restarts)
             page.apply()
-            assertEquals(directory.toString(), settings.typeScriptServiceDirectory)
+            // The TypeScript setting stores system-independent paths (forward slashes on Windows too).
+            assertEquals(com.intellij.openapi.util.io.FileUtil.toSystemIndependentName(directory.toString()), settings.typeScriptServiceDirectory)
             assertEquals(!originalRecompile, settings.recompileOnChanges)
             LaterInvocator.leaveModal(modal)
             PlatformTestUtil.waitWithEventsDispatching("Deferred restart", { restarts == 1 }, 20)

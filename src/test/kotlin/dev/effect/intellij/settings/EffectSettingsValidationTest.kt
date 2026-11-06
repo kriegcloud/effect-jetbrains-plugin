@@ -410,7 +410,7 @@ class EffectSettingsValidationTest : BasePlatformTestCase() {
             ui.reset(EffectProjectSettings(binaryMode = EffectBinaryMode.PINNED, pinnedVersion = "0.54.1"))
             val versionBox = collectComponents(ui.panel).filterIsInstance<ComboBox<*>>().first { it.isEditable }
             versionBox.editor.item = "0.55.2"
-            collectComponents(ui.panel).filterIsInstance<JButton>().first { it.text == "Select pinned package…" }.doClick()
+            collectComponents(ui.panel).filterIsInstance<JButton>().first { it.text == "Select Pinned Package…" }.doClick()
             assertEquals("0.55.2", ui.toSettings().pinnedVersion)
         } finally { ui.dispose() }
     }

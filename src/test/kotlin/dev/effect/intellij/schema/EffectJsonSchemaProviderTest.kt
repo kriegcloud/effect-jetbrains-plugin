@@ -38,6 +38,63 @@ class EffectJsonSchemaProviderTest : BasePlatformTestCase() {
         assertEquals("tsgo-0.67.4.schema.json", providers.single { it.isAvailable(rootConfig) }.schemaFile!!.name)
     }
 
+    fun testMovingExternalConfigDirectoryIntoProjectRefreshesProviders() {
+        val config = myFixture.addFileToProject("tsconfig.json", "{}").virtualFile
+        val external = java.nio.file.Files.createTempDirectory("effect-external-config")
+        com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess.allowRootAccess(testRootDisposable, external.toString())
+        try {
+            java.nio.file.Files.createDirectories(external.resolve("content"))
+            val destination = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                .refreshAndFindFileByNioFile(external.resolve("content"))!!
+            com.intellij.testFramework.PsiTestUtil.addContentRoot(module, destination)
+            java.nio.file.Files.createDirectories(external.resolve("new-package"))
+            java.nio.file.Files.writeString(external.resolve("new-package/tsconfig.json"), "{}")
+            val directory = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                .refreshAndFindFileByNioFile(external.resolve("new-package"))!!
+            assertFalse(com.intellij.openapi.roots.ProjectFileIndex.getInstance(project).isInContent(directory))
+            JsonSchemaProviderFactory.EP_NAME.point.registerExtension(EffectJsonSchemaProviderFactory(), testRootDisposable)
+            val json = JsonSchemaService.Impl.get(project)
+            assertTrue(json.getSchemaFilesForFile(config).any { it.name == "tsgo-0.67.4.schema.json" })
+            WriteCommandAction.runWriteCommandAction(project) { directory.move(this, destination) }
+            com.intellij.testFramework.IndexingTestUtil.waitUntilIndexesAreReady(project)
+            val imported = directory.findChild("tsconfig.json")!!
+            awaitSchema { json.getSchemaFilesForFile(imported).any { it.name == "tsgo-0.67.4.schema.json" } }
+        } finally {
+            java.nio.file.Files.deleteIfExists(external.resolve("new-package/tsconfig.json"))
+            java.nio.file.Files.deleteIfExists(external.resolve("new-package"))
+            external.toFile().deleteRecursively()
+        }
+    }
+
+    fun testUnrelatedEventBatchAcquiresRootsOnceWithoutReset() {
+        val config = myFixture.addFileToProject("tsconfig.json", "{}").virtualFile
+        val service = project.getService(EffectSchemaService::class.java)
+        val json = JsonSchemaService.Impl.get(project)
+        // Finish any reset scheduled by fixture creation before observing this delivery.
+        var settled = false
+        com.intellij.util.Alarm(testRootDisposable).addRequest({ settled = true }, 300)
+        awaitSchema { settled }
+        val resets = java.util.concurrent.atomic.AtomicInteger()
+        val onReset = Runnable { resets.incrementAndGet() }
+        json.registerResetAction(onReset)
+        try {
+            var acquisitions = 0
+            val events = List(2000) {
+                com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent(this, config,
+                    config.modificationStamp, config.modificationStamp + 1, false)
+            }
+            service.associationsChanged(events) { acquisitions++; listOf(config.parent.path) }
+            assertEquals(1, acquisitions)
+            // Drain the same delayed coroutine/EDT path used for resets before checking absence.
+            var drained = false
+            com.intellij.util.Alarm(testRootDisposable).addRequest({ drained = true }, 300)
+            awaitSchema { drained }
+            assertEquals(0, resets.get())
+        } finally {
+            json.unregisterResetAction(onReset)
+        }
+    }
+
     fun testRenameConfigAwayRemovesEffectSchema() {
         JsonSchemaProviderFactory.EP_NAME.point.registerExtension(EffectJsonSchemaProviderFactory(), testRootDisposable)
         val config = myFixture.addFileToProject("tsconfig.json", "{}").virtualFile

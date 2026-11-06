@@ -56,7 +56,7 @@ class EffectLspWidgetItem(
                     ShowLogAction.showLog()
                 }
             },
-            object : AnAction("Dev Tools", "Focus Effect Dev Tools", AllIcons.Toolwindows.ToolWindowMessages) {
+            object : AnAction("Dev Tools", "Focus Effect dev tools", AllIcons.Toolwindows.ToolWindowMessages) {
                 override fun actionPerformed(event: AnActionEvent) {
                     ToolWindowManager.getInstance(lspClient.project)
                         .getToolWindow(EffectPluginConstants.TOOL_WINDOW_ID)

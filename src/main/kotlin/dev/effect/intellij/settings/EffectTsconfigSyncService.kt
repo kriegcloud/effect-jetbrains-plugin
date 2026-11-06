@@ -60,7 +60,7 @@ class EffectTsconfigSyncService(private val project: Project) {
 
         project.getService(EffectSchemaService::class.java).preload(psiFile.virtualFile?.parent)
         var result: EffectTsconfigSync.SyncResult? = null
-        WriteCommandAction.runWriteCommandAction(project, "Sync Effect Options To tsconfig.json", null, Runnable {
+        WriteCommandAction.runWriteCommandAction(project, @Suppress("DialogTitleCapitalization") "Sync Effect Options to tsconfig.json", null, {
             PsiDocumentManager.getInstance(project).commitDocument(document)
             result = EffectTsconfigSync.apply(psiFile, settings)
             if (result?.changed == true) {

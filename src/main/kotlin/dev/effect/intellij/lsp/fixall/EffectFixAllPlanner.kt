@@ -104,7 +104,7 @@ internal fun planFixAll(
     for (diagnostic in diagnostics.sortedWith(diagnosticOrder)) {
         val candidates = codemodsByDiagnostic[diagnostic.fixAllKey()].orEmpty()
         val action = candidates.firstOrNull { it.title.trim() == request.fixTitle }
-            ?: candidates.filter { fixTitleShape(it.title) == requestedShape }.singleOrNull()
+            ?: candidates.singleOrNull { fixTitleShape(it.title) == requestedShape }
         if (action == null) {
             unmatched += 1
             continue

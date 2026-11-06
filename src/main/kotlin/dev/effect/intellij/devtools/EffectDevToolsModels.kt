@@ -27,9 +27,6 @@ data class RuntimeMetricSnapshot(
     val tagsWithoutUnit: List<RuntimeMetricTagSnapshot>
         get() = tags.filterNot { it.key == "unit" || it.key == "time_unit" }
 
-    val unitSuffix: String
-        get() = tags.firstOrNull { it.key == "unit" || it.key == "time_unit" }?.value?.let { " $it" }.orEmpty()
-
     override fun toString(): String =
         if (summary.isBlank()) {
             name

@@ -131,6 +131,14 @@ rule metadata now marks `genericEffectServices` v3-only and `schemaSyncInEffect`
 preset enables it at warning). Oxlint and tsgolint remain upstream-managed package contents only;
 the IDE does not configure or run them independently.
 
+## Qodana
+
+Run `./gradlew qodanaScan --no-configuration-cache` from a clean git worktree, matching CI, or
+temporarily move the local `.idea/` directory away before scanning and restore it afterward.
+A local IDE `.idea/` directory makes the Qodana container open the project without a Gradle import,
+silently analysing no Kotlin and reporting 0 problems.
+Confirm that `build/qodana/results/log/gradle-import.log` is non-empty before accepting a clean scan.
+
 ## Documentation Maintenance Rules
 
 - Keep the README plugin-description block short and Marketplace-safe.

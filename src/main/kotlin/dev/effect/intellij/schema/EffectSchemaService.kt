@@ -12,7 +12,10 @@ import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
-import com.intellij.util.Alarm
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 import java.nio.file.Path
 import com.jetbrains.jsonSchema.ide.JsonSchemaService
 import dev.effect.intellij.core.EffectJson
@@ -24,12 +27,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Until loading completes callers receive an explicit advisory warning, never a hard error.
  */
 @Service(Service.Level.PROJECT)
-class EffectSchemaService(private val project: Project) : Disposable {
+class EffectSchemaService(private val project: Project, private val coroutineScope: CoroutineScope) : Disposable {
     private val schemas = ConcurrentHashMap<String, CompletableFuture<EffectOptionSchema>>()
     private val watching = AtomicBoolean()
     private val resetPending = AtomicBoolean()
     @Volatile private var configPaths: List<String> = emptyList()
-    private val resetAlarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, this)
     @Volatile private var schemaRoots: List<String> = project.basePath?.let { base ->
         generateSequence(Path.of(base).toAbsolutePath().normalize()) { it.parent }
             .map { it.resolve("node_modules/@effect/tsgo").toString().replace('\\', '/') }.toList()
@@ -43,17 +45,24 @@ class EffectSchemaService(private val project: Project) : Disposable {
         if (!watching.compareAndSet(false, true)) return
         project.messageBus.connect(this).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
-                if (events.none(::affectsAssociations)) return
-                schemas.keys.removeIf { it != BUNDLED }
-                // Merge VFS deliveries from package installation; never reset under the write action.
-                if (resetPending.compareAndSet(false, true)) {
-                    resetAlarm.addRequest(Runnable {
-                        resetPending.set(false)
-                        if (!project.isDisposed) JsonSchemaService.Impl.get(project).reset()
-                    }, 100)
-                }
+                associationsChanged(events)
             }
         })
+    }
+
+    internal fun associationsChanged(events: List<VFileEvent>, roots: () -> List<String> = ::projectRootPaths) {
+        val projectRoots = roots()
+        if (events.none { affectsAssociations(it, projectRoots) }) return
+        schemas.keys.removeIf { it != BUNDLED }
+        // Merge VFS deliveries from package installation; never reset under the write action.
+        if (resetPending.compareAndSet(false, true)) {
+            // The injected service scope cancels pending resets when the service is disposed.
+            coroutineScope.launch {
+                delay(100.milliseconds)
+                resetPending.set(false)
+                if (!project.isDisposed) JsonSchemaService.Impl.get(project).reset()
+            }
+        }
     }
 
     internal fun observeConfigs(files: List<VirtualFile>) {
@@ -64,21 +73,26 @@ class EffectSchemaService(private val project: Project) : Disposable {
         }).distinct()
     }
 
-    internal fun affectsAssociations(event: VFileEvent): Boolean {
+    private fun projectRootPaths(): List<String> =
+        com.intellij.openapi.roots.ProjectRootManager.getInstance(project).contentRoots.map { it.path } +
+            listOfNotNull(project.basePath?.replace('\\', '/'))
+
+    internal fun affectsAssociations(event: VFileEvent): Boolean = affectsAssociations(event, projectRootPaths())
+
+    private fun affectsAssociations(event: VFileEvent, projectRoots: List<String>): Boolean {
         val paths = buildList {
             add(event.path)
             if (event is VFilePropertyChangeEvent && event.isRename) add(event.oldPath)
             if (event is VFileMoveEvent) add("${event.oldParent.path}/${event.file.name}")
         }
-        val projectRoots = com.intellij.openapi.roots.ProjectRootManager.getInstance(project).contentRoots.map { it.path } +
-            listOfNotNull(project.basePath?.replace('\\', '/'))
         return paths.any { path ->
             val inProject = projectRoots.any { path == it || path.startsWith("$it/") }
             // Config contents do not change the provider list. Directory moves/removals do.
             val configChange = event !is VFileContentChangeEvent &&
                 inProject &&
                 (path.endsWith("/tsconfig.json") || path.endsWith("/jsconfig.json") ||
-                    (event.file?.isDirectory == true && configPaths.any { it.startsWith("$path/") }))
+                    (event.file?.isDirectory == true &&
+                        (event is VFileMoveEvent || configPaths.any { it.startsWith("$path/") })))
             val schemaChange = schemaRoots.any { root ->
                 path == "$root/schema.json" ||
                     (event !is VFileContentChangeEvent && (root == path || root.startsWith("$path/")))

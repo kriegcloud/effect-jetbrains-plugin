@@ -100,7 +100,6 @@ class EffectBinaryService {
                             )
                         }
                     }
-                    EffectBinaryMode.MANUAL -> error("unreachable")
                 }.ifBlank {
                     throw EffectBinaryException("The configured @effect/tsgo version is blank.")
                 }

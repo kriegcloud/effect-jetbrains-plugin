@@ -39,14 +39,22 @@ internal class RuntimeTreeInspection private constructor(
     private val expanded: Set<List<Any>>,
     private val initialized: Boolean,
 ) {
-    fun restore(tree: JTree) {
+    fun restore(tree: JTree, identityOf: (DefaultMutableTreeNode) -> Any = ::nodeIdentity) {
         val root = tree.model.root as DefaultMutableTreeNode
+        // Index only parents traversed by saved paths; first duplicate wins as before.
+        val indexes = java.util.IdentityHashMap<DefaultMutableTreeNode, Map<Any, DefaultMutableTreeNode>>()
         fun resolve(keys: List<Any>): TreePath? {
             var node = root
-            if (keys.firstOrNull() != nodeIdentity(root)) return null
+            if (keys.firstOrNull() != identityOf(root)) return null
             for (key in keys.drop(1)) {
-                node = node.children().asSequence().filterIsInstance<DefaultMutableTreeNode>()
-                    .firstOrNull { nodeIdentity(it) == key } ?: return null
+                val index = indexes.getOrPut(node) {
+                    buildMap {
+                        node.children().asSequence().filterIsInstance<DefaultMutableTreeNode>().forEach {
+                            putIfAbsent(identityOf(it), it)
+                        }
+                    }
+                }
+                node = index[key] ?: return null
             }
             return TreePath(node.path)
         }
@@ -83,7 +91,7 @@ internal class RuntimeTreeInspection private constructor(
 }
 
 /** Reuse unchanged branches and notify Swing only for changed nodes or child lists. */
-internal fun reconcileSpanNodes(parent: DefaultMutableTreeNode, spans: List<RuntimeSpanSnapshot>, model: DefaultTreeModel) {
+internal fun reconcileSpanNodes(parent: DefaultMutableTreeNode, spans: List<RuntimeSpanSnapshot>, model: DefaultTreeModel, visit: () -> Unit = {}) {
     fun reconcile(node: DefaultMutableTreeNode, values: List<Any>) {
         val old = node.children().asSequence().filterIsInstance<DefaultMutableTreeNode>().toList()
         fun key(value: Any): Any = when (value) {
@@ -95,10 +103,16 @@ internal fun reconcileSpanNodes(parent: DefaultMutableTreeNode, spans: List<Runt
         val available = old.groupBy { key(it.userObject) }.mapValues { java.util.ArrayDeque(it.value) }
         val children = values.map { value ->
             val child = available[key(value)]?.pollFirst() ?: DefaultMutableTreeNode()
-            if (child.userObject != value) {
+            visit()
+            val previous = child.userObject
+            if (previous !== value) {
                 child.userObject = value
                 if (value is RuntimeSpanSnapshot) reconcile(child, value.events + value.children)
-                model.nodeChanged(child)
+                val displayChanged = if (previous is RuntimeSpanSnapshot && value is RuntimeSpanSnapshot) {
+                    previous.name != value.name || previous.status != value.status ||
+                        previous.sampled != value.sampled || previous.details != value.details
+                } else previous != value
+                if (displayChanged) model.nodeChanged(child)
             }
             child
         }

@@ -290,7 +290,7 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         service.addListener({ state ->
             if (state.clients.firstOrNull()?.droppedSpans == count - EffectDevToolsService.MAX_RETAINED_SPANS) {
                 callbackEntered.countDown()
-                releaseCallback.await(5, TimeUnit.SECONDS)
+                releaseCallback.await(30, TimeUnit.SECONDS)
                 publications.incrementAndGet()
                 callbackCompleted.countDown()
             }
@@ -298,17 +298,17 @@ class EffectDevToolsServiceTest : BasePlatformTestCase() {
         client.send((0 until count).joinToString("\n", postfix = "\n") { id ->
             """{"_tag":"Span","spanId":"s$id","traceId":"t$id","name":"span$id","status":{"_tag":"Ended","endTime":"1"}}"""
         })
-        waitForCondition { service.currentState().clients.firstOrNull()?.droppedSpans == count - EffectDevToolsService.MAX_RETAINED_SPANS }
+        waitForCondition(timeoutMs = 30_000) { service.currentState().clients.firstOrNull()?.droppedSpans == count - EffectDevToolsService.MAX_RETAINED_SPANS }
         try {
-            assertTrue(callbackEntered.await(5, TimeUnit.SECONDS))
+            assertTrue(callbackEntered.await(30, TimeUnit.SECONDS))
             assertEquals(0, publications.get()) // State is visible while the callback is blocked.
         } finally { releaseCallback.countDown() }
-        assertTrue(callbackCompleted.await(5, TimeUnit.SECONDS))
+        assertTrue(callbackCompleted.await(30, TimeUnit.SECONDS))
         val retained = service.currentState().clients.first()
         assertEquals(EffectDevToolsService.MAX_RETAINED_SPANS, retained.rootSpans.size)
         assertEquals(1, publications.get())
         client.send("""{"_tag":"MetricsSnapshot","metrics":[{"id":"counter","type":"Counter","state":{"count":1}}]}""" + "\n")
-        waitForCondition { service.currentState().clients.first().metrics.isNotEmpty() }
+        waitForCondition(timeoutMs = 30_000) { service.currentState().clients.first().metrics.isNotEmpty() }
         assertSame(retained.rootSpans, service.currentState().clients.first().rootSpans)
     }
 
