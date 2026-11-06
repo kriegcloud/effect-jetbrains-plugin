@@ -1,162 +1,167 @@
-# Upstream Refresh Report — 2026-10-20
+# Upstream Refresh Report — 2026-11-06
 
-Branch: `refresh/tsgo-0.54.1-effect-4.0.5`
+Branch: `refresh/tsgo-0.67.4-effect-4.1.2`
 
-Plugin release build: `0.1.9`
+Plugin release build: `0.1.10`
 
-The refresh branched from `main` at `300e7f6d`, after the 0.1.8 refresh (#51), the
-"Fix all '…' problems in file" feature (#54), and Dependabot #52 (Qodana 2026.2.2), #53 (Kover
-0.9.11), and #56 (Gradle wrapper 9.8.1) merged. Dependabot #55 (Kotlin 2.4.21) had a version-catalog
-conflict with #53; the conflict was resolved on its branch (`bee5fdaf`, keeping both bumps) and the PR
-is merged separately on the user's instruction. Those dependency updates are baseline work, not ports
-from the IntelliJ template.
-
-Kickoff targets were fixed on 2026-10-20 from live npm dist-tags (`@effect/tsgo@0.54.1`,
-`effect@4.0.5`), upstream default-branch heads, and the JetBrains release feed, and were not moved
-during the run.
+Refresh targets were fixed on 2026-11-06 at `@effect/tsgo@0.67.4`, `effect@4.1.2`, and the
+JetBrains stable/GA builds below. Only the tsgo and Effect reference pins moved. Implemented claims
+follow the 0.1.10 changelog; the release and installation gates remain separate from native-binary
+and runtime evidence.
 
 ## Reference inventory
 
 | Reference | Previous pin | Current recorded pin | Commits | Classification |
 | --- | --- | --- | ---: | --- |
-| Effect tsgo | `d1e539c4956bf4b2d1643c58e1477f7597b20d5b` | `018720b8553d9198c5d69b060175ef663e3baa10` | 71 | Implement, validate, and document |
-| Effect v4 | `b1d200c40a1dad69def51ebdbf0a1a612a12b8ac` | `1b740862e3d25ec5d4b6f86b9fe792b6dabbf84c` | 519 repo-wide | Validate runtime; move fixture pins; document |
+| Effect tsgo | `018720b8553d9198c5d69b060175ef663e3baa10` | `bf34a20a49154ceca6ac58b653f36aa4ff405e47` | 84 | Implement, validate, and document |
+| Effect v4 | `1b740862e3d25ec5d4b6f86b9fe792b6dabbf84c` | `506eef143bcc1750ce58920aac1e45da7265d103` | Path-scoped analysis | Validate runtime; move fixture pins; document |
 | Effect VS Code extension | `64631d41a75770149361703581e923cf6971d5f4` | unchanged | 0 | Not applicable |
 | Zed Effect tsgo extension | `0c4f302c861359b4f9d23f58ac146101030c6229` | unchanged | 0 | Not applicable |
-| Effect language service | `690fa515f923a159638a9f78acb51a4bbccd3d36` | `cb91d700a10e86de46d57b94261d4dcc9c92fc20` | 4 | Not applicable |
-| IntelliJ Platform Plugin Template | `b7b700870b23e1323353a0350a1acd9cc6d2b225` | `c7c9f997a7e67920efc534202e7ec29684d3b161` | 5 | Validation only; Kotlin 2.4.21 arrives through Dependabot #55 |
+| Effect language service | `cb91d700a10e86de46d57b94261d4dcc9c92fc20` | unchanged | 0 | Not applicable |
+| IntelliJ Platform Plugin Template | `c7c9f997a7e67920efc534202e7ec29684d3b161` | unchanged | 0 | Not applicable |
 
-Inventory method: all six clones were clean and detached at their previous pins. Each was fetched
-with prune and tags through the documented `checkout_reference` routine and detached at the target;
-`HEAD` equals the recorded revision in every clone. No `git pull`, dirty-clone reset, or access to
-`.repos/effect-tsgo` was needed.
-
-The Effect commit count is graph-wide. Analysis was restricted to the DevTools sources, `Tracer.ts`,
-and `internal/{core,effect,context}.ts` for the runtime fields the debugger reads; it is not a
-repository-wide Effect audit.
+The tsgo pin equals tag `@effect/tsgo@0.67.4`; the Effect pin equals tag `effect@4.1.2`. The other
+four pins equal their upstream HEAD at the check. The previous Effect pin was untagged `main`
+past the published 4.0.5 release. Effect analysis was restricted to DevTools, tracer, metrics,
+fiber, context, and fixture-facing APIs; it is not a repository-wide Effect audit. The recorded pins
+and detached-checkout routine are in `docs/reference-sources.md`.
 
 ## Delta analysis and decisions
 
 ### Effect tsgo
 
-The published kickoff target is `@effect/tsgo@0.54.1`, published 2026-10-20. Its release tag is
-`00f79e04`; the recorded pin is two commits later and carries the unpublished `preferEffectString`
-rule. Releases 0.49.0 through 0.54.1 fall inside the delta.
+The published target and source pin now coincide at 0.67.4. The source-pin delta adds 17 rules;
+the plugin's published baseline grows from 129 to 147 because `preferEffectString` was already on
+the old source pin but unpublished at 0.54.1.
 
-- **Implement:** add eleven rule names to directive completion. Release metadata grows from 118 to
-  129 rules: `apiStabilityLeak` (0.50.0), `effectSleepZeroToYieldNow`, `flatMapToTap`,
-  `preferEffectArray`, `preferEffectRecord`, `preferSchemaTaggedError`, `schemaClassMissingBrand`
-  (0.52.0), `errorPayloadShadowsName`, `preferNamespaceImport`, `preferBarrelImport` (0.53.0), and
-  `schemaClassObjectLiteral` (0.54.0). No rule was removed or renamed. A release-tag snapshot
-  checks all 129 completion names; `preferEffectString` is deferred as unpublished.
-- **Implement and validate:** pin real-binary fixtures to 0.54.1 / Effect 4.0.5, retaining
-  TypeScript 7.0.2. New live cases apply the `Replace with Effect.yieldNow` and
-  `Replace with Effect.tap` quick fixes, expect the default-on `schemaClassMissingBrand` (two
-  unbranded v4 classes), `schemaClassObjectLiteral` (spread copy of a branded instance), and
-  `errorPayloadShadowsName` findings, and enable `preferEffectArray`, `preferEffectRecord`,
-  `preferSchemaTaggedError`, and `apiStabilityLeak` through `diagnosticSeverity`, expecting warnings
-  with suppression actions only. The experimental-usage assertion now matches by export name
-  because the `apiStabilityLeak` case adds a second experimental export.
-- **Validation only, with new regression tests:** since 0.52.0 (#830) the `latest` compiler ships
-  once per platform package, as `lib/tsc` with 108 `lib.*.d.ts` files beside it;
-  `artifacts/typescript/7.0.2/` is gone, while `next` (`7.1.0-dev.20261019.1`, git head
-  `5237fd46`) keeps the `artifacts/typescript/<version>/tsc` layout. Stable `lib/tsc` is mode
-  `0755`, 26,595,488 bytes, SHA-256
-  `20a50cd37506bf52b5392903987e7490b64ca0169d2046f5ff08ce716bb91c8c`; the stable TypeScript git
-  head is unchanged. The resolver already falls back to `lib/tsc` for the `latest` component when
-  its artifact is absent, and the install marker records whichever executables exist, so no
-  production change is needed. Tests now model the layout: standard library beside `lib/tsc`,
-  healthy-install reuse without a reinstall loop, and `next` selection from `artifacts/`. The
-  package retains the schema-5 manifest, provider metadata, and exact git-head matching.
-- **Document:** the `maintainers` and `effect-native` presets, the `"identifier"` key pattern and
-  package-less keys for `deterministicKeys`, import-style options inside per-file `overrides`,
-  and removal of the `debug` option and `Flows` outline group (0.52.0; never used by the plugin)
-  are upstream configuration behavior. The `relatedInformation` change (0.53.3) is in the
-  `diagnostics` CLI output formats. The 0.49.0 compiler-API migration, TypeScript 7.1 paged caches,
-  and the performance work change nothing observable through LSP; the five verifier lanes passed
-  unchanged against 0.54.1 before any fixture edit.
-- **Document and defer IDE ownership:** the package now carries Oxlint 1.87.0–1.89.0, tsgolint
-  7.0.2003 / 7.0.2004, and seven compatibility profiles (Vite+ 1.1.0–1.3.0). Oxlint and tsgolint
-  remain upstream-managed package contents; IDE-managed configuration and lifecycle remain deferred.
-- **Validate and defer bridge work:** the stable compiler advertises no `executeCommandProvider`
-  commands in any lane, and source has no `_effectGetLayerMermaid` registration. Hover Mermaid
-  remains the supported graph path.
+- **Implement:** add 18 published names to directive completion and replace the release snapshot
+  with all 147 names. The default-on suggestions with rewrites are `effectSucceedWithUndefined`,
+  `failCauseToConstructor`, `flatMapIdentityToFlatten`, `manualMetricTapToTrack`, `mapConstToAs`,
+  `mapSomeCatchNoSuchElement`, `matchBooleanToIsSuccess`, `matchToResultOrOption`,
+  `resultMatchToFromResult`, and `suspendFailToFailSync`. The off-by-default additions are
+  `effectTryWithoutCatch`, `globalJson`, `globalJsonInEffect`, `mapMapErrorToMapBoth`,
+  `provideMergeAllToArray`, `typeUnionToSchemaUnion`, `yieldInCallArgument`, and
+  `preferEffectString`. No rule was removed or renamed.
+- **Implement and validate:** pin real-binary fixtures to 0.67.4 / Effect 4.1.2, retaining
+  TypeScript 7.0.2. New fixture cases apply `Replace with Effect.as` (`mapConstToAs`) and
+  `Replace with Effect.flatten` (`flatMapIdentityToFlatten`).
+- **Validation only, with regression tests:** the schema-5 manifest adds TypeScript `beta`
+  (`7.1.0-beta`, git head `3e9236361fa97a9e6c685f4833ac457ae2d8c50a`) and a `tsrs` component.
+  Stable TypeScript 7.0.2 still ships as `lib/tsc`; beta and next use
+  `artifacts/typescript/<version>/tsc`. Exact-git-head matching already selects beta for a matching
+  workspace and ignores Rust and lint components, so no production resolver change is needed.
+- **Document:** `keyPatterns.target: "taggedClass"` and `brandedSchemaClasses` support per-file
+  overrides. Branding defaults to `Class`, `TaggedClass`, `Error`, `TaggedError`, and `Opaque`;
+  `[]` disables it, including completion insertion. `preferSchemaOverJson` remains functional but
+  deprecated; configuring it reports warning `deprecatedRuleName`. Use `globalJson` /
+  `globalJsonInEffect`. This configuration diagnostic is separate from the 147 source-rule count.
+- **Validate and defer managed selection:** the Effect-patched tsrs executable is the Rust
+  TypeScript 7.1 port from `oxc-project/tsrs`, version `0.22.0-ts7.1.0-beta`. It serves Effect LSP
+  over `--lsp --stdio` and passes all five verifier lanes, but interactive IDE qualification remains
+  owed. Use `MANUAL` mode for an opt-in trial; managed selection continues to choose TypeScript
+  components only.
+- **Document and defer IDE ownership:** the manifest carries Oxlint 1.88.0–1.91.0, tsgolint
+  7.0.2004–7.0.2006, and seven compatibility profiles, with Vite+ 1.3.0–1.5.0. CLI patch/proxy and
+  lint-worker choices do not change the plugin's direct LSP launch. Oxlint execution stays with
+  the official Oxc plugin and repository tooling.
+- **Validate and defer bridge work:** initialize advertises inlay hints, semantic tokens, and pull
+  diagnostics, with no `executeCommandProvider`. Layer Mermaid remains encoded-hover transport.
 
 ### Effect v4
 
-The fixtures move from `effect@4.0.1` to `effect@4.0.5` (published 2026-10-15, tag `7f524e25`).
-The recorded source pin is 233 commits past that tag.
+The fixtures move from `effect@4.0.5` to `effect@4.1.2`. The source comparison starts at the old
+untagged pin, so initial Ping, reconnect, and dynamic metric registration/removal already present
+there are not new ports.
 
-- **Validation only:** `DevToolsSchema.ts` is unchanged across the delta, so the wire shape the
-  plugin decodes is unchanged. `fiber.cache.span` and `fiber.cache.stackFrame` remain the span and
-  stack-frame sources; the current-fiber and Context private keys are unchanged. The
-  instrumentation lane passes on rc.112, rc.115, 4.0.1, and 4.0.5.
-- **Document:** after the 4.0.5 tag, `DevToolsClient.ts` (#9226, #9410) pings on connect, retries a
-  failed connection every second, and drains its queue on shutdown only when a writer is ready.
-  These are client-side behaviors the plugin's DevTools server already tolerates. `Tracer.ts`
-  gained `@stability stable` annotations only. No metrics/tracer interception or decoder change.
+- **Validation only:** `DevToolsSchema.ts` and the wire shapes are unchanged. The private
+  current-fiber and Context keys, live `fiber.cache.span` / `fiber.cache.stackFrame` reads, and
+  metric state shapes remain compatible. No decoder or injected-instrumentation change is required.
+- **Validate and document:** completed fibers clear cached span and stack-frame references after
+  completion observers run. The plugin captures defect locations during those observers. Ended
+  spans ignore late mutations and events; DevTools suppresses duplicate end snapshots. Focused
+  4.1.2 probes confirm observer-time visibility, cleared completed caches, supplied Context service
+  values, and ignored late span mutations.
+- **Document:** 4.1.2 SQL tracing emits transaction child spans rather than commit/savepoint/rollback
+  events; the generic span renderer accepts these shapes. OTLP, RPC, crypto, and unrelated Schema
+  changes do not require plugin changes.
 
 ### Other references
 
-- **Language service (4 commits):** missed-pipeable detection for method receivers, a
-  `runEffectInsideEffect` fix for Exit runners, and Effect 4.0.5 alignment; the IDE consumes these
-  through `@effect/tsgo` (0.53.5 ships the matching `runSyncExit` / `runPromiseExit` reporting).
-  Not applicable.
-- **IntelliJ template (5 commits):** Gradle wrapper 9.8.1 and Kotlin 2.4.21 (both via Dependabot),
-  IntelliJ IDEA 2026.2.3 (this repo compiles against WebStorm 2026.2.3), a `free-disk-space` v2
-  input migration (already carried), and a GPG signing test. Validation only.
-- **VS Code and Zed extensions:** unchanged.
-- **JetBrains builds:** the compile target stays WebStorm 2026.2.3 stable `262.10968.77` (still the
-  newest 262 release). Plugin Verifier EAP pins advance from `263.6259.34` / `263.6259.32` to
-  WebStorm `263.7031.26` and IntelliJ IDEA Ultimate `263.7031.23` (2026-10-15 EAPs).
+- **VS Code, Zed, language service, and IntelliJ template:** unchanged; no separate port.
+- **JetBrains builds:** compile against WebStorm 2026.2.4 `262.11879.105`; target Plugin Verifier
+  at WebStorm 2026.3 GA `263.7307.202` and IntelliJ IDEA Ultimate 2026.3 GA `263.7307.200`.
+  WebStorm 2026.3 GA was released 2026-11-05. Retain the `262`–`263.*` compatibility range.
+  Earlier EAP verdicts do not establish GA compatibility.
+- **Platform APIs:** the `LspServer*` → `LspClient*` migration is deprecated since 2026.1.4 but
+  remains functional on 263. Keep issue #26 separate from this refresh. The 263 debugger module
+  dependency check and interactive editor/debugger validation remain follow-up work.
+- **Oxc ownership:** the inspected official Oxc plugin build declares `253`–`262`, excluding 263.
+  Do not promise 263 coexistence from that build or add a second Oxlint process manager to Effect.
 
 ## Implemented change set
 
-1. Added eleven directive-completion names and replaced the release snapshot with the sorted
-   129-name `rule-names-0.54.1.json`; the Kotlin test rejects duplicates, omissions, and
-   unpublished extras.
-2. Pinned LSP fixtures to Effect 4.0.5 and added the new-rule cases, including applied quick-fix
-   edits, cleared findings, opt-in suppression-only checks, and unchanged baseline errors.
-3. Refreshed managed-binary test inputs to tsgo 0.54.1 and the packaged next version/git head, and
-   added three tests for the 0.52.0+ layout. KDoc on the resolver records the layout history. The
-   synthetic archives do not claim to contain the real package bytes.
-4. Moved the runtime smoke fixture to `effect@4.0.5` and extended
-   `scripts/verify-instrumentation.mjs` to 4.0.5; updated `SMOKE_CHECKLIST.md`.
-5. Set plugin version 0.1.9, the new EAP verifier pins, and `gradleVersion=9.8.1`.
-6. Updated the six-reference provenance, canary notes, this report, changelog, README,
-   getting-started/usage/development guides, and one troubleshooting line. The parity matrix is
-   unchanged pending user-run smoke.
-
-No production Kotlin or injected-instrumentation logic changed beyond the completion name list and
-KDoc.
+1. Added 18 published directive-completion names and replaced the release snapshot with the
+   147-name `rule-names-0.67.4.json`.
+2. Pinned LSP fixtures to tsgo 0.67.4 / Effect 4.1.2, retaining TypeScript 7.0.2, and added applied
+   `mapConstToAs` / `flatMapIdentityToFlatten` quick-fix cases.
+3. Added managed-binary regression inputs for the beta TypeScript and tsrs manifest components;
+   production selection remains unchanged.
+4. Moved the runtime smoke fixture to Effect 4.1.2 and extended the instrumentation version matrix.
+5. Included the pinned-version picker and exact npm-version validation described in the changelog.
+   Its change missed the published 0.1.9 build; 0.1.10 is the first release that ships it.
+6. Set plugin version 0.1.10, the stable compile and GA verifier pins, and Gradle 9.8.2.
+7. Refreshed reference provenance, canary notes, smoke guidance, and this report. The parity matrix
+   remains unchanged pending user-run WebStorm smoke.
+8. Added `Use tsrs (TypeScript 7.1) for WebStorm TypeScript` (settings button and `Tools` action):
+   it locates tsrs in the workspace `@tsrs/<platform>` or `@effect/tsgo-<platform>` package or the
+   managed cache, generates the `typescript` 7+ package shape WebStorm's TypeScript 7 detection
+   requires under the IDE system directory, selects it, and restarts WebStorm's TypeScript service
+   through its stable `TypeScript.Restart.Service` action id. A platform test runs WebStorm's own
+   `getTypeScriptGoPackageInfo` against the generated layout.
+9. Listed `Fix all '<fix>' problems in file` directly in the Alt+Enter popup beside every Effect
+   codemod fix, keeping the submenu entry.
+10. Rebuilt "Fix all" as a multi-pass engine (`EffectFixAllPasses.kt`): repeat to a fixed point (at
+    most 64 passes), pull diagnostics after each pass, undo any pass that adds an error-severity
+    diagnostic (code + message multiset), retry rejected batches one fix at a time, and skip single
+    fixes that still add errors. Driven by a per-rule inventory of all 147 rules: 527 upstream v4
+    fixtures through the published 0.67.4 binary, 2,974 Effect diagnostics across 140 rules, every
+    rule surfaced, all 71 codemod rules eligible. A JavaScript port of the engine over the same
+    437 rule/document/title combinations ends with zero new errors in 437 (single pass: 419); the 15
+    combinations with more remaining sites are exactly those whose single-pass result had introduced
+    errors. Maximum 20 passes (`yieldInCallArgument_shapes.ts`).
+11. Replaced the scheduled-for-removal `SimpleListCellRenderer.create(Customizer)` call with
+    `textListCellRenderer`.
 
 ## Verification evidence
-
-All commands ran on 2026-10-20 against the final source tree unless noted.
 
 ### Published native binary and instrumentation
 
 ```bash
-node scripts/verify-real-tsgo-lsp.mjs --binary <extracted @effect/tsgo-linux-x64@0.54.1>/lib/tsc
+node scripts/verify-real-tsgo-lsp.mjs --binary <extracted @effect/tsgo-linux-x64@0.67.4>/lib/tsc
 node scripts/verify-instrumentation.mjs
 ```
 
-Results: **exit 0** for all five LSP lanes and **exit 0** for all four instrumentation versions.
+Recorded results: all five LSP lanes (`healthy`, `failing`, `new-diagnostics`,
+`diagnostic-directives`, `fix-all`) pass against each of these packaged executables with workspace
+`typescript@7.0.2` and `effect@4.1.2`:
 
-- Before any fixture edit, all five LSP lanes already passed against 0.54.1 / Effect 4.0.1 with the
-  binary swapped, so the existing coverage carries over unmodified.
-- New diagnostics: the seven new findings are reported with the expected severities; the
-  `Effect.yieldNow` and `Effect.tap` rewrites clear their findings alongside the earlier five and
-  preserve the one baseline error. The four opt-in rules each offer only two suppression actions.
-  Healthy, failing, directive, and fix-all lanes are unchanged and passing. No lane advertises
-  execute commands; the healthy lane still returns 44 completion items.
-- Instrumentation: Effect `4.0.0-rc.112`, `4.0.0-rc.115`, `4.0.1`, and `4.0.5` all pass with the
-  inner-to-outer span stack `smoke.work > smoke.child > smoke.parent`, fixture source and defect
-  locations, interruption, and the legacy/cache controls. Every release after rc.112 confirms the
-  legacy fiber fields are absent.
-- Runtime fixture: with `effect@4.0.5` installed, `node index.mjs` starts and logs the expected
-  periodic child failures; the packaged `lib/tsc --noEmit` reports the eight intended Effect
-  warnings in `example.ts` and no TypeScript errors. This is runtime evidence, not IDE UI proof.
+- `lib/tsc` (7.0.2).
+- `artifacts/typescript/7.1.0-beta/tsc`.
+- `artifacts/tsrs/0.22.0-ts7.1.0-beta/tsrs`.
+
+The new cases apply `Replace with Effect.as` and `Replace with Effect.flatten`. Initialize
+advertises inlay hints, semantic tokens, and pull diagnostics, with no execute-command provider;
+Layer Mermaid stays on hover transport.
+
+The packaged tsrs is 43,123,960 bytes, mode `0755`, SHA-256
+`b88418fe9c58ae802fefa9d4f2beb29a79bf38a6e764e58517c45afc8b7350b5`. Its version output is
+`Version 7.1.0-beta+effect-tsgo.0.67.4 (tsrs 0.22.0-ts7.1.0-beta, microsoft/TypeScript@3e9236361fa9)`.
+These protocol results do not qualify managed Rust selection or interactive IDE performance.
+
+The instrumentation verifier passes on Effect `4.0.0-rc.112`, `4.0.0-rc.115`, `4.0.1`, `4.0.5`,
+and `4.1.2`, covering span stacks, source/defect locations, interruption, and legacy/cache controls.
+The focused 4.1.2 runtime probe also confirms completion-observer visibility before cache cleanup and
+ignored late span mutations. Native and Node probes do not establish manual IDE parity.
 
 ### Release command
 
@@ -164,57 +169,54 @@ Results: **exit 0** for all five LSP lanes and **exit 0** for all four instrumen
 ./gradlew clean check buildPlugin verifyPlugin qodanaScan --no-daemon --stacktrace
 ```
 
-Result: **BUILD SUCCESSFUL in 6m 55s**.
-
-- Tests: **136 completed, 0 failures, 0 errors, 0 skipped**.
-- `buildSearchableOptions`: 284 configurables.
-- Qodana for JVM 2026.1.4: **no new problems found**.
-- Plugin Verifier, zero compatibility problems. The deprecated-API usage count rose from 35 to
-  47–49 since the fix-all feature (#54) added `LspServerDescriptor`-family calls; it is the same
-  deprecated JetBrains LSP API family, not a new warning class.
+`BUILD SUCCESSFUL in 5m 55s` on the final tree: 157 tests, 0 failures, 0 errors;
+`buildSearchableOptions` completed; Qodana (`qodana.recommended`, Qodana for JVM 2026.1.4) reported
+0 problems.
 
 | Target | Verdict |
 | --- | --- |
-| WebStorm `WS-262.10968.77` | Compatible, 47 deprecated API usages |
-| WebStorm `WS-263.7031.26` | Compatible, 49 deprecated API usages |
-| IntelliJ IDEA Ultimate `IU-263.7031.23` | Compatible, 49 deprecated API usages |
+| `WS-262.11879.105` (compile target) | Compatible. 51 usages of deprecated API |
+| `WS-263.7307.202` (WebStorm 2026.3 GA) | Compatible. 53 usages of deprecated API |
+| `IU-263.7307.200` (IntelliJ IDEA Ultimate 2026.3 GA) | Compatible. 53 usages of deprecated API |
+
+The deprecated usages are the `LspServer*` family (deferred LspClient migration, issue #26) plus
+`FileEditorManager.openFile`; the four added since 0.1.9 are `LspServer` references in the fix-all
+session. No experimental or scheduled-for-removal API is used: `TypeScriptServiceRestarter` is
+experimental, so the restart goes through the action id instead.
 
 ### Distribution
 
-- ZIP: `build/distributions/effect-jetbrains-plugin-0.1.9.zip`
-- Release-lane build at `cbba7512`: 5,269,406 bytes; 13 entries; `unzip -t` reports no errors;
-  SHA-256 `54b68e63cf4112f17881e4b249574ad1a7daf7556121f84738a26803ed2c696d`. That is the artifact
-  the verifier, Qodana, and sandbox-boot evidence above describe.
-- After Dependabot #55 (Kotlin 2.4.21) merged and `main` was merged into this branch (`37e8ee95`),
-  `./gradlew buildPlugin` was rerun: 5,269,409 bytes; `unzip -t` clean; SHA-256
-  `047dcd9bc900e415e59985cc927c554d91b707ab38a7609d98b0a3bbdda362c4`. The hosted checks on the
-  merged head are the release-grade proof for that toolchain change; the local release lane was not
-  repeated for it.
+`build/distributions/effect-jetbrains-plugin-0.1.10.zip`, 5,351,359 bytes, SHA-256
+`c7df43610d415f192b3c7e8b17cb878e15bd1403351da68f4025646b40c76641`; `unzip -t` reports no errors.
 
 ### Bounded sandbox boots
 
-`./gradlew runIde` and `./gradlew runIdeVerifierWebStorm` were started under a bounded `timeout 90`.
-Both sandbox IDEs started and logged `Loaded custom plugins: … Effect TSGO (0.1.9)` — on stable
-`WS-262.10968.77` and on EAP `WS-263.7031.26` — with zero SEVERE records in either log. The stable
-IDE reopened the sandbox's previously indexed project and shut down cleanly after about 66 seconds
-(`Watcher terminated with exit code 0`, Gradle `BUILD SUCCESSFUL in 1m 16s`); the EAP IDE shut down
-cleanly after about 38 seconds (`BUILD SUCCESSFUL in 46s`). Neither boot reached the timeout, and the
-sandbox `.lock`/`.port` files were removed afterwards. The boots prove plugin load on both builds,
-not a sustained interactive session.
+`runIdeVerifierWebStorm` booted WebStorm `263.7307.202` for a bounded 240 s run and logged
+`Loaded custom plugins: Effect TSGO (dev.effect.jetbrains, 0.1.10)`. Its two SEVERE records
+(`SlowOperations`, `TransactionGuardImpl` write-unsafe context) are both raised from the platform's
+`DynamicPluginsFrameStateListener` with no plugin frames. The run ended at the timeout, and the
+sandbox `.lock` / `.port` files were removed afterwards.
 
 ### Local installation
 
-WebStorm was running on the desktop throughout the run (`WebStorm2026.3` Toolbox install), so
-`scripts/install-local-webstorm-plugin.sh` was **not** executed; the IDE is never terminated by this
-workflow. Installation is deferred until the user closes WebStorm, after which the script installs
-the ZIP above. Manual smoke per `SMOKE_CHECKLIST.md` remains owed and is distinct from the automated
-proof here.
+`scripts/install-local-webstorm-plugin.sh` declined because WebStorm 2026.3 was running. The
+`WebStorm2026.3/effect-jetbrains-plugin` directory already held `effect-jetbrains-plugin-0.1.10.jar`,
+byte-identical to this build. It was installed at 08:49:38, just before that WebStorm session started,
+and not by this run's installer. The IDE was not stopped.
+
+Manual editor, DevTools, and paused-debugger smoke per `SMOKE_CHECKLIST.md` remains owed and is
+distinct from automated proof.
 
 ## Deferred scope
 
-- `preferEffectString` (upstream `main`, #881): unpublished at 0.54.1; add to completion when a
-  release ships it.
-- `preferNamespaceImport` / `preferBarrelImport` live fixture cases need `namespaceImportPackages` /
-  `barrelImportPackages` configuration; they are in completion only.
-- IDE-managed Oxlint/tsgolint configuration, the `_effectGetLayerMermaid` execute-command bridge,
-  and `docs/parity-matrix.md` updates remain deferred pending new evidence or user-run smoke.
+- `LspServer*` → `LspClient*` API migration (issue #26), deprecated since 2026.1.4 and still
+  functional on 263.
+- Managed tsrs (Rust) engine selection, pending interactive qualification; `MANUAL` trials remain
+  available.
+- Caching parsed diagnostic directives per document modification stamp.
+- Non-modal bounded fix-all with one cancellation/timeout budget.
+- Explicit `intellij.platform.debugger` module dependency check for 263 development builds.
+- Oxlint execution stays with the official Oxc plugin, whose current inspected build declares
+  `253`–`262`, excluding 263; qualify a compatible build before promising coexistence on 263.
+- `docs/parity-matrix.md` remains untouched pending user WebStorm smoke.
+- The `_effectGetLayerMermaid` execute-command bridge remains deferred; hover Mermaid is supported.

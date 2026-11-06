@@ -27,7 +27,7 @@ timeout 90s ./gradlew runIdeVerifierWebStorm
 ```
 
 `runIde` boots the sandbox on the stable compile target (`platformVersion`), while
-`runIdeVerifierWebStorm` boots it on the pinned WebStorm EAP (`pluginVerifierWebStormVersion`).
+`runIdeVerifierWebStorm` boots it on the pinned WebStorm GA (`pluginVerifierWebStormVersion`).
 A `timeout`-bounded boot kills Gradle but leaves the sandbox IDE's lock files behind
 (`.intellijPlatform/sandbox/effect-jetbrains-plugin/<build>/{config,config_*}/.lock` and
 `{system,system_*}/.port`). The next headless IDE run, such as `buildSearchableOptions`, then fails
@@ -35,16 +35,16 @@ with `DirectoryLock$CannotActivateException` / exit code 6. Confirm no sandbox I
 and delete those files before the release command. Every sandbox boot also gets its own
 `XDG_CONFIG_HOME` under `build/sandbox-xdg/config`, so the IDE's `plasmashell --version` desktop
 probe cannot touch the host Plasma configuration.
-Plugin Verifier targets WebStorm stable `262.10968.77`, WebStorm 2026.3 EAP `263.7031.26`, and
-IntelliJ IDEA Ultimate 2026.3 EAP `263.7031.23` (`pluginVerifierIntelliJIdeaVersion`). The declared
-`gradleVersion` matches the `9.8.1` wrapper.
+Plugin Verifier targets WebStorm stable `262.11879.105`, WebStorm 2026.3 GA `263.7307.202`, and
+IntelliJ IDEA Ultimate 2026.3 GA `263.7307.200` (`pluginVerifierIntelliJIdeaVersion`). The declared
+`gradleVersion` matches the `9.8.2` wrapper.
 
-EAP verifier pins must track the newest build: bundled libraries can change within a platform line.
+Verifier pins must track the current release: bundled libraries can change within a platform line.
 The move to `263.4732.x` exposed lsp4j 1.0.0's `Diagnostic.getMessage()` return-type change from
 `String` to `Either<String, MarkupContent>`, which broke 0.1.6 diagnostic highlighting despite the
 existing `263.*` compatibility range. Version 0.1.7 resolves diagnostic message getters/setters
 reflectively, with unit cases for both shapes. Keep the stable compile target and exercise both
-stable and EAP compatibility when changing these accessors. The separate `LspServer*` → `LspClient*`
+262 and 263 compatibility when changing these accessors. The separate `LspServer*` → `LspClient*`
 migration remains issue #26.
 
 All sandbox `RunIdeTask` instances use `build/sandbox-xdg/config` as `XDG_CONFIG_HOME`, so the
@@ -62,7 +62,7 @@ node scripts/verify-real-tsgo-lsp.mjs --binary /path/to/native/tsc --only fix-al
 
 The verifier copies its fixtures to temporary directories and installs the validated
 `typescript@7.0.2` package (`gitHead` `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`) plus
-`effect@4.0.5`. The recorded published native target is `@effect/tsgo@0.54.1`. It does not
+`effect@4.1.2`. The recorded published native target is `@effect/tsgo@0.67.4`. It does not
 install `@effect/language-service`: that string is the `compilerOptions.plugins[].name` consumed by
 the language service already compiled into `@effect/tsgo`.
 
@@ -83,28 +83,31 @@ that name a local `@stability`-tagged export as `module#exportName`. The 0.54.1 
 `schemaClassObjectLiteral` warning, and `errorPayloadShadowsName` suggestion, and enable
 `preferEffectArray`, `preferEffectRecord`, `preferSchemaTaggedError`, and `apiStabilityLeak` through
 `diagnosticSeverity`, expecting warnings with suppression actions only. The rule-name snapshot at
-`src/test/testData/tsgo/rule-names-0.54.1.json` comes from release tag `00f79e04`; a Kotlin test checks
-completion against all 129 names. The source pin is two commits past that tag, so the unpublished
-`preferEffectString` rule is deferred.
+The 0.67.4 cases apply `Replace with Effect.as` (`mapConstToAs`) and
+`Replace with Effect.flatten` (`flatMapIdentityToFlatten`). The rule-name snapshot at
+`src/test/testData/tsgo/rule-names-0.67.4.json` comes from release tag `bf34a20a`; a Kotlin test checks
+completion against all 147 names, including now-published `preferEffectString`. All five lanes also
+pass against the packaged beta TypeScript compiler and tsrs with workspace TypeScript 7.0.2 and
+Effect 4.1.2. tsrs can be tried through `MANUAL` mode; managed selection remains unchanged.
 
 The runtime companion probe exercises the plugin's actual injected instrumentation:
 
 ```bash
 node scripts/verify-instrumentation.mjs
-node scripts/verify-instrumentation.mjs --effect 4.0.5
+node scripts/verify-instrumentation.mjs --effect 4.1.2
 ```
 
-By default it installs exact Effect `4.0.0-rc.112`, `4.0.0-rc.115`, `4.0.1`, and `4.0.5` in separate temporary
+By default it installs exact Effect `4.0.0-rc.112`, `4.0.0-rc.115`, `4.0.1`, `4.0.5`, and `4.1.2` in separate temporary
 workspaces copied from [`smoke-app`](../src/test/testData/fixtures/runtime/smoke-app/). It checks
 inner-to-outer span stacks, source locations, pause-on-defect reveal state, current/alive fibers,
 and interruption. Structural controls exercise legacy v3/older-v4 fields and cache precedence;
-the real rc.115, 4.0.1, and 4.0.5 negative controls prove the removed fields are absent. The fixture imports
+the real rc.115, 4.0.1, 4.0.5, and 4.1.2 negative controls prove the removed fields are absent. The fixture imports
 DevTools from `effect/devtools`; for releases that predate that path (before rc.118) the verifier
 rewrites its temporary copy to `effect/unstable/devtools`. The `--effect` option takes
 a comma-separated list of exact versions. Network access to npm is required; Node 22+ supplies the
 global WebSocket used by the runtime fixture.
 
-The same fixture app pins `effect@4.0.5` and `typescript@7.0.2` for manual smoke, with
+The same fixture app pins `effect@4.1.2` and `typescript@7.0.2` for manual smoke, with
 `index.mjs` (DevTools client, nested spans, metrics, periodic failures, defect loop, and an
 interruptible `Effect.never` fiber), `example.ts`, and
 [`SMOKE_CHECKLIST.md`](../src/test/testData/fixtures/runtime/smoke-app/SMOKE_CHECKLIST.md). To run it:
@@ -138,8 +141,8 @@ the IDE does not configure or run them independently.
 - Keep debugger wording as best-effort unless there is recorded paused-session smoke evidence.
 - Keep Mermaid execute-command wording experimental until that bridge is published in `@effect/tsgo`.
 - Keep support statements aligned with the current target baseline:
-  - WebStorm `2026.2` stable and `2026.3` EAP / `262.*`–`263.*`
-  - IntelliJ IDEA Ultimate `2026.2`–`2026.3` EAP / `262.*`–`263.*`
+  - WebStorm `2026.2` stable and `2026.3` GA / `262.*`–`263.*`
+  - IntelliJ IDEA Ultimate `2026.2`–`2026.3` GA / `262.*`–`263.*`
   - no Community Edition or Android Studio support claims
 
 ## Specs And Source Of Truth
@@ -169,7 +172,7 @@ Use the resulting Effect-patched native binary path in `MANUAL` mode. Current pu
 `artifacts/typescript/<version>/`; 0.32.0–0.51.x shipped every build under `artifacts/` with
 `lib/tsc` as a compatibility copy of `latest`; 0.19.0–0.31.x called their binaries `lib/tsc` and
 `lib/tsc-next` (0.26.0 replaced their per-binary JSON metadata with `lib/upstream.json`), and older
-source builds may still produce `tsgo`. Version 0.54.1 retains the schema-5 component manifest and
+source builds may still produce `tsgo`. Version 0.67.4 retains the schema-5 component manifest and
 TypeScript provider metadata; since 0.48.0 each compiler needs the `lib.*.d.ts` files shipped
 beside it, so point `--binary` at the executable inside an intact extracted package rather than a
 lone copied file. This is the route
