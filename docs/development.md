@@ -216,14 +216,19 @@ node scripts/verify-tsgo-diagnostics-cli.mjs
 The script installs exact `@effect/tsgo@0.67.4`, `typescript@7.0.2`, and `effect@4.1.2`
 pins in a temporary workspace, copies all five LSP fixtures, and checks JSON diagnostics against
 their known rule counts. It verifies directive suppression and the one-line `schemaSync` opt-in,
-then compares every fixture's complete set of CLI rule names with a fresh LSP diagnostic pull
-using the same installed server. Ordinary TypeScript diagnostics are excluded from this comparison
+then compares every fixture's diagnostic occurrences with a fresh LSP diagnostic pull using
+the same installed server. The sorted tuples contain normalized file path, rule name, one-based
+line, and severity, preserving duplicate occurrence counts. Absolute/relative paths, path separators,
+and diagnostic ordering are normalized; a changed file, count, line, or severity fails parity even
+when rule-name sets match. Ordinary TypeScript diagnostics are excluded from this comparison
 because the CLI reports only Effect rules. The healthy fixture must report no findings.
 
 It also checks GitHub annotation output once, using the published `--format github-actions`
 spelling. Expected diagnostic exit codes are validated against the JSON summary; assertion failures,
 invalid output, and process failures fail the check. The temporary workspace is removed on completion.
-The runtime CI job runs this alongside the existing LSP verifier and uploads
+The runtime CI job first runs `node scripts/tsgo-diagnostic-parity.test.mjs`, including negative
+controls for file, occurrence-count, line, and severity mismatches, then runs this alongside
+the existing LSP verifier and uploads
 `build/reports/runtime/diagnostics-cli.log` with its other probe reports. This is headless CLI/LSP
 evidence; manual IDE verification remains a separate check.
 

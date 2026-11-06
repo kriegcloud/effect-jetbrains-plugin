@@ -213,15 +213,79 @@ class RuntimeInspectionTest : BasePlatformTestCase() {
         assertEquals("child", attached.children.single().spanId)
     }
 
-    private fun withLiveProducer(test: ((String) -> List<RuntimeSpanSnapshot>) -> Unit) {
+    fun testLiveProducerSameParentUpdateInvalidatesAncestorsOnce() = withLiveProducer { publish ->
+        val depth = 100
+        fun line(id: Int, ended: Boolean = false): String {
+            val parent = if (id == 0) "null" else """{"_tag":"Some","value":{"_tag":"Span","spanId":"s${id - 1}"}}"""
+            val status = if (ended) """{"_tag":"Ended","endTime":"1"}""" else """{"_tag":"Started","startTime":"0"}"""
+            return """{"_tag":"Span","spanId":"s$id","traceId":"trace","name":"s$id","parent":$parent,"status":$status,"attributes":{"version":"${if (ended) "new" else "old"}"}}""" + "\n"
+        }
+        val first = publish(buildString { repeat(depth) { append(line(it)) } }).single()
+        val service = project.getService(EffectDevToolsService::class.java)
+        val before = service.spanSnapshotInvalidationVisits
+        val second = publish(line(depth - 1, ended = true)).single()
+        assertEquals(depth, service.spanSnapshotInvalidationVisits - before)
+        var previous = first
+        var updated = second
+        repeat(depth - 1) {
+            assertNotSame(previous, updated)
+            previous = previous.children.single()
+            updated = updated.children.single()
+        }
+        assertNotSame(previous, updated)
+        assertEquals("Started @ 0", previous.status)
+        assertEquals("Ended @ 1", updated.status)
+        assertEquals("old", previous.details.single { it.key == "attr.version" }.value)
+        assertEquals("new", updated.details.single { it.key == "attr.version" }.value)
+    }
+
+    fun testLiveProducerPublicationWaitsForScheduler() {
+        val schedulerPaused = java.util.concurrent.CountDownLatch(1)
+        val polling = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val publications = object : java.util.concurrent.LinkedBlockingQueue<() -> Unit>() {
+            override fun poll(timeout: Long, unit: java.util.concurrent.TimeUnit): (() -> Unit)? {
+                assertTrue("Scheduler did not pause", schedulerPaused.await(30, java.util.concurrent.TimeUnit.SECONDS))
+                // This is reached only after receiving Pong, while enqueueing is still blocked.
+                assertEquals(1L, release.count)
+                polling.countDown()
+                return super.poll(timeout, unit)
+            }
+        }
+        val releaser = Thread {
+            if (polling.await(30, java.util.concurrent.TimeUnit.SECONDS)) release.countDown()
+        }
+        releaser.start()
+        try {
+            withLiveProducer(publications, beforeEnqueue = {
+                schedulerPaused.countDown()
+                check(release.await(30, java.util.concurrent.TimeUnit.SECONDS)) { "Scheduler release timed out" }
+            }) { publish ->
+                assertEquals("child", publish("""{"_tag":"Span","spanId":"child","traceId":"trace","name":"child"}""" + "\n").single().spanId)
+            }
+            assertEquals(0L, polling.count)
+        } finally {
+            release.countDown()
+            releaser.join(35_000)
+        }
+        assertFalse("Scheduler releaser did not terminate", releaser.isAlive)
+    }
+
+    private fun withLiveProducer(
+        publications: java.util.concurrent.LinkedBlockingQueue<() -> Unit> = java.util.concurrent.LinkedBlockingQueue(),
+        beforeEnqueue: () -> Unit = {},
+        test: ((String) -> List<RuntimeSpanSnapshot>) -> Unit,
+    ) {
         val port = java.net.ServerSocket(0).use { it.localPort }
         project.getService(dev.effect.intellij.settings.EffectProjectSettingsService::class.java).updateSettings(
             dev.effect.intellij.settings.EffectProjectSettings(devToolsPort = port, metricsPollIntervalMs = 60_000),
         )
         val service = project.getService(EffectDevToolsService::class.java)
         val scheduler = service.schedulePublication
-        val publications = java.util.concurrent.ConcurrentLinkedQueue<() -> Unit>()
-        service.schedulePublication = { publications.add(it) } // Drain after the ordered Pong barrier.
+        service.schedulePublication = {
+            beforeEnqueue()
+            publications.add(it)
+        }
         val replies = java.util.concurrent.LinkedBlockingQueue<String>()
         service.startServer()
         var client: org.java_websocket.client.WebSocketClient? = null
@@ -242,7 +306,7 @@ class RuntimeInspectionTest : BasePlatformTestCase() {
             test { payload ->
                 connected.send(payload + """{"_tag":"Ping"}""" + "\n")
                 assertTrue("Ingestion barrier timed out", replies.poll(30, java.util.concurrent.TimeUnit.SECONDS)?.contains("Pong") == true)
-                checkNotNull(publications.poll()) { "Missing pending publication" }.invoke()
+                checkNotNull(publications.poll(30, java.util.concurrent.TimeUnit.SECONDS)) { "Publication scheduling timed out" }.invoke()
                 service.currentState().clients.single().rootSpans
             }
         } finally {

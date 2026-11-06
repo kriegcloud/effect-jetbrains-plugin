@@ -70,6 +70,9 @@ class EffectDevToolsService(private val project: Project) : Disposable {
     internal var traceSnapshotBuilds = 0
         private set
 
+    internal var spanSnapshotInvalidationVisits = 0
+        private set
+
     /** Toolbar lifecycle requests are serialized; socket shutdown never occupies the EDT. */
     fun requestLifecycle(operation: EffectDevToolsService.() -> Unit) {
         lifecycleExecutor.execute { if (!disposed && !project.isDisposed) operation() }
@@ -353,7 +356,6 @@ class EffectDevToolsService(private val project: Project) : Disposable {
             val client = clients[clientId] ?: return
             client.lastSeenAt = Instant.now()
             val spanId = root.path("spanId").asText()
-            invalidateSpanSnapshot(client, spanId)
             val state = client.spans.getOrPut(spanId) { MutableSpanState(spanId = spanId) }
             state.traceId = root.path("traceId").asText()
             state.name = root.path("name").asText()
@@ -385,8 +387,10 @@ class EffectDevToolsService(private val project: Project) : Disposable {
 
             client.pendingEvents.remove(spanId)?.let(state.events::addAll)
             trimEvents(client, state.events)
-            previousParent?.let { removeChildLink(client, it, spanId) }
-            state.parentSpanId?.let { client.children.getOrPut(it) { linkedSetOf() }.add(spanId) }
+            if (previousParent != state.parentSpanId) {
+                previousParent?.let { removeChildLink(client, it, spanId) }
+                state.parentSpanId?.let { client.children.getOrPut(it) { linkedSetOf() }.add(spanId) }
+            }
             invalidateSpanSnapshot(client, spanId)
             enforceRetention(client)
             publishLocked()
@@ -712,6 +716,7 @@ class EffectDevToolsService(private val project: Project) : Disposable {
         var currentId: String? = spanId
         while (currentId != null && visited.add(currentId)) {
             val span = client.spans[currentId] ?: break
+            spanSnapshotInvalidationVisits++
             span.cachedSnapshot = null
             currentId = span.parentSpanId
         }

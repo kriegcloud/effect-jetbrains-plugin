@@ -161,6 +161,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22.22.0'
+      - name: Test diagnostic occurrence parity and negative controls
+        run: node scripts/tsgo-diagnostic-parity.test.mjs
       - name: Install pinned native server with intact package layout
         shell: bash
         run: |
@@ -180,7 +182,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/verify-real-tsgo-lsp.mjs --binary "$RUNNER_TEMP/effect-tsgo/node_modules/@effect/tsgo-linux-x64/lib/tsc" --only all 2>&1 | tee build/reports/runtime/lsp.log
-      - name: Verify diagnostics CLI and LSP rule-name parity
+      - name: Verify diagnostics CLI and LSP occurrence parity
         if: ${{ !cancelled() }}
         shell: bash
         run: |
