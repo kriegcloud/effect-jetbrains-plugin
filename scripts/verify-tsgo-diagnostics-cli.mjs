@@ -13,7 +13,7 @@ const dependencies = ["@effect/tsgo@0.67.4", "typescript@7.0.2", "effect@4.1.2"]
 const expected = {
   "healthy-workspace": {},
   "failing-workspace": { missingStarInYieldEffectGen: 1 },
-  "fix-all-workspace": { missingStarInYieldEffectGen: 3, floatingEffect: 1 },
+  "fix-all-workspace": { missingStarInYieldEffectGen: 3, floatingEffect: 1, newSchemaClass: 1 },
   "diagnostic-directives-workspace": { strictEffectProvide: 1, floatingEffect: 2, schemaSync: 1 },
   "new-diagnostics-workspace": {
     floatingEffect: 1, obsoleteSchemaImport: 1, preferSucceedSomeOrNone: 2,

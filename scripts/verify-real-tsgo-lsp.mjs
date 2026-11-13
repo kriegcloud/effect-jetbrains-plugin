@@ -1156,6 +1156,10 @@ async function verifyFixAllSafetyCases(workspacePath) {
     { file: "nested.ts", rule: "unnecessaryPipeChain", outcome: "converged" },
     { file: "collision.ts", rule: "yieldInCallArgument", outcome: "recovered" },
     { file: "harmful.ts", rule: "catchAllToMapError", outcome: "rejected" },
+    // The premise of the plugin's EffectNewSchemaClassGuard: the server reports a class whose `make`
+    // returns another type than `new`, and its own fix does not type-check. If this case stops
+    // finding the diagnostic, upstream compares the two types and the guard can be retired.
+    { file: "self-less-schema-class.ts", rule: "newSchemaClass", outcome: "rejected" },
   ]
   const results = []
   try {
