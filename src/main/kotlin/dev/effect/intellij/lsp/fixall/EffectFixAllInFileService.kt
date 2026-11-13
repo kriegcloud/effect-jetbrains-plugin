@@ -22,6 +22,9 @@ import com.intellij.psi.PsiFile
 import dev.effect.intellij.EffectBundle
 import dev.effect.intellij.core.logger
 import dev.effect.intellij.lsp.EffectLspServerSupportProvider
+import dev.effect.intellij.lsp.NEW_SCHEMA_CLASS_RULE
+import dev.effect.intellij.lsp.effectDiagnosticRuleName
+import dev.effect.intellij.lsp.isUnsatisfiableNewSchemaClass
 import dev.effect.intellij.notifications.EffectNotificationService
 import org.eclipse.lsp4j.CodeAction
 import org.eclipse.lsp4j.CodeActionContext
@@ -40,7 +43,8 @@ import org.eclipse.lsp4j.WorkspaceEdit
  * Applies one Effect quick fix to every diagnostic of its rule in a file.
  *
  * [runFixAllPasses] repeats, under a cancellable modal progress: pull the file's diagnostics
- * (`textDocument/diagnostic`), keep the rule's sites that no `@effect-diagnostics` directive silences,
+ * (`textDocument/diagnostic`), keep the rule's sites that the editor shows and no `@effect-diagnostics`
+ * directive silences,
  * request their quick fixes in one `textDocument/codeAction` call, merge the matching non-overlapping
  * edits ([planFixAll]), write them through the platform's own LSP edit application
  * ([LspIntentionAction]), and pull again to undo any pass that introduced new errors.
@@ -148,7 +152,12 @@ class EffectFixAllInFileService(private val project: Project) {
 
         override fun currentText(): String = ApplicationManager.getApplication().runReadAction(Computable { document.text })
 
-        override fun pullDiagnostics(): List<Diagnostic> = pullDiagnostics(server, documentId)
+        override fun pullDiagnostics(): List<Diagnostic> =
+            pullDiagnostics(server, documentId).let { diagnostics ->
+                ApplicationManager.getApplication().runReadAction(
+                    Computable { withoutUnsatisfiableDiagnostics(diagnostics, psiFile, document.text) },
+                )
+            }
 
         override fun requestQuickFixes(diagnostics: List<Diagnostic>): List<CodeAction> {
             val text = currentText()
@@ -267,3 +276,19 @@ class EffectFixAllInFileService(private val project: Project) {
 }
 
 internal class EffectFixAllServerException(message: String) : RuntimeException(message)
+
+/**
+ * Leaves out the diagnostics the annotator never shows because no rewrite can satisfy them (see
+ * [isUnsatisfiableNewSchemaClass]), so "Fix all" repairs exactly the sites the editor marks. Call under
+ * read access with [text] being the document text the diagnostics were pulled for.
+ */
+internal fun withoutUnsatisfiableDiagnostics(diagnostics: List<Diagnostic>, psiFile: PsiFile, text: String): List<Diagnostic> {
+    if (diagnostics.none { it.effectDiagnosticRuleName() == NEW_SCHEMA_CLASS_RULE }) {
+        return diagnostics
+    }
+    val lineIndex = EffectTextLineIndex(text)
+    return diagnostics.filterNot { diagnostic ->
+        val range = diagnostic.range?.let(lineIndex::rangeOf)
+        range != null && diagnostic.isUnsatisfiableNewSchemaClass(psiFile, range)
+    }
+}

@@ -37,7 +37,7 @@ and delete those files before the release command. Every sandbox boot also gets 
 probe cannot touch the host Plasma configuration.
 Plugin Verifier targets WebStorm stable `262.11879.105`, WebStorm 2026.3 GA `263.7307.202`, and
 IntelliJ IDEA Ultimate 2026.3 GA `263.7307.200` (`pluginVerifierIntelliJIdeaVersion`). The declared
-`gradleVersion` matches the `9.8.2` wrapper.
+`gradleVersion` matches the `9.9.1` wrapper.
 
 Verifier pins must track the current release: bundled libraries can change within a platform line.
 The move to `263.4732.x` exposed lsp4j 1.0.0's `Diagnostic.getMessage()` return-type change from

@@ -18,8 +18,11 @@ internal class EffectLspDiagnosticsSupport : LspDiagnosticsSupport() {
         textRange: TextRange,
         quickFixes: List<IntentionAction>,
     ) {
-        val fixes = withFixAllOptions(diagnostic, quickFixes)
         val file = holder.currentAnnotationSession.file
+        if (diagnostic.isUnsatisfiableNewSchemaClass(file, textRange)) {
+            return
+        }
+        val fixes = withFixAllOptions(diagnostic, quickFixes)
         val document = PsiDocumentManager.getInstance(file.project).getDocument(file)
         if (document == null) {
             super.createAnnotation(holder, diagnostic, textRange, fixes)

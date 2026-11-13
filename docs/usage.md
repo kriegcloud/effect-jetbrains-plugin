@@ -56,7 +56,8 @@ directive fixes get no such entry. Choosing it:
 
 1. asks the running Effect language server for the file's current diagnostics
    (`textDocument/diagnostic`),
-2. keeps the diagnostics of the same rule that no `@effect-diagnostics` directive silences,
+2. keeps the diagnostics of the same rule that no `@effect-diagnostics` directive silences and that
+   the editor shows (see [`newSchemaClass` and classes that are not their own `Self`](#newschemaclass-and-classes-that-are-not-their-own-self)),
 3. requests their quick fixes in one `textDocument/codeAction` call,
 4. applies the fixes whose title matches the chosen one and whose edits do not overlap,
 5. pulls the diagnostics again and undoes the pass if it introduced any new error, and
@@ -82,6 +83,48 @@ how many remain, and how many fixes were rejected this way. The `Disable <rule> 
 entire file` directive fixes have no fix-all entry. `@effect/tsgo` itself only produces combined "fix
 all" actions for providers that implement `GetAllCodeActions`, which the Effect fixables do not, so
 this is a plugin-side feature.
+
+### `newSchemaClass` and classes that are not their own `Self`
+
+`newSchemaClass` (off by default, Effect v4 only) suggests `X.make(...)` in place of `new X(...)`.
+`@effect/tsgo` 0.67.4 through 0.69.0 report it for every constructable Schema type that has a `make`
+property, without checking that `make` returns what `new` returns. Effect types `make` as returning
+`Self`, the type argument of `Schema.Class<Self>(...)`, so the two agree only when the class passes
+itself there:
+
+```ts
+class Account extends Schema.Class<Account>("Account")({ id: Schema.String }) {}
+new Account({ id: "a" })   // reported; Account.make({ id: "a" }) is an Account
+
+// @alchemy.run/domain fills Self with a structural Instance<Tag, Fields> type.
+class NotAMember extends Domain.Rejection("NotAMember") {}
+new NotAMember()           // reported by the server, dropped by the plugin:
+                           // NotAMember.make() is an Instance<"NotAMember", {}>, not a NotAMember
+
+class Savings extends Account {}
+new Savings({ id: "b" })   // dropped as well: Savings.make(...) is an Account
+```
+
+Since 0.1.12 the plugin does not show the diagnostic, or its `Replace with .make` fix, when the
+constructed class is declared without itself as a type argument of the factory it extends. That covers
+`Domain.Rejection`, `Domain.Event` and `Domain.Command` classes from `@alchemy.run/domain`, any other
+factory that fills `Self` itself, and plain subclasses of a Schema class. "Fix all" skips the same
+sites. The check reads the class declaration: the type arguments of the calls in its `extends` clause
+(`Schema.Class<Self>(...)`, `Schema.TaggedErrorClass<Self>()(...)`, `Base.extend<Self>(...)`), or, for
+`class A extends A_base` in a declaration file, the declared type of `A_base`. When the IDE cannot
+resolve the import of the class (a `package.json` `exports` wildcard, or a package importing itself by
+name), the class is looked up by name in the file the import specifier ends with.
+
+The diagnostic stays when the declaration cannot be read: during indexing, for a class held in a
+constant (`const X = Domain.Event("X")`), for a factory result handed to another call
+(`class A extends wrap(Schema.Class<A>("A")({...}))`), for a default import of an unresolved module,
+and when same-named classes disagree behind an import the IDE cannot resolve.
+
+This is an editor filter. `effect-tsgo diagnostics` and the patched `tsc` still report these sites, so
+a project that enables the rule and uses such classes needs `"newSchemaClass": "off"` in the tsconfig
+that covers them, or `// @effect-diagnostics newSchemaClass:off` in the file, until the rule compares
+the two types upstream. The `self-less-schema-class.ts` case of the real-binary `fix-all` lane records
+the server behaviour this depends on.
 
 ### Current TSGO Smoke Targets
 
