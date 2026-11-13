@@ -1,6 +1,7 @@
 package dev.effect.intellij.lsp
 
 import com.intellij.lang.ecmascript6.psi.ES6FromClause
+import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.ecmascript6.psi.ES6ImportExportSpecifier
 import com.intellij.lang.ecmascript6.psi.ES6ImportExportSpecifierAlias
 import com.intellij.lang.ecmascript6.psi.ES6ImportedBinding
@@ -15,15 +16,21 @@ import com.intellij.lang.javascript.psi.ecma6.TypeScriptTypeArgumentList
 import com.intellij.lang.javascript.psi.ecma6.TypeScriptVariable
 import com.intellij.lang.javascript.psi.ecmal4.JSClass
 import com.intellij.lang.javascript.psi.stubs.JSClassIndex
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.IndexNotReadyException
+import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.util.ThrowableComputable
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.util.indexing.DumbModeAccessType
+import dev.effect.intellij.core.logger
 import org.eclipse.lsp4j.Diagnostic
+import java.util.concurrent.ConcurrentHashMap
 
 /** The `@effect/tsgo` rule that suggests `X.make(...)` in place of `new X(...)`. */
 internal const val NEW_SCHEMA_CLASS_RULE = "newSchemaClass"
@@ -48,7 +55,7 @@ internal enum class EffectSchemaClassSelf {
      */
     ABSENT,
 
-    /** The declaration could not be read (indexing, unresolved reference, no class declaration). */
+    /** The declaration could not be read (unresolved reference, no class declaration). */
     UNKNOWN,
 }
 
@@ -68,35 +75,182 @@ internal fun Diagnostic.isUnsatisfiableNewSchemaClass(file: PsiFile, calleeRange
     effectDiagnosticRuleName() == NEW_SCHEMA_CLASS_RULE &&
         constructedSchemaClassSelf(file, calleeRange) == EffectSchemaClassSelf.ABSENT
 
-/** Classifies the class constructed by the `new` expression whose callee covers [calleeRange]. */
-internal fun constructedSchemaClassSelf(file: PsiFile, calleeRange: TextRange): EffectSchemaClassSelf {
+/**
+ * Classifies the class constructed by the `new` expression whose callee covers [calleeRange].
+ *
+ * The platform asks while the project is indexing and before an edit is committed to the PSI: on the
+ * 2026.3 line it applies diagnostics once, when the server sends them, and does not ask again when
+ * indexing ends. Answering [EffectSchemaClassSelf.UNKNOWN] then would leave a dropped diagnostic on
+ * screen until the next edit. So the declaration is read through the index data that stays reliable
+ * while indexing, an answer that cannot be read right now is taken from the last one given for the
+ * same expression in the file, and when there is none either, [reapply] is called once the project can
+ * answer, so that the platform asks again.
+ */
+internal fun constructedSchemaClassSelf(
+    file: PsiFile,
+    calleeRange: TextRange,
+    reapply: (PsiFile) -> Unit = EffectLspDiagnosticsRefresh::reapply,
+): EffectSchemaClassSelf {
     val project = file.project
-    if (DumbService.isDumb(project)) {
-        return EffectSchemaClassSelf.UNKNOWN
-    }
-    // Diagnostic offsets belong to the document; they only address the PSI once it is committed.
     val documents = PsiDocumentManager.getInstance(project)
-    if (documents.getCachedDocument(file)?.let(documents::isCommitted) == false) {
+    val document = documents.getCachedDocument(file)
+    val text = document?.immutableCharSequence ?: file.viewProvider.contents
+    if (calleeRange.isEmpty || calleeRange.startOffset < 0 || calleeRange.endOffset > text.length) {
         return EffectSchemaClassSelf.UNKNOWN
     }
-    val callee = constructedExpression(file, calleeRange) as? JSReferenceExpression
-        ?: return EffectSchemaClassSelf.UNKNOWN
-    return try {
-        // A class merged with a namespace or an interface resolves to all of them; only the class decides.
-        declarationsOf(callee).filterIsInstance<JSClass>().filterNot { it.isInterface }.map(::selfOf).combined()
-    } catch (_: IndexNotReadyException) {
-        EffectSchemaClassSelf.UNKNOWN
+    val calleeText = calleeRange.subSequence(text).toString()
+    // Diagnostic offsets belong to the document; they address the PSI only once it is committed. Until
+    // then the same expression is looked up by its text.
+    val committed = document == null || documents.isCommitted(document)
+    val callee = if (committed) constructedExpression(file, calleeRange) else constructedExpression(file, calleeText)
+    if (callee == null && committed) {
+        traceNoCallee(file, calleeRange, calleeText)
+        return EffectSchemaClassSelf.UNKNOWN
     }
+    val read = (callee as? JSReferenceExpression)?.let(::readSelf)
+    // While indexing, "no declaration found" can mean "not indexed yet".
+    val answer = read?.takeUnless { it == EffectSchemaClassSelf.UNKNOWN && DumbService.isDumb(project) }
+    val remembered = file.rememberedSelves()
+    if (answer != null) {
+        if (remembered.size >= MAX_REMEMBERED_SELVES) {
+            remembered.clear()
+        }
+        remembered[calleeText] = answer
+        return answer
+    }
+    val last = remembered[calleeText]
+    if (last == null) {
+        askAgainWhenReadable(file, calleeText, committed, callee, reapply)
+    }
+    return last ?: EffectSchemaClassSelf.UNKNOWN
 }
 
-private fun constructedExpression(file: PsiFile, calleeRange: TextRange): JSExpression? {
-    if (calleeRange.startOffset !in 0 until file.textLength) {
-        return null
+/** `null` when the indexes cannot be read at all right now. */
+private fun readSelf(callee: JSReferenceExpression): EffectSchemaClassSelf? =
+    try {
+        DumbModeAccessType.RELIABLE_DATA_ONLY.ignoreDumbMode(
+            ThrowableComputable<EffectSchemaClassSelf, RuntimeException> {
+                // A class merged with a namespace or an interface resolves to all of them; only the class decides.
+                val declarations = declarationsOf(callee)
+                declarations.filterIsInstance<JSClass>().filterNot { it.isInterface }.map(::selfOf).combined()
+                    .also { traceKept(callee, it, declarations) }
+            },
+        )
+    } catch (_: IndexNotReadyException) {
+        null
     }
+
+private fun constructedExpression(file: PsiFile, calleeRange: TextRange): JSExpression? {
     val newExpression = PsiTreeUtil.getParentOfType(file.findElementAt(calleeRange.startOffset), JSNewExpression::class.java)
     val callee = newExpression?.methodExpression ?: return null
     return callee.takeIf { it.textRange.contains(calleeRange) }?.withoutParentheses()
 }
+
+/** The callee of any `new` expression in [file] written as [calleeText]: the same name is the same class. */
+private fun constructedExpression(file: PsiFile, calleeText: String): JSExpression? =
+    PsiTreeUtil.findChildrenOfType(file, JSNewExpression::class.java)
+        .firstNotNullOfOrNull { it.methodExpression?.takeIf { callee -> callee.textMatches(calleeText) } }
+        ?.withoutParentheses()
+
+/** The last answer given for each constructed expression of a file, by its text. */
+private fun PsiFile.rememberedSelves(): MutableMap<String, EffectSchemaClassSelf> {
+    val holder = viewProvider.virtualFile
+    return holder.getUserData(rememberedSelvesKey) ?: synchronized(holder) {
+        holder.getUserData(rememberedSelvesKey)
+            ?: ConcurrentHashMap<String, EffectSchemaClassSelf>().also { holder.putUserData(rememberedSelvesKey, it) }
+    }
+}
+
+/**
+ * A few times per expression at most: says in `idea.log` why a `newSchemaClass` diagnostic is shown although its class
+ * could not be read, and has the diagnostics applied again when the cause is over (the edit is
+ * committed, indexing has ended).
+ */
+private fun askAgainWhenReadable(
+    file: PsiFile,
+    calleeText: String,
+    committed: Boolean,
+    callee: JSExpression?,
+    reapply: (PsiFile) -> Unit,
+) {
+    val project = file.project
+    val path = file.viewProvider.virtualFile.path
+    if (unreadAskedAgain.size >= MAX_UNREAD_EXPRESSIONS) {
+        return
+    }
+    // Bounded, so that an expression that stays unreadable cannot keep requesting diagnostics.
+    if (unreadAskedAgain.merge("$path\u0000$calleeText", 1, Int::plus)!! > MAX_ASKS_PER_EXPRESSION) {
+        return
+    }
+    // One request covers every expression of the file that is waiting for the same thing.
+    val holder = file.viewProvider.virtualFile
+    if (holder.getUserData(askingAgainKey) == true) {
+        return
+    }
+    holder.putUserData(askingAgainKey, true)
+    val reason = when {
+        !committed && callee == null -> "the edit is not committed and no `new $calleeText` is in the PSI yet"
+        DumbService.isDumb(project) -> "no class declaration can be read while indexing"
+        else -> "the indexes cannot be read"
+    }
+    guardLog.info("newSchemaClass is shown for `new $calleeText` in $path: $reason; it is decided again afterwards")
+    ApplicationManager.getApplication().invokeLater(
+        {
+            val again = Runnable {
+                holder.putUserData(askingAgainKey, null)
+                reapply(file)
+            }
+            if (committed) {
+                DumbService.getInstance(project).runWhenSmart(again)
+            } else {
+                PsiDocumentManager.getInstance(project).performLaterWhenAllCommitted { DumbService.getInstance(project).runWhenSmart(again) }
+            }
+        },
+        project.disposed,
+    )
+}
+
+/**
+ * Says once per expression what a `newSchemaClass` diagnostic that stays was decided from. A diagnostic
+ * that should have been dropped is then explained by `idea.log`: what the IDE resolves a reference to
+ * depends on its TypeScript service and cannot be reproduced outside it.
+ */
+private fun traceKept(callee: JSReferenceExpression, self: EffectSchemaClassSelf, declarations: List<PsiElement>) {
+    if (self == EffectSchemaClassSelf.ABSENT || keptTraced.size >= MAX_UNREAD_EXPRESSIONS) {
+        return
+    }
+    val path = callee.containingFile?.viewProvider?.virtualFile?.path
+    if (!keptTraced.add("$path\u0000${callee.text}\u0000$self")) {
+        return
+    }
+    val seen = declarations.joinToString { "${it.javaClass.simpleName} in ${it.containingFile?.name}" }
+    guardLog.info("newSchemaClass is shown for `new ${callee.text}` in $path: $self, read from [$seen]")
+}
+
+private fun traceNoCallee(file: PsiFile, calleeRange: TextRange, calleeText: String) {
+    val path = file.viewProvider.virtualFile.path
+    if (keptTraced.size >= MAX_UNREAD_EXPRESSIONS || !keptTraced.add("$path\u0000$calleeText\u0000no callee")) {
+        return
+    }
+    val leaf = file.findElementAt(calleeRange.startOffset)
+    val newExpression = PsiTreeUtil.getParentOfType(leaf, JSNewExpression::class.java)
+    guardLog.info(
+        "newSchemaClass is shown for `$calleeText` at $calleeRange in $path: not the callee of a `new` expression " +
+            "(${file.javaClass.simpleName}, ${leaf?.javaClass?.simpleName} in ${leaf?.parent?.javaClass?.simpleName}, " +
+            "new at ${newExpression?.textRange}, callee at ${newExpression?.methodExpression?.textRange})",
+    )
+}
+
+private val guardLog = logger<EffectSchemaClassSelf>()
+private val keptTraced: MutableSet<String> = ConcurrentHashMap.newKeySet()
+private val rememberedSelvesKey = Key.create<MutableMap<String, EffectSchemaClassSelf>>("effect.newSchemaClass.selves")
+private val unreadAskedAgain = ConcurrentHashMap<String, Int>()
+private val askingAgainKey = Key.create<Boolean>("effect.newSchemaClass.askingAgain")
+
+/** A file with more constructed expressions than this starts over; the entries are recomputed on demand. */
+private const val MAX_REMEMBERED_SELVES = 512
+private const val MAX_UNREAD_EXPRESSIONS = 512
+private const val MAX_ASKS_PER_EXPRESSION = 3
 
 private fun selfOf(schemaClass: JSClass): EffectSchemaClassSelf {
     val name = schemaClass.name ?: return EffectSchemaClassSelf.UNKNOWN
@@ -196,16 +350,24 @@ private fun PsiElement.hasTypeArgument(name: String): Boolean =
  * What [reference] names, looking through import and re-export aliases to the declarations themselves.
  *
  * The IDE does not resolve every module specifier `@effect/tsgo` does (a `package.json` `exports`
- * wildcard that maps every subpath to a source file, or a package importing itself by name), and the
- * reference then ends at its import specifier. [indexedClasses] finds the class by name in that case.
+ * wildcard that maps every subpath to a source file, or a package importing itself by name). What the
+ * reference then ends at depends on the IDE: its import specifier, or, when the TypeScript service
+ * answers in place of the index (`typescript.service.based.fallback.resolve`, 2026.3), whatever that
+ * service navigates to. So when no class or constant comes out of it, the class is found by name from
+ * the import statement itself ([importedClasses]).
  */
 private fun declarationsOf(reference: JSReferenceExpression): List<PsiElement> {
+    val resolved = resolvedDeclarations(reference)
+    if (resolved.any { it is JSClass || it is JSVariable }) {
+        return resolved
+    }
+    return importedClasses(reference).ifEmpty { resolved }
+}
+
+private fun resolvedDeclarations(reference: JSReferenceExpression): List<PsiElement> {
     val declarations = ArrayList<PsiElement>()
     val seen = HashSet<PsiElement>()
     val pending = ArrayDeque(reference.multiResolve(false).mapNotNull { it.element })
-    if (pending.isEmpty()) {
-        pending += memberOfUnresolvedNamespaceImport(reference)
-    }
     while (pending.isNotEmpty() && seen.size < MAX_RESOLVED_ELEMENTS) {
         val element = pending.removeFirst()
         if (!seen.add(element)) {
@@ -226,29 +388,45 @@ private fun declarationsOf(reference: JSReferenceExpression): List<PsiElement> {
                 when {
                     targets.isNotEmpty() -> pending += targets
                     element.isDefault -> declarations += element
+                    // A re-export from a module the IDE cannot resolve, in whichever file the chain reached.
                     else -> indexedClasses(element.referenceName, element.declaration?.fromClause, element)
                         .ifEmpty { listOf(element) }
                         .let(declarations::addAll)
                 }
             }
-            else -> declarations += element
+            // The TypeScript service navigates to the name of a declaration, not to the declaration.
+            else -> declarations += (element.parent as? JSClass)?.takeIf { it.nameIdentifier == element } ?: element
         }
     }
     return declarations
 }
 
-/** `Model.NotAMember`, where `import * as Model from "..."` names a module the IDE cannot resolve. */
-private fun memberOfUnresolvedNamespaceImport(reference: JSReferenceExpression): List<PsiElement> {
-    val namespace = (reference.qualifier as? JSReferenceExpression)
-        ?.multiResolve(false)
-        ?.mapNotNull { it.element as? ES6ImportedBinding }
-        ?.singleOrNull { it.isNamespaceImport }
-        ?: return emptyList()
-    val fromClause = namespace.declaration?.fromClause ?: return emptyList()
-    if (fromClause.resolveReferencedElements().isNotEmpty()) {
-        return emptyList()
+/**
+ * The classes [reference] can mean according to the import statement that binds its name in its own
+ * file: `import { A } from "..."`, `import { A as B } from "..."`, or `import * as Ns from "..."` for
+ * `Ns.A`. A default import does not say what the class is called.
+ */
+private fun importedClasses(reference: JSReferenceExpression): List<JSClass> {
+    val qualifier = reference.qualifier
+    val boundName = when (qualifier) {
+        null -> reference.referenceName
+        is JSReferenceExpression -> qualifier.referenceName.takeIf { qualifier.qualifier == null }
+        else -> null
+    } ?: return emptyList()
+    for (declaration in PsiTreeUtil.findChildrenOfType(reference.containingFile, ES6ImportDeclaration::class.java)) {
+        val fromClause = declaration.fromClause ?: continue
+        if (qualifier != null) {
+            if (declaration.importedBindings.any { it.isNamespaceImport && it.name == boundName }) {
+                return indexedClasses(reference.referenceName, fromClause, reference)
+            }
+        } else {
+            val specifier = declaration.importSpecifiers.firstOrNull { !it.isDefault && (it.alias?.name ?: it.referenceName) == boundName }
+            if (specifier != null) {
+                return indexedClasses(specifier.referenceName, fromClause, reference)
+            }
+        }
     }
-    return indexedClasses(reference.referenceName, fromClause, reference)
+    return emptyList()
 }
 
 /**

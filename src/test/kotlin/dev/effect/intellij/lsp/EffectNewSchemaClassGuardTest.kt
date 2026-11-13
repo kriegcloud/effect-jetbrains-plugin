@@ -2,9 +2,15 @@ package dev.effect.intellij.lsp
 
 import com.intellij.codeInsight.daemon.impl.AnnotationHolderImpl
 import com.intellij.codeInsight.daemon.impl.AnnotationSessionImpl
+import com.intellij.lang.javascript.psi.stubs.JSClassIndex
+import com.intellij.openapi.application.WriteAction
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.util.TextRange
+import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiFile
+import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.testFramework.DumbModeTestUtils
+import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import dev.effect.intellij.lsp.fixall.withoutUnsatisfiableDiagnostics
 import org.eclipse.lsp4j.Diagnostic
@@ -269,11 +275,53 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
         assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(file, TextRange(callee.startOffset, callee.endOffset + 2)))
     }
 
-    fun testUnknownWhileIndexing() {
+    /**
+     * The 2026.3 platform applies diagnostics when the server sends them, also during indexing, and
+     * does not apply them again when indexing ends: the first answer has to be the right one.
+     */
+    fun testClassifiesWhileIndexing() {
+        indexFixture()
         DumbModeTestUtils.runInDumbModeSynchronously(project) {
-            assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(myFixture.file, calleeRange("NotAMember")))
+            assertSelf(EffectSchemaClassSelf.ABSENT, "NotAMember", "Forbidden", "Sealed", "Kernel.Sealed", "Subclass", "Refused")
+            assertSelf(EffectSchemaClassSelf.DECLARED, "Account", "Posting", "NotFound", "Models.Scoped")
+            assertSelf(EffectSchemaClassSelf.UNKNOWN, "Missing", "Anonymous")
+            assertTrue(newSchemaClass("NotAMember").isUnsatisfiableNewSchemaClass(myFixture.file, calleeRange("NotAMember")))
+            assertEmpty(annotationsFor(newSchemaClass("Sealed"), calleeRange("Sealed")))
         }
-        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(myFixture.file, calleeRange("NotAMember")))
+    }
+
+    /** While indexing, a declaration that is not found may only be missing from the index: keep the last answer. */
+    fun testAnswerIsRememberedWhileTheDeclarationCannotBeRead() {
+        assertSelf(EffectSchemaClassSelf.ABSENT, "Sealed", "Locked")
+        val declaration = myFixture.findFileInTempDir("packages/kernel/src/Sealed.rejection.ts")
+        DumbModeTestUtils.runInDumbModeSynchronously(project) {
+            WriteAction.runAndWait<RuntimeException> { declaration.delete(this) }
+            assertSelf(EffectSchemaClassSelf.ABSENT, "Sealed", "Locked")
+        }
+        // Not indexing any more: the class is really gone.
+        assertSelf(EffectSchemaClassSelf.UNKNOWN, "Sealed")
+    }
+
+    /** A file changed while the IDE was closed is not readable during the indexing run that follows. */
+    fun testAsksAgainAfterIndexingForAnAnswerItNeverHad() {
+        val reapplied = ArrayList<PsiFile>()
+        val range = calleeRange("Sealed")
+        DumbModeTestUtils.runInDumbModeSynchronously(project) {
+            // The fixture files were never indexed: nothing reliable to read, nothing remembered.
+            repeat(2) { assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(myFixture.file, range, reapplied::add)) }
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEmpty(reapplied)
+        }
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(listOf(myFixture.file), reapplied)
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(myFixture.file, range, reapplied::add))
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(1, reapplied.size)
+    }
+
+    /** No Effect server runs in this fixture: asking for the diagnostics again must be harmless. */
+    fun testReapplyWithoutARunningServer() {
+        EffectLspDiagnosticsRefresh.reapply(myFixture.file)
     }
 
     fun testOnlyUnsatisfiableNewSchemaClassDiagnosticsAreDropped() {
@@ -309,6 +357,11 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
         )
         val untouched = listOf(otherRule)
         assertSame(untouched, withoutUnsatisfiableDiagnostics(untouched, file, file.text))
+    }
+
+    /** As in an IDE whose indexes were built before the indexing run a test simulates. */
+    private fun indexFixture() {
+        JSClassIndex.getElements("Account", project, GlobalSearchScope.allScope(project))
     }
 
     private fun assertSelf(expected: EffectSchemaClassSelf, vararg callees: String) {
