@@ -116,8 +116,9 @@ resolve the import of the class (a `package.json` `exports` wildcard, or a packa
 name), the class is looked up by name in the file the import specifier ends with.
 
 The diagnostic stays when the declaration cannot be read: during indexing, for a class held in a
-constant (`const X = Domain.Event("X")`), for a default import of an unresolved module, and when
-same-named classes disagree behind an import the IDE cannot resolve.
+constant (`const X = Domain.Event("X")`), for a factory result handed to another call
+(`class A extends wrap(Schema.Class<A>("A")({...}))`), for a default import of an unresolved module,
+and when same-named classes disagree behind an import the IDE cannot resolve.
 
 This is an editor filter. `effect-tsgo diagnostics` and the patched `tsc` still report these sites, so
 a project that enables the rule and uses such classes needs `"newSchemaClass": "off"` in the tsconfig

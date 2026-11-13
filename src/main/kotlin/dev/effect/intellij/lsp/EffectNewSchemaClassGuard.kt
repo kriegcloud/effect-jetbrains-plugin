@@ -107,8 +107,8 @@ private fun selfOf(schemaClass: JSClass): EffectSchemaClassSelf {
     val base = heritage.expression?.withoutParentheses() ?: return EffectSchemaClassSelf.UNKNOWN
     return when {
         factorySpine(base).any { it.hasTypeArgument(name) } -> EffectSchemaClassSelf.DECLARED
-        base is JSCallExpression -> EffectSchemaClassSelf.ABSENT
-        base is JSReferenceExpression -> declarationsOf(base).mapNotNull { selfOfBase(it, name) }.combined()
+        base is JSCallExpression -> absentUnlessSelfIsHandedOn(base, name)
+        base is JSReferenceExpression -> selfOfBaseReference(base, name, MAX_BASE_ALIASES)
         else -> EffectSchemaClassSelf.UNKNOWN
     }
 }
@@ -117,22 +117,32 @@ private fun selfOf(schemaClass: JSClass): EffectSchemaClassSelf {
  * A class that extends a bare reference gets its `make` from what the reference names: another class
  * (whose `make` returns that class), or a constant holding the factory result. Declaration files always
  * take the second form: `declare const A_base: Schema.Class<A, ...>; class A extends A_base {}`.
+ * A constant can also be an alias of another one (`const B = A`), which is followed [aliases] times.
  * `null` for a declaration that says nothing about the base (a namespace or interface merged with it).
  */
-private fun selfOfBase(base: PsiElement, name: String): EffectSchemaClassSelf? = when (base) {
+private fun selfOfBase(base: PsiElement, name: String, aliases: Int): EffectSchemaClassSelf? = when (base) {
     is JSClass -> EffectSchemaClassSelf.ABSENT.takeUnless { base.isInterface }
     is JSVariable -> {
         val declaredType = (base as? TypeScriptVariable)?.typeElement
-        val initializer = base.initializer
+        val initializer = base.initializer?.withoutParentheses()
         when {
             declaredType != null && declaredType.namesAsTypeArgument(name) -> EffectSchemaClassSelf.DECLARED
             initializer != null && factorySpine(initializer).any { it.hasTypeArgument(name) } -> EffectSchemaClassSelf.DECLARED
-            declaredType == null && initializer == null -> EffectSchemaClassSelf.UNKNOWN
-            else -> EffectSchemaClassSelf.ABSENT
+            declaredType != null -> EffectSchemaClassSelf.ABSENT
+            initializer is JSCallExpression -> absentUnlessSelfIsHandedOn(initializer, name)
+            initializer is JSReferenceExpression -> selfOfBaseReference(initializer, name, aliases - 1)
+            else -> EffectSchemaClassSelf.UNKNOWN
         }
     }
     else -> null
 }
+
+private fun selfOfBaseReference(base: JSReferenceExpression, name: String, aliases: Int): EffectSchemaClassSelf =
+    if (aliases <= 0) {
+        EffectSchemaClassSelf.UNKNOWN
+    } else {
+        declarationsOf(base).mapNotNull { selfOfBase(it, name, aliases) }.combined()
+    }
 
 /**
  * The calls a factory expression is made of, outermost first: `Schema.Class<A>("A")({...})` yields the
@@ -149,6 +159,23 @@ private fun factorySpine(expression: JSExpression): Sequence<JSExpression> =
         }
     }
 
+/**
+ * `wrap(Schema.Class<A>("A")({...}))` hands a factory result that carries `Self` to another call.
+ * Whether `wrap` keeps its `make` cannot be read from the declaration, so the diagnostic stays.
+ */
+private fun absentUnlessSelfIsHandedOn(factory: JSCallExpression, name: String): EffectSchemaClassSelf =
+    if (handsOnSelf(factory, name, MAX_WRAPPED_CALLS)) EffectSchemaClassSelf.UNKNOWN else EffectSchemaClassSelf.ABSENT
+
+/** Only calls passed directly as arguments are looked at; a fields object or a thunk is not a factory result. */
+private fun handsOnSelf(factory: JSExpression, name: String, depth: Int): Boolean =
+    depth > 0 && factorySpine(factory).filterIsInstance<JSCallExpression>().any { call ->
+        call.arguments.any { argument ->
+            val handedOn = argument.withoutParentheses() as? JSCallExpression
+            handedOn != null &&
+                (factorySpine(handedOn).any { it.hasTypeArgument(name) } || handsOnSelf(handedOn, name, depth - 1))
+        }
+    }
+
 /** `Schema.Class<A, ...>`, alone or as a member of an intersection or union. */
 private fun PsiElement.namesAsTypeArgument(name: String): Boolean =
     hasTypeArgument(name) || children.any { it is TypeScriptSingleType && it.hasTypeArgument(name) }
@@ -157,8 +184,12 @@ private fun PsiElement.hasTypeArgument(name: String): Boolean =
     PsiTreeUtil.getChildOfType(this, TypeScriptTypeArgumentList::class.java)
         ?.typeArguments
         ?.any { argument ->
-            val reference = (argument as? TypeScriptSingleType)?.referenceExpression
-            reference != null && reference.qualifier == null && reference.referenceName == name
+            // TypeScriptSingleType.getReferenceExpression is internal API; the reference is its child.
+            // A qualifier is not compared: `Schema.Class<Models.Account>` inside `namespace Models` is
+            // the class itself, and taking some other `Account` for it only keeps a diagnostic.
+            (argument as? TypeScriptSingleType)
+                ?.let { PsiTreeUtil.getChildOfType(it, JSReferenceExpression::class.java) }
+                ?.referenceName == name
         } == true
 
 /**
@@ -262,3 +293,9 @@ private fun JSExpression.withoutParentheses(): JSExpression? {
 
 /** Bounds alias chains: a re-export cycle must not keep the highlighting pass busy. */
 private const val MAX_RESOLVED_ELEMENTS = 32
+
+/** How many `const B = A` steps are followed from a class's base to the factory call. */
+private const val MAX_BASE_ALIASES = 4
+
+/** How many calls deep a factory result is looked for among call arguments. */
+private const val MAX_WRAPPED_CALLS = 4

@@ -70,12 +70,28 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
             export class Savings extends Account.extend<Savings>("Savings")({}) {}
             export class Parenthesized extends (Schema.Class<Parenthesized>("Parenthesized")({})) {}
             export class Wrapped extends Schema.brand(Schema.Class<Wrapped>("Wrapped")({})) {}
+            export class WrappedTwice extends Schema.brand((Schema.brand(Schema.Class<WrappedTwice>("WrappedTwice")({})))) {}
+            export class WrappedRejection extends Schema.brand(Domain.Rejection("WrappedRejection")) {}
+            const HeldWrappedBase = Schema.brand(Schema.Class<HeldWrapped>("HeldWrapped")({}))
+            export class HeldWrapped extends HeldWrappedBase {}
             export class Subclass extends Account {}
 
             const HeldBase = Schema.Class<Held>("Held")({})
             export class Held extends HeldBase {}
             const HeldRejectionBase = Domain.Rejection("HeldRejection")
             export class HeldRejection extends HeldRejectionBase {}
+
+            const AliasedBase = Schema.Class<Aliased>("Aliased")({})
+            const AliasedBaseAlias = (AliasedBase)
+            export class Aliased extends AliasedBaseAlias {}
+            const AccountAlias = Account
+            export class AliasedSubclass extends AccountAlias {}
+            let Unassigned
+            export class Undecided extends Unassigned {}
+
+            export namespace Models {
+              export class Scoped extends Schema.Class<Models.Scoped>("Scoped")({}) {}
+            }
 
             export class Merged extends Domain.Event("Merged", {}) {}
             export declare namespace Merged {
@@ -135,6 +151,8 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
             """
             import Unauthorized, { Account, Anonymous, Branded, Denied, Held, HeldRejection, NotAMember, Opened } from "./model"
             import { Merged, MergedAccount, Parenthesized, Savings, Subclass, Tree, Wrapped } from "./model"
+            import { Aliased, AliasedSubclass, Models, Undecided } from "./model"
+            import { HeldWrapped, WrappedRejection, WrappedTwice } from "./model"
             import * as Model from "./model"
             import { Forbidden, Ledger, NotAMember as Refusal, Account as Book } from "./barrel"
             import { Errors, Mixed, NotFound, Refused } from "./published"
@@ -159,6 +177,8 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
               new Subclass(), new Local(), new Errors.Nested(), new Wrapped(),
               new Anonymous(), new Missing(), new Plain(), new AnonymousClass(), new (class extends Model.Account {})(),
               new Late(), new Merged(), new MergedAccount(),
+              new Aliased(), new AliasedSubclass(), new Undecided(), new Models.Scoped(),
+              new WrappedTwice(), new WrappedRejection(), new HeldWrapped(),
               new Sealed(), new Locked(), new Kernel.Sealed(), new Posting(), new RejectedTwin(), new SchemaTwin(),
               new EntryPointTwin(), new EntryPointSealed(), new Nowhere(), new Defaulted(), new Kernel.Nowhere(),
             ]
@@ -207,14 +227,32 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
         assertSelf(EffectSchemaClassSelf.DECLARED, "Held", "NotFound", "Mixed")
     }
 
+    /** `const B = A` keeps what `A` holds: the factory result with its `Self`, or another class. */
+    fun testAliasOfConstantBaseIsFollowed() {
+        assertSelf(EffectSchemaClassSelf.DECLARED, "Aliased")
+        assertSelf(EffectSchemaClassSelf.ABSENT, "AliasedSubclass")
+        assertSelf(EffectSchemaClassSelf.UNKNOWN, "Undecided")
+    }
+
+    /** Inside `namespace Models`, `Schema.Class<Models.Scoped>` names the class being declared. */
+    fun testQualifiedSelfIsDeclared() {
+        assertSelf(EffectSchemaClassSelf.DECLARED, "Models.Scoped")
+    }
+
     /** `Subclass.make(...)` returns an `Account`; a class member added by the subclass is lost. */
     fun testPlainSubclassOfSchemaClassIsAbsent() {
         assertSelf(EffectSchemaClassSelf.ABSENT, "Subclass", "Local", "Errors.Nested")
     }
 
-    /** A field that mentions its own class is not `Self`; neither is `Self` passed to an inner call. */
+    /** A field that mentions its own class is not `Self`. */
     fun testOnlyTypeArgumentsOfTheFactoryCallsCount() {
-        assertSelf(EffectSchemaClassSelf.ABSENT, "Tree", "Wrapped")
+        assertSelf(EffectSchemaClassSelf.ABSENT, "Tree")
+    }
+
+    /** Whether a call keeps the `make` of the factory result it is given cannot be read: not dropped. */
+    fun testFactoryResultHandedToAnotherCallIsUnknown() {
+        assertSelf(EffectSchemaClassSelf.UNKNOWN, "Wrapped", "WrappedTwice", "HeldWrapped")
+        assertSelf(EffectSchemaClassSelf.ABSENT, "WrappedRejection")
     }
 
     fun testUndecidableDeclarationsStayUnknown() {
