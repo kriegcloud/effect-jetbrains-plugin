@@ -378,8 +378,8 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
             repeat(occurrence) { start = document.text.indexOf("new Shadowed()", start + 1) }
             return TextRange(start + "new ".length, start + "new Shadowed".length)
         }
+        // Only the first of the two is asked about before the edit, so its answer is the remembered one.
         assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range(1)))
-        assertEquals(EffectSchemaClassSelf.DECLARED, constructedSchemaClassSelf(file, range(2)))
 
         WriteCommandAction.runWriteCommandAction(project) { document.insertString(0, "// not committed\n") }
         val reapplied = ArrayList<PsiFile>()

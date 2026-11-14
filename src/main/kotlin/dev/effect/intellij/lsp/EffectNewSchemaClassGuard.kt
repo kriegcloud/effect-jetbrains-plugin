@@ -110,7 +110,15 @@ internal fun constructedSchemaClassSelf(
         }
         readSelf(callee as? JSReferenceExpression ?: return EffectSchemaClassSelf.UNKNOWN)
     } else {
-        readSelfByText(file, calleeText)
+        val answers = selvesByText(file, calleeText)
+        if (answers.size > 1) {
+            // One text, several classes (a name shadowed in an inner scope): which of them is asked
+            // about cannot be told until positions are valid again, and no earlier answer may stand in.
+            file.rememberedSelves()[calleeText] = RememberedSelf(file.modificationStamp, null)
+            askAgainWhenReadable(file, committed = false, reapply)
+            return EffectSchemaClassSelf.UNKNOWN
+        }
+        answers.singleOrNull()
     }
     // While indexing, "no declaration found" can mean "not indexed yet".
     val answer = read?.takeUnless { it == EffectSchemaClassSelf.UNKNOWN && DumbService.isDumb(project) }
@@ -161,17 +169,14 @@ private fun constructedExpression(file: PsiFile, calleeRange: TextRange): JSExpr
 
 /**
  * Before an edit is committed the PSI cannot be addressed by offset, so the `new` expressions written as
- * [calleeText] in the PSI as it still is answer for the one in the document. `null` when there is none
- * yet, or when they construct different classes (the name is shadowed) and it cannot be told which one
- * is asked about.
+ * [calleeText] in the PSI as it still is answer for the one in the document: the distinct answers they
+ * give. None when the expression is not in the PSI yet; a `null` among them when one cannot be read.
  */
-private fun readSelfByText(file: PsiFile, calleeText: String): EffectSchemaClassSelf? {
-    val answers = PsiTreeUtil.findChildrenOfType(file, JSNewExpression::class.java)
+private fun selvesByText(file: PsiFile, calleeText: String): List<EffectSchemaClassSelf?> =
+    PsiTreeUtil.findChildrenOfType(file, JSNewExpression::class.java)
         .mapNotNull { it.methodExpression?.takeIf { callee -> callee.textMatches(calleeText) }?.withoutParentheses() }
         .map { callee -> (callee as? JSReferenceExpression)?.let(::readSelf) }
         .distinct()
-    return answers.singleOrNull()
-}
 
 /** The answer last read for an expression, and the state of the file's PSI it was read in. */
 private class RememberedSelf(val stamp: Long, val self: EffectSchemaClassSelf?)
