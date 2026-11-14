@@ -82,9 +82,10 @@ internal fun Diagnostic.isUnsatisfiableNewSchemaClass(file: PsiFile, calleeRange
  * 2026.3 line it applies diagnostics once, when the server sends them, and does not ask again when
  * indexing ends. Answering [EffectSchemaClassSelf.UNKNOWN] then would leave a dropped diagnostic on
  * screen until the next edit. So the declaration is read through the index data that stays reliable
- * while indexing, an answer that cannot be read right now is taken from the last one given for the
- * same expression in the file, and when there is none either, [reapply] is called once the project can
- * answer, so that the platform asks again.
+ * while indexing, and an answer that cannot be read right now is taken from the last one given for the
+ * same expression in the file. Whenever the answer is provisional in that way, or was read from a PSI
+ * that an uncommitted edit has not reached, [reapply] is called once the project can answer for certain,
+ * so that the platform asks again.
  */
 internal fun constructedSchemaClassSelf(
     file: PsiFile,
@@ -99,15 +100,18 @@ internal fun constructedSchemaClassSelf(
         return EffectSchemaClassSelf.UNKNOWN
     }
     val calleeText = calleeRange.subSequence(text).toString()
-    // Diagnostic offsets belong to the document; they address the PSI only once it is committed. Until
-    // then the same expression is looked up by its text.
+    // Diagnostic offsets belong to the document; they address the PSI only once it is committed.
     val committed = document == null || documents.isCommitted(document)
-    val callee = if (committed) constructedExpression(file, calleeRange) else constructedExpression(file, calleeText)
-    if (callee == null && committed) {
-        traceNoCallee(file, calleeRange, calleeText)
-        return EffectSchemaClassSelf.UNKNOWN
+    val read = if (committed) {
+        val callee = constructedExpression(file, calleeRange)
+        if (callee == null) {
+            traceNoCallee(file, calleeRange, calleeText)
+            return EffectSchemaClassSelf.UNKNOWN
+        }
+        readSelf(callee as? JSReferenceExpression ?: return EffectSchemaClassSelf.UNKNOWN)
+    } else {
+        readSelfByText(file, calleeText)
     }
-    val read = (callee as? JSReferenceExpression)?.let(::readSelf)
     // While indexing, "no declaration found" can mean "not indexed yet".
     val answer = read?.takeUnless { it == EffectSchemaClassSelf.UNKNOWN && DumbService.isDumb(project) }
     val remembered = file.rememberedSelves()
@@ -115,14 +119,23 @@ internal fun constructedSchemaClassSelf(
         if (remembered.size >= MAX_REMEMBERED_SELVES) {
             remembered.clear()
         }
-        remembered[calleeText] = answer
-        return answer
+        // The same text standing for two classes in one state of the file (a name shadowed in an inner
+        // scope) is not remembered: there would be no telling which one a later question is about.
+        val stamp = file.modificationStamp
+        remembered.compute(calleeText) { _, last ->
+            RememberedSelf(stamp, answer.takeUnless { last != null && last.stamp == stamp && last.self != answer })
+        }
     }
-    val last = remembered[calleeText]
-    if (last == null) {
-        askAgainWhenReadable(file, calleeText, committed, callee, reapply)
+    val last = remembered[calleeText]?.self
+    // An answer read from a PSI that lags behind the document, taken from memory, or not available at
+    // all is provisional: the platform is made to ask again when the project can answer for certain.
+    if (answer == null || !committed) {
+        if (answer == null && last == null) {
+            traceUnread(file, calleeText, committed)
+        }
+        askAgainWhenReadable(file, committed, reapply)
     }
-    return last ?: EffectSchemaClassSelf.UNKNOWN
+    return answer ?: last ?: EffectSchemaClassSelf.UNKNOWN
 }
 
 /** `null` when the indexes cannot be read at all right now. */
@@ -146,54 +159,45 @@ private fun constructedExpression(file: PsiFile, calleeRange: TextRange): JSExpr
     return callee.takeIf { it.textRange.contains(calleeRange) }?.withoutParentheses()
 }
 
-/** The callee of any `new` expression in [file] written as [calleeText]: the same name is the same class. */
-private fun constructedExpression(file: PsiFile, calleeText: String): JSExpression? =
-    PsiTreeUtil.findChildrenOfType(file, JSNewExpression::class.java)
-        .firstNotNullOfOrNull { it.methodExpression?.takeIf { callee -> callee.textMatches(calleeText) } }
-        ?.withoutParentheses()
+/**
+ * Before an edit is committed the PSI cannot be addressed by offset, so the `new` expressions written as
+ * [calleeText] in the PSI as it still is answer for the one in the document. `null` when there is none
+ * yet, or when they construct different classes (the name is shadowed) and it cannot be told which one
+ * is asked about.
+ */
+private fun readSelfByText(file: PsiFile, calleeText: String): EffectSchemaClassSelf? {
+    val answers = PsiTreeUtil.findChildrenOfType(file, JSNewExpression::class.java)
+        .mapNotNull { it.methodExpression?.takeIf { callee -> callee.textMatches(calleeText) }?.withoutParentheses() }
+        .map { callee -> (callee as? JSReferenceExpression)?.let(::readSelf) }
+        .distinct()
+    return answers.singleOrNull()
+}
+
+/** The answer last read for an expression, and the state of the file's PSI it was read in. */
+private class RememberedSelf(val stamp: Long, val self: EffectSchemaClassSelf?)
 
 /** The last answer given for each constructed expression of a file, by its text. */
-private fun PsiFile.rememberedSelves(): MutableMap<String, EffectSchemaClassSelf> {
+private fun PsiFile.rememberedSelves(): ConcurrentHashMap<String, RememberedSelf> {
     val holder = viewProvider.virtualFile
     return holder.getUserData(rememberedSelvesKey) ?: synchronized(holder) {
         holder.getUserData(rememberedSelvesKey)
-            ?: ConcurrentHashMap<String, EffectSchemaClassSelf>().also { holder.putUserData(rememberedSelvesKey, it) }
+            ?: ConcurrentHashMap<String, RememberedSelf>().also { holder.putUserData(rememberedSelvesKey, it) }
     }
 }
 
 /**
- * A few times per expression at most: says in `idea.log` why a `newSchemaClass` diagnostic is shown although its class
- * could not be read, and has the diagnostics applied again when the cause is over (the edit is
- * committed, indexing has ended).
+ * Has the diagnostics applied again when the cause of a provisional answer is over: the edit is
+ * committed, indexing has ended. One request covers every expression of the file that waits for the
+ * same thing. This cannot repeat on its own: when the project can answer, the answer is not
+ * provisional and nothing is requested.
  */
-private fun askAgainWhenReadable(
-    file: PsiFile,
-    calleeText: String,
-    committed: Boolean,
-    callee: JSExpression?,
-    reapply: (PsiFile) -> Unit,
-) {
+private fun askAgainWhenReadable(file: PsiFile, committed: Boolean, reapply: (PsiFile) -> Unit) {
     val project = file.project
-    val path = file.viewProvider.virtualFile.path
-    if (unreadAskedAgain.size >= MAX_UNREAD_EXPRESSIONS) {
-        return
-    }
-    // Bounded, so that an expression that stays unreadable cannot keep requesting diagnostics.
-    if (unreadAskedAgain.merge("$path\u0000$calleeText", 1, Int::plus)!! > MAX_ASKS_PER_EXPRESSION) {
-        return
-    }
-    // One request covers every expression of the file that is waiting for the same thing.
     val holder = file.viewProvider.virtualFile
     if (holder.getUserData(askingAgainKey) == true) {
         return
     }
     holder.putUserData(askingAgainKey, true)
-    val reason = when {
-        !committed && callee == null -> "the edit is not committed and no `new $calleeText` is in the PSI yet"
-        DumbService.isDumb(project) -> "no class declaration can be read while indexing"
-        else -> "the indexes cannot be read"
-    }
-    guardLog.info("newSchemaClass is shown for `new $calleeText` in $path: $reason; it is decided again afterwards")
     ApplicationManager.getApplication().invokeLater(
         {
             val again = Runnable {
@@ -210,13 +214,27 @@ private fun askAgainWhenReadable(
     )
 }
 
+/** Says once per expression why a `newSchemaClass` diagnostic is shown although its class could not be read. */
+private fun traceUnread(file: PsiFile, calleeText: String, committed: Boolean) {
+    val path = file.viewProvider.virtualFile.path
+    if (keptTraced.size >= MAX_TRACED_EXPRESSIONS || !keptTraced.add("$path\u0000$calleeText\u0000unread")) {
+        return
+    }
+    val reason = when {
+        !committed -> "the edit is not committed and the PSI has no single `new $calleeText` to read it from"
+        DumbService.isDumb(file.project) -> "no class declaration can be read while indexing"
+        else -> "the indexes cannot be read"
+    }
+    guardLog.info("newSchemaClass is shown for `new $calleeText` in $path: $reason; it is decided again afterwards")
+}
+
 /**
  * Says once per expression what a `newSchemaClass` diagnostic that stays was decided from. A diagnostic
  * that should have been dropped is then explained by `idea.log`: what the IDE resolves a reference to
  * depends on its TypeScript service and cannot be reproduced outside it.
  */
 private fun traceKept(callee: JSReferenceExpression, self: EffectSchemaClassSelf, declarations: List<PsiElement>) {
-    if (self == EffectSchemaClassSelf.ABSENT || keptTraced.size >= MAX_UNREAD_EXPRESSIONS) {
+    if (self == EffectSchemaClassSelf.ABSENT || keptTraced.size >= MAX_TRACED_EXPRESSIONS) {
         return
     }
     val path = callee.containingFile?.viewProvider?.virtualFile?.path
@@ -229,7 +247,7 @@ private fun traceKept(callee: JSReferenceExpression, self: EffectSchemaClassSelf
 
 private fun traceNoCallee(file: PsiFile, calleeRange: TextRange, calleeText: String) {
     val path = file.viewProvider.virtualFile.path
-    if (keptTraced.size >= MAX_UNREAD_EXPRESSIONS || !keptTraced.add("$path\u0000$calleeText\u0000no callee")) {
+    if (keptTraced.size >= MAX_TRACED_EXPRESSIONS || !keptTraced.add("$path\u0000$calleeText\u0000no callee")) {
         return
     }
     val leaf = file.findElementAt(calleeRange.startOffset)
@@ -243,14 +261,12 @@ private fun traceNoCallee(file: PsiFile, calleeRange: TextRange, calleeText: Str
 
 private val guardLog = logger<EffectSchemaClassSelf>()
 private val keptTraced: MutableSet<String> = ConcurrentHashMap.newKeySet()
-private val rememberedSelvesKey = Key.create<MutableMap<String, EffectSchemaClassSelf>>("effect.newSchemaClass.selves")
-private val unreadAskedAgain = ConcurrentHashMap<String, Int>()
+private val rememberedSelvesKey = Key.create<ConcurrentHashMap<String, RememberedSelf>>("effect.newSchemaClass.selves")
 private val askingAgainKey = Key.create<Boolean>("effect.newSchemaClass.askingAgain")
 
 /** A file with more constructed expressions than this starts over; the entries are recomputed on demand. */
 private const val MAX_REMEMBERED_SELVES = 512
-private const val MAX_UNREAD_EXPRESSIONS = 512
-private const val MAX_ASKS_PER_EXPRESSION = 3
+private const val MAX_TRACED_EXPRESSIONS = 512
 
 private fun selfOf(schemaClass: JSClass): EffectSchemaClassSelf {
     val name = schemaClass.name ?: return EffectSchemaClassSelf.UNKNOWN

@@ -160,6 +160,7 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
             import { Aliased, AliasedSubclass, Models, Undecided } from "./model"
             import { HeldWrapped, WrappedRejection, WrappedTwice } from "./model"
             import * as Model from "./model"
+            import * as Schema from "./schema"
             import { Forbidden, Ledger, NotAMember as Refusal, Account as Book } from "./barrel"
             import { Errors, Mixed, NotFound, Refused } from "./published"
             import Late from "./late"
@@ -173,6 +174,14 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
 
             class Local extends Model.Account {}
             class Plain {}
+            function shadowing() {
+              class Shadowed extends Model.Account {}
+              return new Shadowed()
+            }
+            function shadowed() {
+              class Shadowed extends Schema.Class<Shadowed>("Shadowed")({}) {}
+              return new Shadowed()
+            }
             const AnonymousClass = class Inline extends Model.Account {}
 
             export const constructed = [
@@ -294,12 +303,20 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
     fun testAnswerIsRememberedWhileTheDeclarationCannotBeRead() {
         assertSelf(EffectSchemaClassSelf.ABSENT, "Sealed", "Locked")
         val declaration = myFixture.findFileInTempDir("packages/kernel/src/Sealed.rejection.ts")
+        val reapplied = ArrayList<PsiFile>()
         DumbModeTestUtils.runInDumbModeSynchronously(project) {
             WriteAction.runAndWait<RuntimeException> { declaration.delete(this) }
-            assertSelf(EffectSchemaClassSelf.ABSENT, "Sealed", "Locked")
+            listOf("Sealed", "Locked").forEach { callee ->
+                assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(myFixture.file, calleeRange(callee), reapplied::add))
+            }
         }
+        // A remembered answer is provisional: the platform is asked to apply the diagnostics again.
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(listOf(myFixture.file), reapplied)
         // Not indexing any more: the class is really gone.
-        assertSelf(EffectSchemaClassSelf.UNKNOWN, "Sealed")
+        assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(myFixture.file, calleeRange("Sealed"), reapplied::add))
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(1, reapplied.size)
     }
 
     /** A file changed while the IDE was closed is not readable during the indexing run that follows. */
@@ -317,6 +334,63 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
         assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(myFixture.file, range, reapplied::add))
         PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
         assertEquals(1, reapplied.size)
+    }
+
+    /** Diagnostics for an edit can arrive before the edit reaches the PSI; offsets then address the document only. */
+    fun testClassifiesBeforeTheDocumentIsCommitted() {
+        val file = myFixture.file
+        val document = myFixture.getDocument(file)
+        WriteCommandAction.runWriteCommandAction(project) {
+            document.insertString(0, "// a line the PSI has not seen yet\n")
+            document.insertString(document.textLength, "\nexport const typed = new Tree()\nexport const fresh = new Brand()\n")
+        }
+        assertFalse(PsiDocumentManager.getInstance(project).isCommitted(document))
+        fun range(callee: String, from: Int = 0): TextRange {
+            val start = document.text.indexOf("new $callee()", from) + "new ".length
+            return TextRange(start, start + callee.length)
+        }
+        val reapplied = ArrayList<PsiFile>()
+
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range("NotAMember"), reapplied::add))
+        assertEquals(EffectSchemaClassSelf.DECLARED, constructedSchemaClassSelf(file, range("Account"), reapplied::add))
+        // Typed just now, constructed elsewhere in the file already.
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range("Tree", document.text.indexOf("typed")), reapplied::add))
+        // Typed just now and nowhere in the PSI.
+        assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(file, range("Brand"), reapplied::add))
+        assertEmpty(reapplied)
+
+        // What was read from the PSI as it was before the edit is provisional: asked again, once, after the commit.
+        PsiDocumentManager.getInstance(project).commitDocument(document)
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(listOf(file), reapplied)
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range("NotAMember"), reapplied::add))
+        assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(file, range("Brand"), reapplied::add))
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(1, reapplied.size)
+    }
+
+    /** One name for two classes in one file: told apart by position, and not at all once positions are stale. */
+    fun testShadowedNameIsNotAnsweredFromText() {
+        val file = myFixture.file
+        val document = myFixture.getDocument(file)
+        fun range(occurrence: Int): TextRange {
+            var start = -1
+            repeat(occurrence) { start = document.text.indexOf("new Shadowed()", start + 1) }
+            return TextRange(start + "new ".length, start + "new Shadowed".length)
+        }
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range(1)))
+        assertEquals(EffectSchemaClassSelf.DECLARED, constructedSchemaClassSelf(file, range(2)))
+
+        WriteCommandAction.runWriteCommandAction(project) { document.insertString(0, "// not committed\n") }
+        val reapplied = ArrayList<PsiFile>()
+        assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(file, range(1), reapplied::add))
+        assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(file, range(2), reapplied::add))
+
+        PsiDocumentManager.getInstance(project).commitDocument(document)
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(listOf(file), reapplied)
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range(1)))
+        assertEquals(EffectSchemaClassSelf.DECLARED, constructedSchemaClassSelf(file, range(2)))
     }
 
     /** No Effect server runs in this fixture: asking for the diagnostics again must be harmless. */
