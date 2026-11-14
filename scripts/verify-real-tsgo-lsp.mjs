@@ -45,6 +45,7 @@ class LspClient {
   constructor(command, args, cwd) {
     this.nextId = 1
     this.pending = new Map()
+    this.serverRequests = []
     this.notificationWaiters = []
     this.stdoutBuffer = Buffer.alloc(0)
     this.stderr = ""
@@ -198,6 +199,7 @@ class LspClient {
   }
 
   handleServerRequest(message) {
+    this.serverRequests.push(message.method)
     let result = null
     if (message.method === "workspace/configuration") {
       const items = Array.isArray(message.params?.items) ? message.params.items : []
@@ -1166,11 +1168,32 @@ async function verifyFixAllSafetyCases(workspacePath) {
     await client.request("initialize", {
       processId: process.pid, rootUri: workspaceUri,
       workspaceFolders: [{ uri: workspaceUri, name: path.basename(workspacePath) }],
-      capabilities: { textDocument: { codeAction: { codeActionLiteralSupport: {
-        codeActionKind: { valueSet: ["quickfix"] },
-      } } } },
+      capabilities: {
+        workspace: { diagnostics: { refreshSupport: true } },
+        textDocument: { codeAction: { codeActionLiteralSupport: {
+          codeActionKind: { valueSet: ["quickfix"] },
+        } } },
+      },
     })
     client.notify("initialized", {})
+    {
+      // What the plugin relies on to have diagnostics applied again on the 2026.3 platform, which applies
+      // them only when the server sends them (EffectLspDiagnosticsRefresh): told that an open file may
+      // have changed, the server asks the client to request diagnostics again.
+      const uri = pathToFileURL(path.join(workspacePath, "src", cases[0].file)).href
+      const text = await readFile(fileURLToPath(uri), "utf8")
+      client.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text } })
+      await pullDiagnosticsWithRetries(client, uri, (entries) => entries.length > 0)
+      client.serverRequests.length = 0
+      client.notify("workspace/didChangeWatchedFiles", { changes: [{ uri, type: 2 }] })
+      for (let attempt = 0; attempt < 40 && !client.serverRequests.includes("workspace/diagnostic/refresh"); attempt += 1) {
+        await sleep(250)
+      }
+      assert(client.serverRequests.includes("workspace/diagnostic/refresh"),
+        `Expected workspace/diagnostic/refresh after workspace/didChangeWatchedFiles; received ${JSON.stringify(client.serverRequests)}`)
+      results.push({ check: "watched-files-refresh", file: cases[0].file, serverRequest: "workspace/diagnostic/refresh" })
+      client.notify("textDocument/didClose", { textDocument: { uri } })
+    }
     for (const testCase of cases) {
       const uri = pathToFileURL(path.join(workspacePath, "src", testCase.file)).href
       const original = await readFile(fileURLToPath(uri), "utf8")

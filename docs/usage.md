@@ -115,7 +115,13 @@ sites. The check reads the class declaration: the type arguments of the calls in
 resolve the import of the class (a `package.json` `exports` wildcard, or a package importing itself by
 name), the class is looked up by name in the file the import specifier ends with.
 
-The diagnostic stays when the declaration cannot be read: during indexing, for a class held in a
+The decision is also made while the project is indexing and before an edit is committed, because
+WebStorm 2026.3 applies a file's diagnostics once, when the server sends them. If a class cannot be
+read at that moment (its file changed while the IDE was closed and is not indexed yet), the diagnostic
+is shown, `idea.log` says why (`newSchemaClass is shown for ...`), and the diagnostics are requested
+again when indexing ends.
+
+The diagnostic stays when the declaration cannot be read: for a class held in a
 constant (`const X = Domain.Event("X")`), for a factory result handed to another call
 (`class A extends wrap(Schema.Class<A>("A")({...}))`), for a default import of an unresolved module,
 and when same-named classes disagree behind an import the IDE cannot resolve.

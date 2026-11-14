@@ -2,9 +2,15 @@ package dev.effect.intellij.lsp
 
 import com.intellij.codeInsight.daemon.impl.AnnotationHolderImpl
 import com.intellij.codeInsight.daemon.impl.AnnotationSessionImpl
+import com.intellij.lang.javascript.psi.stubs.JSClassIndex
+import com.intellij.openapi.application.WriteAction
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.util.TextRange
+import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiFile
+import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.testFramework.DumbModeTestUtils
+import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import dev.effect.intellij.lsp.fixall.withoutUnsatisfiableDiagnostics
 import org.eclipse.lsp4j.Diagnostic
@@ -154,6 +160,7 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
             import { Aliased, AliasedSubclass, Models, Undecided } from "./model"
             import { HeldWrapped, WrappedRejection, WrappedTwice } from "./model"
             import * as Model from "./model"
+            import * as Schema from "./schema"
             import { Forbidden, Ledger, NotAMember as Refusal, Account as Book } from "./barrel"
             import { Errors, Mixed, NotFound, Refused } from "./published"
             import Late from "./late"
@@ -167,6 +174,14 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
 
             class Local extends Model.Account {}
             class Plain {}
+            function shadowing() {
+              class Shadowed extends Model.Account {}
+              return new Shadowed()
+            }
+            function shadowed() {
+              class Shadowed extends Schema.Class<Shadowed>("Shadowed")({}) {}
+              return new Shadowed()
+            }
             const AnonymousClass = class Inline extends Model.Account {}
 
             export const constructed = [
@@ -269,11 +284,118 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
         assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(file, TextRange(callee.startOffset, callee.endOffset + 2)))
     }
 
-    fun testUnknownWhileIndexing() {
+    /**
+     * The 2026.3 platform applies diagnostics when the server sends them, also during indexing, and
+     * does not apply them again when indexing ends: the first answer has to be the right one.
+     */
+    fun testClassifiesWhileIndexing() {
+        indexFixture()
         DumbModeTestUtils.runInDumbModeSynchronously(project) {
-            assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(myFixture.file, calleeRange("NotAMember")))
+            assertSelf(EffectSchemaClassSelf.ABSENT, "NotAMember", "Forbidden", "Sealed", "Kernel.Sealed", "Subclass", "Refused")
+            assertSelf(EffectSchemaClassSelf.DECLARED, "Account", "Posting", "NotFound", "Models.Scoped")
+            assertSelf(EffectSchemaClassSelf.UNKNOWN, "Missing", "Anonymous")
+            assertTrue(newSchemaClass("NotAMember").isUnsatisfiableNewSchemaClass(myFixture.file, calleeRange("NotAMember")))
+            assertEmpty(annotationsFor(newSchemaClass("Sealed"), calleeRange("Sealed")))
         }
-        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(myFixture.file, calleeRange("NotAMember")))
+    }
+
+    /** While indexing, a declaration that is not found may only be missing from the index: keep the last answer. */
+    fun testAnswerIsRememberedWhileTheDeclarationCannotBeRead() {
+        assertSelf(EffectSchemaClassSelf.ABSENT, "Sealed", "Locked")
+        val declaration = myFixture.findFileInTempDir("packages/kernel/src/Sealed.rejection.ts")
+        val reapplied = ArrayList<PsiFile>()
+        DumbModeTestUtils.runInDumbModeSynchronously(project) {
+            WriteAction.runAndWait<RuntimeException> { declaration.delete(this) }
+            listOf("Sealed", "Locked").forEach { callee ->
+                assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(myFixture.file, calleeRange(callee), reapplied::add))
+            }
+        }
+        // A remembered answer is provisional: the platform is asked to apply the diagnostics again.
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(listOf(myFixture.file), reapplied)
+        // Not indexing any more: the class is really gone.
+        assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(myFixture.file, calleeRange("Sealed"), reapplied::add))
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(1, reapplied.size)
+    }
+
+    /** A file changed while the IDE was closed is not readable during the indexing run that follows. */
+    fun testAsksAgainAfterIndexingForAnAnswerItNeverHad() {
+        val reapplied = ArrayList<PsiFile>()
+        val range = calleeRange("Sealed")
+        DumbModeTestUtils.runInDumbModeSynchronously(project) {
+            // The fixture files were never indexed: nothing reliable to read, nothing remembered.
+            repeat(2) { assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(myFixture.file, range, reapplied::add)) }
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEmpty(reapplied)
+        }
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(listOf(myFixture.file), reapplied)
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(myFixture.file, range, reapplied::add))
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(1, reapplied.size)
+    }
+
+    /** Diagnostics for an edit can arrive before the edit reaches the PSI; offsets then address the document only. */
+    fun testClassifiesBeforeTheDocumentIsCommitted() {
+        val file = myFixture.file
+        val document = myFixture.getDocument(file)
+        WriteCommandAction.runWriteCommandAction(project) {
+            document.insertString(0, "// a line the PSI has not seen yet\n")
+            document.insertString(document.textLength, "\nexport const typed = new Tree()\nexport const fresh = new Brand()\n")
+        }
+        assertFalse(PsiDocumentManager.getInstance(project).isCommitted(document))
+        fun range(callee: String, from: Int = 0): TextRange {
+            val start = document.text.indexOf("new $callee()", from) + "new ".length
+            return TextRange(start, start + callee.length)
+        }
+        val reapplied = ArrayList<PsiFile>()
+
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range("NotAMember"), reapplied::add))
+        assertEquals(EffectSchemaClassSelf.DECLARED, constructedSchemaClassSelf(file, range("Account"), reapplied::add))
+        // Typed just now, constructed elsewhere in the file already.
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range("Tree", document.text.indexOf("typed")), reapplied::add))
+        // Typed just now and nowhere in the PSI.
+        assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(file, range("Brand"), reapplied::add))
+        assertEmpty(reapplied)
+
+        // What was read from the PSI as it was before the edit is provisional: asked again, once, after the commit.
+        PsiDocumentManager.getInstance(project).commitDocument(document)
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(listOf(file), reapplied)
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range("NotAMember"), reapplied::add))
+        assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(file, range("Brand"), reapplied::add))
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(1, reapplied.size)
+    }
+
+    /** One name for two classes in one file: told apart by position, and not at all once positions are stale. */
+    fun testShadowedNameIsNotAnsweredFromText() {
+        val file = myFixture.file
+        val document = myFixture.getDocument(file)
+        fun range(occurrence: Int): TextRange {
+            var start = -1
+            repeat(occurrence) { start = document.text.indexOf("new Shadowed()", start + 1) }
+            return TextRange(start + "new ".length, start + "new Shadowed".length)
+        }
+        // Only the first of the two is asked about before the edit, so its answer is the remembered one.
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range(1)))
+
+        WriteCommandAction.runWriteCommandAction(project) { document.insertString(0, "// not committed\n") }
+        val reapplied = ArrayList<PsiFile>()
+        assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(file, range(1), reapplied::add))
+        assertEquals(EffectSchemaClassSelf.UNKNOWN, constructedSchemaClassSelf(file, range(2), reapplied::add))
+
+        PsiDocumentManager.getInstance(project).commitDocument(document)
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertEquals(listOf(file), reapplied)
+        assertEquals(EffectSchemaClassSelf.ABSENT, constructedSchemaClassSelf(file, range(1)))
+        assertEquals(EffectSchemaClassSelf.DECLARED, constructedSchemaClassSelf(file, range(2)))
+    }
+
+    /** No Effect server runs in this fixture: asking for the diagnostics again must be harmless. */
+    fun testReapplyWithoutARunningServer() {
+        EffectLspDiagnosticsRefresh.reapply(myFixture.file)
     }
 
     fun testOnlyUnsatisfiableNewSchemaClassDiagnosticsAreDropped() {
@@ -309,6 +431,11 @@ class EffectNewSchemaClassGuardTest : BasePlatformTestCase() {
         )
         val untouched = listOf(otherRule)
         assertSame(untouched, withoutUnsatisfiableDiagnostics(untouched, file, file.text))
+    }
+
+    /** As in an IDE whose indexes were built before the indexing run a test simulates. */
+    private fun indexFixture() {
+        JSClassIndex.getElements("Account", project, GlobalSearchScope.allScope(project))
     }
 
     private fun assertSelf(expected: EffectSchemaClassSelf, vararg callees: String) {
